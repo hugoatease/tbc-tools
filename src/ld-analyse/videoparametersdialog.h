@@ -35,18 +35,9 @@ signals:
     void videoParametersChanged(const LdDecodeMetaData::VideoParameters &videoParameters);
     void exportBoundaryToggled(bool enabled);
 
-public slots:
-    void levelSelected(qint32 level);
-
 private slots:
-    void on_blackLevelSpinBox_valueChanged(int value);
-    void on_whiteLevelSpinBox_valueChanged(int value);
     void on_activeVideoStartSpinBox_valueChanged(int value);
     void on_activeVideoWidthSpinBox_valueChanged(int value);
-
-    void on_blackLevelResetButton_clicked();
-    void on_blackLevelAltResetButton_clicked();
-    void on_whiteLevelResetButton_clicked();
     void on_activeVideoStartResetButton_clicked();
     void on_activeVideoWidthResetButton_clicked();
 
@@ -58,8 +49,6 @@ private:
     LdDecodeMetaData::VideoParameters videoParameters;
     qint32 originalActiveVideoStart = -1;
     qint32 originalActiveVideoWidth = -1;
-
-    void updateDialog();
 };
 
 #endif // VIDEOPARAMETERSDIALOG_H

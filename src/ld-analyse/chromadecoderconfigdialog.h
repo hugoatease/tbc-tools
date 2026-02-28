@@ -38,17 +38,24 @@ public:
                           const TbcSource::SourceMode &_mode,
 						  const bool _isInit,
                           const OutputWriter::Configuration &outputConfiguration);
+    void setVideoLevels(const LdDecodeMetaData::VideoParameters &videoParameters);
     const PalColour::Configuration &getPalConfiguration();
     const Comb::Configuration &getNtscConfiguration();
     const OutputWriter::Configuration &getOutputConfiguration();
 
 signals:
     void chromaDecoderConfigChanged();
+    void videoLevelsChanged(qint32 blackLevel, qint32 whiteLevel);
 
 public slots:
 	void updateSourceMode(TbcSource::SourceMode mode);
+    void levelSelected(qint32 level);
 
 private slots:
+    void on_blackLevelHorizontalSlider_valueChanged(int value);
+    void on_whiteLevelHorizontalSlider_valueChanged(int value);
+    void on_blackLevelResetComboBox_activated(int index);
+    void on_whiteLevelResetComboBox_activated(int index);
     void on_chromaGainHorizontalSlider_valueChanged(int value);
     void on_chromaPhaseHorizontalSlider_valueChanged(int value);
 	void on_enableYNRCheckBox_clicked();
@@ -81,8 +88,16 @@ private:
 	bool isInit = true;
 	bool combine = false;
 	bool yNREnabled = true;
+    qint32 blackLevel = -1;
+    qint32 whiteLevel = -1;
+    qint32 startingBlackLevel = -1;
+    qint32 startingWhiteLevel = -1;
+    bool updatingLevels = false;
 
     void updateDialog();
+    void updateLevelLabels();
+    qint32 levelForResetIndex(int index, bool white) const;
+    QString formatLevelValue(qint32 value) const;
 };
 
 #endif // CHROMADECODERCONFIGDIALOG_H

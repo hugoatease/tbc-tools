@@ -117,6 +117,7 @@ private slots:
     void mousePressEvent(QMouseEvent *event);
     void mouseMoveEvent(QMouseEvent *event);
     void videoParametersChangedSignalHandler(const LdDecodeMetaData::VideoParameters &videoParameters);
+    void videoLevelsChangedSignalHandler(qint32 blackLevel, qint32 whiteLevel);
     void chromaDecoderConfigChangedSignalHandler();
     void exportBoundaryToggledSignalHandler(bool enabled);
 

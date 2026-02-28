@@ -935,7 +935,7 @@
   </action>
   <action name="actionChroma_decoder_configuration">
    <property name="text">
-    <string>Chroma decoder configuration...</string>
+    <string>Video decoder configuration...</string>
    </property>
    <property name="shortcut">
     <string>Ctrl+K</string>

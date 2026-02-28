@@ -164,7 +164,7 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     lastScopeDot = 1;
 
     // Make shift-clicking on the oscilloscope change the black/white level
-    connect(oscilloscopeDialog, &OscilloscopeDialog::scopeLevelSelect, videoParametersDialog, &VideoParametersDialog::levelSelected);
+    connect(oscilloscopeDialog, &OscilloscopeDialog::scopeLevelSelect, chromaDecoderConfigDialog, &ChromaDecoderConfigDialog::levelSelected);
 
     // Connect to the changed signal from the vectorscope dialogue
     connect(vectorscopeDialog, &VectorscopeDialog::scopeChanged, this, &MainWindow::vectorscopeChangedSignalHandler);
@@ -178,6 +178,7 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
 
     // Connect to the chroma decoder configuration changed signal
     connect(chromaDecoderConfigDialog, &ChromaDecoderConfigDialog::chromaDecoderConfigChanged, this, &MainWindow::chromaDecoderConfigChangedSignalHandler);
+    connect(chromaDecoderConfigDialog, &ChromaDecoderConfigDialog::videoLevelsChanged, this, &MainWindow::videoLevelsChangedSignalHandler);
 
     // Connect to the TbcSource signals (busy and finished loading)
     connect(&tbcSource, &TbcSource::busy, this, &MainWindow::on_busy);
@@ -391,6 +392,7 @@ void MainWindow::resetGui()
                                                 tbcSource.getSourceMode(),
 												true,//set to true because the chroma decoder is already init
 												tbcSource.getOutputConfiguration());
+    chromaDecoderConfigDialog->setVideoLevels(tbcSource.getVideoParameters());
 }
 
 // Method to update the GUI when a file is loaded
@@ -438,12 +440,13 @@ void MainWindow::updateGuiLoaded()
     videoParametersDialog->setVideoParameters(tbcSource.getVideoParameters());
 
     // Update the chroma decoder configuration dialogue
-        chromaDecoderConfigDialog->setConfiguration(tbcSource.getSystem(), tbcSource.getPalConfiguration(),
+    chromaDecoderConfigDialog->setConfiguration(tbcSource.getSystem(), tbcSource.getPalConfiguration(),
                                                 tbcSource.getNtscConfiguration(),
                                                 tbcSource.getMonoConfiguration(),
                                                 tbcSource.getSourceMode(),
 												false,//set to false to init the chroma decoder selection
 												tbcSource.getOutputConfiguration());
+    chromaDecoderConfigDialog->setVideoLevels(tbcSource.getVideoParameters());
 
     // Ensure the busy dialogue is hidden
     busyDialog->hide();
@@ -2102,6 +2105,13 @@ void MainWindow::videoParametersChangedSignalHandler(const LdDecodeMetaData::Vid
     updateImage();
 
     updateMetadataStatusPanel();
+}
+void MainWindow::videoLevelsChangedSignalHandler(qint32 blackLevel, qint32 whiteLevel)
+{
+    LdDecodeMetaData::VideoParameters videoParameters = tbcSource.getVideoParameters();
+    videoParameters.black16bIre = blackLevel;
+    videoParameters.white16bIre = whiteLevel;
+    videoParametersChangedSignalHandler(videoParameters);
 }
 
 void MainWindow::exportBoundaryToggledSignalHandler(bool enabled)

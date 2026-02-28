@@ -17,9 +17,6 @@ VideoParametersDialog::VideoParametersDialog(QWidget *parent) :
 {
     ui->setupUi(this);
     setWindowFlags(Qt::Window);
-    
-    // Update the dialogue
-    updateDialog();
 }
 
 void VideoParametersDialog::setShowExportBoundary(bool enabled)
@@ -45,16 +42,12 @@ void VideoParametersDialog::setVideoParameters(const LdDecodeMetaData::VideoPara
     originalActiveVideoWidth = videoParameters.activeVideoEnd - videoParameters.activeVideoStart;
 
     // Block signals while updating the UI to prevent spurious videoParametersChanged emissions
-    ui->blackLevelSpinBox->blockSignals(true);
-    ui->whiteLevelSpinBox->blockSignals(true);
     ui->activeVideoWidthSpinBox->blockSignals(true);
     ui->activeVideoStartSpinBox->blockSignals(true);
     ui->aspectRatio169RadioButton->blockSignals(true);
     ui->aspectRatio43RadioButton->blockSignals(true);
 
     // Transfer values to the dialogue
-    ui->blackLevelSpinBox->setValue(videoParameters.black16bIre);
-    ui->whiteLevelSpinBox->setValue(videoParameters.white16bIre);
 
     ui->activeVideoWidthSpinBox->setValue(videoParameters.activeVideoEnd - videoParameters.activeVideoStart);
     ui->activeVideoStartSpinBox->setValue(videoParameters.activeVideoStart);
@@ -66,57 +59,14 @@ void VideoParametersDialog::setVideoParameters(const LdDecodeMetaData::VideoPara
     else ui->aspectRatio43RadioButton->setChecked(true);
 
     // Unblock signals
-    ui->blackLevelSpinBox->blockSignals(false);
-    ui->whiteLevelSpinBox->blockSignals(false);
     ui->activeVideoWidthSpinBox->blockSignals(false);
     ui->activeVideoStartSpinBox->blockSignals(false);
     ui->aspectRatio169RadioButton->blockSignals(false);
     ui->aspectRatio43RadioButton->blockSignals(false);
-
-    // Update the dialogue
-    updateDialog();
-}
-
-void VideoParametersDialog::updateDialog()
-{
-    // Adjust the black level reset buttons depending on whether the system is NTSC
-    if (videoParameters.system == NTSC) {
-        ui->blackLevelResetButton->setText("Reset NTSC");
-        ui->blackLevelAltResetButton->setText("Reset NTSC-J");
-        ui->blackLevelAltResetButton->show();
-    } else {
-        ui->blackLevelResetButton->setText("Reset");
-        ui->blackLevelAltResetButton->hide();
-    }
-}
-
-// Public slots
-
-// Set either black or white level, depending on which half of the range the value is in
-void VideoParametersDialog::levelSelected(qint32 level)
-{
-    if (level < 0x8000) {
-        ui->blackLevelSpinBox->setValue(level);
-    } else {
-        ui->whiteLevelSpinBox->setValue(level);
-    }
 }
 
 // Private slots
 
-void VideoParametersDialog::on_blackLevelSpinBox_valueChanged(int value)
-{
-    videoParameters.black16bIre = value;
-    updateDialog();
-    emit videoParametersChanged(videoParameters);
-}
-
-void VideoParametersDialog::on_whiteLevelSpinBox_valueChanged(int value)
-{
-    videoParameters.white16bIre = value;
-    updateDialog();
-    emit videoParametersChanged(videoParameters);
-}
 
 void VideoParametersDialog::on_activeVideoStartSpinBox_valueChanged(int value)
 {
@@ -124,40 +74,13 @@ void VideoParametersDialog::on_activeVideoStartSpinBox_valueChanged(int value)
     // prevent the width from going over the actual field width
     ui->activeVideoWidthSpinBox->setMaximum(videoParameters.fieldWidth - value - 1);
     videoParameters.activeVideoEnd = value + ui->activeVideoWidthSpinBox->value();
-    updateDialog();
     emit videoParametersChanged(videoParameters);
 }
 
 void VideoParametersDialog::on_activeVideoWidthSpinBox_valueChanged(int value)
 {
     videoParameters.activeVideoEnd = videoParameters.activeVideoStart + value;
-    updateDialog();
     emit videoParametersChanged(videoParameters);
-}
-// The reset black and white levels come from EBU Tech 3280 p6 (PAL) and SMPTE
-// 244M p2 (NTSC), and match what ld-decode uses by default.
-
-void VideoParametersDialog::on_blackLevelResetButton_clicked()
-{
-    if (videoParameters.system == NTSC) {
-        ui->blackLevelSpinBox->setValue(0x3C00 + 0x0A80); // including setup
-    } else {
-        ui->blackLevelSpinBox->setValue(0x4000);
-    }
-}
-
-void VideoParametersDialog::on_blackLevelAltResetButton_clicked()
-{
-    ui->blackLevelSpinBox->setValue(0x3C00);
-}
-
-void VideoParametersDialog::on_whiteLevelResetButton_clicked()
-{
-    if (videoParameters.system == NTSC) {
-        ui->whiteLevelSpinBox->setValue(0xC800);
-    } else {
-        ui->whiteLevelSpinBox->setValue(0xD300);
-    }
 }
 
 void VideoParametersDialog::on_activeVideoStartResetButton_clicked()
@@ -173,7 +96,6 @@ void VideoParametersDialog::on_activeVideoWidthResetButton_clicked()
 void VideoParametersDialog::on_aspectRatioButtonGroup_buttonClicked(QAbstractButton *button)
 {
     videoParameters.isWidescreen = (button == ui->aspectRatio169RadioButton);
-    updateDialog();
     emit videoParametersChanged(videoParameters);
 }
 

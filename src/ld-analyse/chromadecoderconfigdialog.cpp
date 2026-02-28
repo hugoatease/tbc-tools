@@ -12,6 +12,7 @@
 #include "chromadecoderconfigdialog.h"
 #include "ui_chromadecoderconfigdialog.h"
 #include "mainwindow.h"
+#include <QSignalBlocker>
 
 #include <cmath>
 
@@ -49,6 +50,10 @@ ChromaDecoderConfigDialog::ChromaDecoderConfigDialog(QWidget *parent) :
 {
     ui->setupUi(this);
     setWindowFlags(Qt::Window);
+    ui->blackLevelHorizontalSlider->setMinimum(0);
+    ui->blackLevelHorizontalSlider->setMaximum(0x7FFF);
+    ui->whiteLevelHorizontalSlider->setMinimum(0x8000);
+    ui->whiteLevelHorizontalSlider->setMaximum(0xFFFF);
 
     ui->chromaGainHorizontalSlider->setMinimum(0);
     ui->chromaGainHorizontalSlider->setMaximum(200);
@@ -139,6 +144,74 @@ const Comb::Configuration &ChromaDecoderConfigDialog::getNtscConfiguration()
 const OutputWriter::Configuration &ChromaDecoderConfigDialog::getOutputConfiguration()
 {
     return outputConfiguration;
+}
+void ChromaDecoderConfigDialog::setVideoLevels(const LdDecodeMetaData::VideoParameters &videoParameters)
+{
+    system = videoParameters.system;
+
+    if (videoParameters.black16bIre >= 0) {
+        blackLevel = qBound(0, videoParameters.black16bIre, 0x7FFF);
+    }
+    if (videoParameters.white16bIre >= 0) {
+        whiteLevel = qBound(0x8000, videoParameters.white16bIre, 0xFFFF);
+    }
+
+    startingBlackLevel = blackLevel;
+    startingWhiteLevel = whiteLevel;
+
+    updatingLevels = true;
+    QSignalBlocker blackSliderBlocker(ui->blackLevelHorizontalSlider);
+    QSignalBlocker whiteSliderBlocker(ui->whiteLevelHorizontalSlider);
+    QSignalBlocker blackResetBlocker(ui->blackLevelResetComboBox);
+    QSignalBlocker whiteResetBlocker(ui->whiteLevelResetComboBox);
+    if (blackLevel >= 0) {
+        ui->blackLevelHorizontalSlider->setValue(blackLevel);
+    }
+    if (whiteLevel >= 0) {
+        ui->whiteLevelHorizontalSlider->setValue(whiteLevel);
+    }
+    ui->blackLevelResetComboBox->setCurrentIndex(0);
+    ui->whiteLevelResetComboBox->setCurrentIndex(0);
+    updatingLevels = false;
+
+    updateLevelLabels();
+}
+
+QString ChromaDecoderConfigDialog::formatLevelValue(qint32 value) const
+{
+    if (value < 0) {
+        return QStringLiteral("—");
+    }
+    return QStringLiteral("%1 (0x%2)").arg(value).arg(value, 4, 16, QChar('0'));
+}
+
+void ChromaDecoderConfigDialog::updateLevelLabels()
+{
+    ui->blackLevelValueLabel->setText(formatLevelValue(blackLevel));
+    ui->whiteLevelValueLabel->setText(formatLevelValue(whiteLevel));
+}
+
+qint32 ChromaDecoderConfigDialog::levelForResetIndex(int index, bool white) const
+{
+    if (index == 0) {
+        if (white) {
+            return (startingWhiteLevel >= 0) ? startingWhiteLevel : whiteLevel;
+        }
+        return (startingBlackLevel >= 0) ? startingBlackLevel : blackLevel;
+    }
+
+    if (white) {
+        if (system == NTSC) {
+            return 0xC800;
+        }
+        return 0xD300;
+    }
+
+    if (system == NTSC) {
+        return (index == 2) ? 0x3C00 : 0x3C00 + 0x0A80;
+    }
+
+    return 0x4000;
 }
 
 void ChromaDecoderConfigDialog::updateDialog()
@@ -302,9 +375,44 @@ void ChromaDecoderConfigDialog::updateDialog()
 
     ui->cNRValueLabel->setEnabled(isSourceNtsc);
     ui->cNRValueLabel->setText(QString::number(ntscConfiguration.cNRLevel, 'f', 1) + tr(" IRE"));
+
+    updateLevelLabels();
 }
 
 // Methods to handle changes to the dialogue
+void ChromaDecoderConfigDialog::on_blackLevelHorizontalSlider_valueChanged(int value)
+{
+    blackLevel = value;
+    updateLevelLabels();
+    if (!updatingLevels) {
+        emit videoLevelsChanged(blackLevel, whiteLevel);
+    }
+}
+
+void ChromaDecoderConfigDialog::on_whiteLevelHorizontalSlider_valueChanged(int value)
+{
+    whiteLevel = value;
+    updateLevelLabels();
+    if (!updatingLevels) {
+        emit videoLevelsChanged(blackLevel, whiteLevel);
+    }
+}
+
+void ChromaDecoderConfigDialog::on_blackLevelResetComboBox_activated(int index)
+{
+    const qint32 resetValue = levelForResetIndex(index, false);
+    if (resetValue >= 0) {
+        ui->blackLevelHorizontalSlider->setValue(resetValue);
+    }
+}
+
+void ChromaDecoderConfigDialog::on_whiteLevelResetComboBox_activated(int index)
+{
+    const qint32 resetValue = levelForResetIndex(index, true);
+    if (resetValue >= 0) {
+        ui->whiteLevelHorizontalSlider->setValue(resetValue);
+    }
+}
 
 void ChromaDecoderConfigDialog::on_chromaGainHorizontalSlider_valueChanged(int value)
 {
@@ -440,6 +548,14 @@ void ChromaDecoderConfigDialog::on_yNRHorizontalSlider_valueChanged(int value)
 	ynrLevel = static_cast<double>(value) / 10;
     ui->yNRValueLabel->setText(QString::number(ntscConfiguration.yNRLevel, 'f', 1) + tr(" IRE"));
     emit chromaDecoderConfigChanged();
+}
+void ChromaDecoderConfigDialog::levelSelected(qint32 level)
+{
+    if (level < 0x8000) {
+        ui->blackLevelHorizontalSlider->setValue(level);
+    } else {
+        ui->whiteLevelHorizontalSlider->setValue(level);
+    }
 }
 
 void ChromaDecoderConfigDialog::updateSourceMode(TbcSource::SourceMode mode)
