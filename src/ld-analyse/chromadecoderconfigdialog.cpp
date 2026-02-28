@@ -25,6 +25,8 @@
 
 static constexpr double DEGREE_SLIDER_POWER = 3.0;
 static constexpr qint32 DEGREE_SLIDER_SCALE = 1000;
+static constexpr qint32 WHITE_LEVEL_MIN = 0x8000;
+static constexpr qint32 WHITE_LEVEL_MAX = 0xFFFF;
 
 static double degreesToSliderPos(double degrees) {
     double sliderPos = pow(abs(degrees) / 180, 1 / DEGREE_SLIDER_POWER) * DEGREE_SLIDER_SCALE;
@@ -44,6 +46,18 @@ static double sliderPosToDegrees(double sliderPos) {
     }
 }
 
+static qint32 whiteSliderToLevel(qint32 sliderValue)
+{
+    const qint32 clamped = qBound(WHITE_LEVEL_MIN, sliderValue, WHITE_LEVEL_MAX);
+    return (WHITE_LEVEL_MIN + WHITE_LEVEL_MAX) - clamped;
+}
+
+static qint32 whiteLevelToSlider(qint32 whiteLevel)
+{
+    const qint32 clamped = qBound(WHITE_LEVEL_MIN, whiteLevel, WHITE_LEVEL_MAX);
+    return (WHITE_LEVEL_MIN + WHITE_LEVEL_MAX) - clamped;
+}
+
 ChromaDecoderConfigDialog::ChromaDecoderConfigDialog(QWidget *parent) :
     QDialog(parent),
     ui(new Ui::ChromaDecoderConfigDialog)
@@ -52,8 +66,8 @@ ChromaDecoderConfigDialog::ChromaDecoderConfigDialog(QWidget *parent) :
     setWindowFlags(Qt::Window);
     ui->blackLevelHorizontalSlider->setMinimum(0);
     ui->blackLevelHorizontalSlider->setMaximum(0x7FFF);
-    ui->whiteLevelHorizontalSlider->setMinimum(0x8000);
-    ui->whiteLevelHorizontalSlider->setMaximum(0xFFFF);
+    ui->whiteLevelHorizontalSlider->setMinimum(WHITE_LEVEL_MIN);
+    ui->whiteLevelHorizontalSlider->setMaximum(WHITE_LEVEL_MAX);
 
     ui->chromaGainHorizontalSlider->setMinimum(0);
     ui->chromaGainHorizontalSlider->setMaximum(200);
@@ -168,7 +182,7 @@ void ChromaDecoderConfigDialog::setVideoLevels(const LdDecodeMetaData::VideoPara
         ui->blackLevelHorizontalSlider->setValue(blackLevel);
     }
     if (whiteLevel >= 0) {
-        ui->whiteLevelHorizontalSlider->setValue(whiteLevel);
+        ui->whiteLevelHorizontalSlider->setValue(whiteLevelToSlider(whiteLevel));
     }
     ui->blackLevelResetComboBox->setCurrentIndex(0);
     ui->whiteLevelResetComboBox->setCurrentIndex(0);
@@ -231,7 +245,16 @@ void ChromaDecoderConfigDialog::updateDialog()
 			palConfiguration.chromaFilter = PalColour::transform2DFilter;
 			ntscConfiguration.dimensions = 2;
 		}
-		ntscConfiguration.phaseCompensation = (tbcSource->getVideoParameters().tapeFormat != "");//enable phase compensation only for tape
+        if (tbcSource) {
+            const auto &videoParameters = tbcSource->getVideoParameters();
+            if (videoParameters.ntscPhaseCompensation >= 0) {
+                ntscConfiguration.phaseCompensation = (videoParameters.ntscPhaseCompensation != 0);
+            } else {
+                ntscConfiguration.phaseCompensation = true;
+            }
+        } else {
+            ntscConfiguration.phaseCompensation = true;
+        }
 		ui->enableYNRCheckBox->setChecked(yNREnabled);
 		ui->enableYCCombineCheckBox->setChecked(combine);
 		
@@ -391,7 +414,7 @@ void ChromaDecoderConfigDialog::on_blackLevelHorizontalSlider_valueChanged(int v
 
 void ChromaDecoderConfigDialog::on_whiteLevelHorizontalSlider_valueChanged(int value)
 {
-    whiteLevel = value;
+    whiteLevel = whiteSliderToLevel(value);
     updateLevelLabels();
     if (!updatingLevels) {
         emit videoLevelsChanged(blackLevel, whiteLevel);
@@ -410,7 +433,7 @@ void ChromaDecoderConfigDialog::on_whiteLevelResetComboBox_activated(int index)
 {
     const qint32 resetValue = levelForResetIndex(index, true);
     if (resetValue >= 0) {
-        ui->whiteLevelHorizontalSlider->setValue(resetValue);
+        ui->whiteLevelHorizontalSlider->setValue(whiteLevelToSlider(resetValue));
     }
 }
 
@@ -554,7 +577,7 @@ void ChromaDecoderConfigDialog::levelSelected(qint32 level)
     if (level < 0x8000) {
         ui->blackLevelHorizontalSlider->setValue(level);
     } else {
-        ui->whiteLevelHorizontalSlider->setValue(level);
+        ui->whiteLevelHorizontalSlider->setValue(whiteLevelToSlider(level));
     }
 }
 
