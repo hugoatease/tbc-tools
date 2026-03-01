@@ -44,8 +44,8 @@ This is the complete suite of tools for processing LaserDisc captures and TBC (T
 
 ## Important Notes
 
-- **SQLite Format**: All tools now use SQLite format for metadata storage instead of JSON
-- **File Extensions**: TBC files use `.tbc` extension, metadata uses `.tbc.db` (SQLite format)
+- **Metadata Formats**: SQLite (`.tbc.db`) is the primary internal metadata format, with JSON metadata still supported by selected tools and workflows
+- **File Extensions**: TBC files use `.tbc` extension; metadata is commonly `.tbc.db` (SQLite) and can also be `.json` where supported
 - **Dependencies**: Most tools require FFmpeg and other multimedia libraries
 - **Performance**: Many tools support multi-threading for faster processing
 

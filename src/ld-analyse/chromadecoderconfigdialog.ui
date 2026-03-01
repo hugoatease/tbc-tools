@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>460</width>
-    <height>637</height>
+    <width>440</width>
+    <height>620</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -21,16 +21,22 @@
     <widget class="QWidget" name="videoLevelsWidget" native="true">
      <layout class="QGridLayout" name="videoLevelsGridLayout">
       <property name="horizontalSpacing">
-       <number>12</number>
+       <number>8</number>
       </property>
-      <item row="0" column="0">
+      <property name="verticalSpacing">
+       <number>6</number>
+      </property>
+      <item row="0" column="0" colspan="3">
        <widget class="QLabel" name="blackLevelLabel">
         <property name="text">
          <string>Black level:</string>
         </property>
+        <property name="alignment">
+         <set>Qt::AlignLeft|Qt::AlignVCenter</set>
+        </property>
        </widget>
       </item>
-      <item row="0" column="1">
+      <item row="1" column="0" colspan="3">
        <widget class="QSlider" name="blackLevelHorizontalSlider">
         <property name="sizePolicy">
          <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
@@ -40,7 +46,7 @@
         </property>
         <property name="minimumSize">
          <size>
-          <width>320</width>
+          <width>300</width>
           <height>0</height>
          </size>
         </property>
@@ -49,11 +55,33 @@
         </property>
        </widget>
       </item>
-      <item row="0" column="2">
+      <item row="2" column="0">
+       <widget class="QSpinBox" name="blackLevelSpinBox">
+        <property name="minimumSize">
+         <size>
+          <width>110</width>
+          <height>26</height>
+         </size>
+        </property>
+        <property name="minimum">
+         <number>0</number>
+        </property>
+        <property name="maximum">
+         <number>32767</number>
+        </property>
+        <property name="singleStep">
+         <number>1</number>
+        </property>
+        <property name="displayIntegerBase">
+         <number>10</number>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="1">
        <widget class="QComboBox" name="blackLevelResetComboBox">
         <item>
          <property name="text">
-          <string>Starting Value</string>
+          <string>Reset</string>
          </property>
         </item>
         <item>
@@ -68,24 +96,17 @@
         </item>
        </widget>
       </item>
-      <item row="1" column="1" colspan="2">
-       <widget class="QLabel" name="blackLevelValueLabel">
-        <property name="text">
-         <string>—</string>
-        </property>
-        <property name="alignment">
-         <set>Qt::AlignCenter</set>
-        </property>
-       </widget>
-      </item>
-      <item row="2" column="0">
+      <item row="3" column="0" colspan="3">
        <widget class="QLabel" name="whiteLevelLabel">
         <property name="text">
          <string>White level:</string>
         </property>
+        <property name="alignment">
+         <set>Qt::AlignLeft|Qt::AlignVCenter</set>
+        </property>
        </widget>
       </item>
-      <item row="2" column="1">
+      <item row="4" column="0" colspan="3">
        <widget class="QSlider" name="whiteLevelHorizontalSlider">
         <property name="sizePolicy">
          <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
@@ -95,7 +116,7 @@
         </property>
         <property name="minimumSize">
          <size>
-          <width>320</width>
+          <width>300</width>
           <height>0</height>
          </size>
         </property>
@@ -110,11 +131,33 @@
         </property>
        </widget>
       </item>
-      <item row="2" column="2">
+      <item row="5" column="0">
+       <widget class="QSpinBox" name="whiteLevelSpinBox">
+        <property name="minimumSize">
+         <size>
+          <width>110</width>
+          <height>26</height>
+         </size>
+        </property>
+        <property name="minimum">
+         <number>32768</number>
+        </property>
+        <property name="maximum">
+         <number>65535</number>
+        </property>
+        <property name="singleStep">
+         <number>1</number>
+        </property>
+        <property name="displayIntegerBase">
+         <number>10</number>
+        </property>
+       </widget>
+      </item>
+      <item row="5" column="1">
        <widget class="QComboBox" name="whiteLevelResetComboBox">
         <item>
          <property name="text">
-          <string>Starting Value</string>
+          <string>Reset</string>
          </property>
         </item>
         <item>
@@ -129,16 +172,6 @@
         </item>
        </widget>
       </item>
-      <item row="3" column="1" colspan="2">
-       <widget class="QLabel" name="whiteLevelValueLabel">
-        <property name="text">
-         <string>—</string>
-        </property>
-        <property name="alignment">
-         <set>Qt::AlignCenter</set>
-        </property>
-       </widget>
-      </item>
      </layout>
     </widget>
    </item>
@@ -150,36 +183,49 @@
     </widget>
    </item>
    <item>
-    <widget class="QSlider" name="chromaGainHorizontalSlider">
-     <property name="sizePolicy">
-      <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
-       <horstretch>0</horstretch>
-       <verstretch>0</verstretch>
-      </sizepolicy>
+    <layout class="QHBoxLayout" name="chromaGainRowLayout">
+     <property name="spacing">
+      <number>8</number>
      </property>
-     <property name="minimumSize">
-      <size>
-       <width>400</width>
-       <height>0</height>
-      </size>
-     </property>
-     <property name="maximum">
-      <number>200</number>
-     </property>
-     <property name="orientation">
-      <enum>Qt::Horizontal</enum>
-     </property>
-    </widget>
-   </item>
-   <item>
-    <widget class="QLabel" name="chromaGainValueLabel">
-     <property name="text">
-      <string>1.0</string>
-     </property>
-     <property name="alignment">
-      <set>Qt::AlignCenter</set>
-     </property>
-    </widget>
+     <item>
+      <widget class="QLabel" name="chromaGainValueLabel">
+       <property name="minimumSize">
+        <size>
+         <width>60</width>
+         <height>0</height>
+        </size>
+       </property>
+       <property name="text">
+        <string>1.0</string>
+       </property>
+       <property name="alignment">
+        <set>Qt::AlignRight|Qt::AlignVCenter</set>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QSlider" name="chromaGainHorizontalSlider">
+       <property name="sizePolicy">
+        <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
+         <horstretch>0</horstretch>
+         <verstretch>0</verstretch>
+        </sizepolicy>
+       </property>
+       <property name="minimumSize">
+        <size>
+         <width>300</width>
+         <height>0</height>
+        </size>
+       </property>
+       <property name="maximum">
+        <number>200</number>
+       </property>
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+      </widget>
+     </item>
+    </layout>
    </item>
    <item>
     <widget class="QLabel" name="chromaPhaseLabel">
@@ -189,24 +235,43 @@
     </widget>
    </item>
    <item>
-    <widget class="QSlider" name="chromaPhaseHorizontalSlider">
-     <property name="maximum">
-      <number>200</number>
+    <layout class="QHBoxLayout" name="chromaPhaseRowLayout">
+     <property name="spacing">
+      <number>8</number>
      </property>
-     <property name="orientation">
-      <enum>Qt::Horizontal</enum>
-     </property>
-    </widget>
-   </item>
-   <item>
-    <widget class="QLabel" name="chromaPhaseValueLabel">
-     <property name="text">
-      <string>0.0°</string>
-     </property>
-     <property name="alignment">
-      <set>Qt::AlignCenter</set>
-     </property>
-    </widget>
+     <item>
+      <widget class="QLabel" name="chromaPhaseValueLabel">
+       <property name="minimumSize">
+        <size>
+         <width>60</width>
+         <height>0</height>
+        </size>
+       </property>
+       <property name="text">
+        <string>0.0°</string>
+       </property>
+       <property name="alignment">
+        <set>Qt::AlignRight|Qt::AlignVCenter</set>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QSlider" name="chromaPhaseHorizontalSlider">
+       <property name="minimumSize">
+        <size>
+         <width>300</width>
+         <height>0</height>
+        </size>
+       </property>
+       <property name="maximum">
+        <number>200</number>
+       </property>
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+      </widget>
+     </item>
+    </layout>
    </item>
    <item>
     <widget class="QLabel" name="yNRLabel">
@@ -216,21 +281,40 @@
     </widget>
    </item>
    <item>
-    <widget class="QSlider" name="yNRHorizontalSlider">
-     <property name="orientation">
-      <enum>Qt::Horizontal</enum>
+    <layout class="QHBoxLayout" name="yNRRowLayout">
+     <property name="spacing">
+      <number>8</number>
      </property>
-    </widget>
-   </item>
-   <item>
-    <widget class="QLabel" name="yNRValueLabel">
-     <property name="text">
-      <string>0.00 IRE</string>
-     </property>
-     <property name="alignment">
-      <set>Qt::AlignCenter</set>
-     </property>
-    </widget>
+     <item>
+      <widget class="QLabel" name="yNRValueLabel">
+       <property name="minimumSize">
+        <size>
+         <width>60</width>
+         <height>0</height>
+        </size>
+       </property>
+       <property name="text">
+        <string>0.00 IRE</string>
+       </property>
+       <property name="alignment">
+        <set>Qt::AlignRight|Qt::AlignVCenter</set>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QSlider" name="yNRHorizontalSlider">
+      <property name="minimumSize">
+       <size>
+        <width>300</width>
+        <height>0</height>
+       </size>
+      </property>
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+      </widget>
+     </item>
+    </layout>
    </item>
    <item>
     <widget class="QCheckBox" name="enableYNRCheckBox">
@@ -324,7 +408,7 @@
          <property name="sizeHint" stdset="0">
           <size>
            <width>20</width>
-           <height>15</height>
+           <height>6</height>
           </size>
          </property>
         </spacer>
@@ -337,7 +421,7 @@
          <property name="sizeHint" stdset="0">
           <size>
            <width>20</width>
-           <height>15</height>
+           <height>6</height>
           </size>
          </property>
         </spacer>
@@ -350,24 +434,43 @@
         </widget>
        </item>
        <item>
-        <widget class="QSlider" name="thresholdHorizontalSlider">
-         <property name="maximum">
-          <number>100</number>
+        <layout class="QHBoxLayout" name="thresholdRowLayout">
+         <property name="spacing">
+          <number>8</number>
          </property>
-         <property name="orientation">
-          <enum>Qt::Horizontal</enum>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QLabel" name="thresholdValueLabel">
-         <property name="text">
-          <string>0.4</string>
-         </property>
-         <property name="alignment">
-          <set>Qt::AlignCenter</set>
-         </property>
-        </widget>
+         <item>
+          <widget class="QLabel" name="thresholdValueLabel">
+           <property name="minimumSize">
+            <size>
+             <width>60</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="text">
+            <string>0.4</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignRight|Qt::AlignVCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QSlider" name="thresholdHorizontalSlider">
+           <property name="minimumSize">
+            <size>
+             <width>280</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="maximum">
+            <number>100</number>
+           </property>
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+          </widget>
+         </item>
+        </layout>
        </item>
        <item>
         <spacer name="verticalSpacer_3">
@@ -377,7 +480,7 @@
          <property name="sizeHint" stdset="0">
           <size>
            <width>20</width>
-           <height>15</height>
+           <height>6</height>
           </size>
          </property>
         </spacer>
@@ -471,7 +574,7 @@
          <property name="sizeHint" stdset="0">
           <size>
            <width>20</width>
-           <height>15</height>
+           <height>6</height>
           </size>
          </property>
         </spacer>
@@ -505,7 +608,7 @@
          <property name="sizeHint" stdset="0">
           <size>
            <width>20</width>
-           <height>15</height>
+           <height>6</height>
           </size>
          </property>
         </spacer>
@@ -518,21 +621,40 @@
         </widget>
        </item>
        <item>
-        <widget class="QSlider" name="adaptThresholdHorizontalSlider">
-         <property name="orientation">
-          <enum>Qt::Horizontal</enum>
+        <layout class="QHBoxLayout" name="adaptThresholdRowLayout">
+         <property name="spacing">
+          <number>8</number>
          </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QLabel" name="adaptThresholdValueLabel">
-         <property name="text">
-          <string>1.0</string>
-         </property>
-         <property name="alignment">
-          <set>Qt::AlignCenter</set>
-         </property>
-        </widget>
+         <item>
+          <widget class="QLabel" name="adaptThresholdValueLabel">
+           <property name="minimumSize">
+            <size>
+             <width>60</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="text">
+            <string>1.0</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignRight|Qt::AlignVCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QSlider" name="adaptThresholdHorizontalSlider">
+           <property name="minimumSize">
+            <size>
+             <width>280</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+          </widget>
+         </item>
+        </layout>
        </item>
        <item>
         <spacer name="verticalSpacer_10">
@@ -542,7 +664,7 @@
          <property name="sizeHint" stdset="0">
           <size>
            <width>20</width>
-           <height>15</height>
+           <height>6</height>
           </size>
          </property>
         </spacer>
@@ -555,21 +677,40 @@
         </widget>
        </item>
        <item>
-        <widget class="QSlider" name="chromaWeightHorizontalSlider">
-         <property name="orientation">
-          <enum>Qt::Horizontal</enum>
+        <layout class="QHBoxLayout" name="chromaWeightRowLayout">
+         <property name="spacing">
+          <number>8</number>
          </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QLabel" name="chromaWeightValueLabel">
-         <property name="text">
-          <string>1.0</string>
-         </property>
-         <property name="alignment">
-          <set>Qt::AlignCenter</set>
-         </property>
-        </widget>
+         <item>
+          <widget class="QLabel" name="chromaWeightValueLabel">
+           <property name="minimumSize">
+            <size>
+             <width>60</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="text">
+            <string>1.0</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignRight|Qt::AlignVCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QSlider" name="chromaWeightHorizontalSlider">
+           <property name="minimumSize">
+            <size>
+             <width>280</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+          </widget>
+         </item>
+        </layout>
        </item>
        <item>
         <spacer name="verticalSpacer_11">
@@ -579,7 +720,7 @@
          <property name="sizeHint" stdset="0">
           <size>
            <width>20</width>
-           <height>15</height>
+           <height>6</height>
           </size>
          </property>
         </spacer>
@@ -592,21 +733,40 @@
         </widget>
        </item>
        <item>
-        <widget class="QSlider" name="cNRHorizontalSlider">
-         <property name="orientation">
-          <enum>Qt::Horizontal</enum>
+        <layout class="QHBoxLayout" name="cNRRowLayout">
+         <property name="spacing">
+          <number>8</number>
          </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QLabel" name="cNRValueLabel">
-         <property name="text">
-          <string>0.00 IRE</string>
-         </property>
-         <property name="alignment">
-          <set>Qt::AlignCenter</set>
-         </property>
-        </widget>
+         <item>
+          <widget class="QLabel" name="cNRValueLabel">
+           <property name="minimumSize">
+            <size>
+             <width>60</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="text">
+            <string>0.00 IRE</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignRight|Qt::AlignVCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QSlider" name="cNRHorizontalSlider">
+           <property name="minimumSize">
+            <size>
+             <width>280</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+          </widget>
+         </item>
+        </layout>
        </item>
        <item>
         <spacer name="verticalSpacer">

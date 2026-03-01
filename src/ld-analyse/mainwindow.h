@@ -22,6 +22,7 @@
 #include <QRect>
 #include <QTimer>
 #include <QVector>
+#include <QActionGroup>
 
 #include "oscilloscopedialog.h"
 #include "vectorscopedialog.h"
@@ -213,8 +214,11 @@ private:
     void cleanupTempMetadataFile();
     void updateOscilloscopeDialogue();
     void updateVectorscopeDialogue();
+    void populateThemesMenu();
+    void applyThemeStyle(const QString &styleName);
     void mouseScanLineSelect(qint32 oX, qint32 oY);
 	void resizeEvent(QResizeEvent *event);
+    QActionGroup *themesActionGroup = nullptr;
 };
 
 #endif // MAINWINDOW_H

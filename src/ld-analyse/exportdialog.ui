@@ -256,7 +256,7 @@
       <string>Log tool output</string>
      </property>
      <property name="checked">
-      <bool>true</bool>
+      <bool>false</bool>
      </property>
     </widget>
    </item>

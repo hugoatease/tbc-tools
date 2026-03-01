@@ -60,6 +60,7 @@ public:
     bool getIsSourceLoaded() const;
     bool getIsMetadataOnly() const;
     void saveSourceMetadata();
+    bool writeMetadataSnapshot(const QString &metadataFilename, QString *errorMessage = nullptr) const;
     QString getCurrentSourceFilename() const;
     QString getCurrentMetadataFilename() const;
     QString getLastIOError() const;

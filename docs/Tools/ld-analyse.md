@@ -6,7 +6,7 @@ The primary file-type is TBC (time-base corrected) video files containing the ra
 
 TBC files are usually identified by the `.tbc` extension, with an optional chroma companion file named `_chroma.tbc` (suffix) or `chroma_*.tbc` (prefix, as used by vhs-decode).
 
-The application also presents source and tool-chain metadata (supplied by JSON files) that provide additional details about the TBC file's contents such as VBI data and TV System.
+The application also presents source and tool-chain metadata (supplied by JSON or SQLite metadata files) that provide additional details about the TBC file's contents such as VBI data and TV System.
 
 
 # Command line
@@ -26,12 +26,14 @@ ld-analyse \<options> \<input TBC file name>
 
 ```
 Options:
-  -h, --help     Displays this help.
-  -v, --version  Displays version information.
-  -d, --debug    Show debug
+  -h, --help          Displays this help.
+  -v, --version       Displays version information.
+  -d, --debug         Show debug
+  --force-dark-theme  Force dark theme regardless of desktop detection
+  --metadata-only     Load metadata (.db or .json) without TBC image data
 
 Arguments:
-  input          Specify input TBC file
+  input               Specify input TBC file or metadata file
 ```
 
 # Opening a Time-Base Corrected (TBC) video file
@@ -155,9 +157,27 @@ This option opens a new TBC file as described above.
 
 This option reloads the current TBC file (this is useful when checking a TBC file that is still being decoded in order to view any new frames that have decoded since the file was originally loaded).
 
-## Save JSON
+## Save Metadata
 
-This action saves any changes you've made to the JSON metadata for the current TBC file. The menu item is greyed out if no changes have been made.
+This action saves any metadata changes for the current source (SQLite or JSON). The menu item is greyed out if no changes have been made.
+
+The save operation uses an atomic replacement workflow:
+
+1. Write to a temporary metadata file by appending `.new` to the current metadata filename.
+2. Rename the previous metadata file to `.bup`.
+3. Rename the `.new` file into the original metadata filename.
+
+This preserves a rollback copy while avoiding partial writes.
+
+### JSON temp/backup handling
+
+JSON metadata remains JSON throughout this workflow, including temporary and backup file names such as `.json.new` and `.json.bup`.
+
+## Export tab and unsaved metadata changes
+
+When exporting from inside ld-analyse, the current in-memory settings are used even if you have not run Save Metadata.
+
+ld-analyse creates a temporary metadata snapshot and passes it to `tbc-video-export`, so export reflects current adjusted values without modifying the on-disk metadata first.
 
 ## Save frame as PNG
 

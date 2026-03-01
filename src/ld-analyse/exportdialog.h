@@ -53,7 +53,9 @@ private:
     QString sanitizeOutputBaseName(const QString &path) const;
     QString videoSystemArg(int system) const;
     QStringList collectAudioTracks() const;
-    QStringList buildArguments(QString *errorMessage) const;
+    QStringList buildArguments(QString *errorMessage, const QString &inputTbcJsonOverride = QString()) const;
+    QString createTemporaryMetadataSnapshot(QString *errorMessage);
+    void cleanupTemporaryMetadataSnapshot();
     void appendStatus(const QString &message);
     void appendLog(const QString &message);
     QString formatCommand(const QString &program, const QStringList &args) const;
@@ -66,6 +68,7 @@ private:
     QString currentInputFile;
     QString processStdout;
     QString processStderr;
+    QString temporaryInputJsonPath;
     bool outputAutoSet = true;
     bool exportAvailable = false;
     QHash<QString, int> processRowMap;

@@ -68,6 +68,14 @@ ChromaDecoderConfigDialog::ChromaDecoderConfigDialog(QWidget *parent) :
     ui->blackLevelHorizontalSlider->setMaximum(0x7FFF);
     ui->whiteLevelHorizontalSlider->setMinimum(WHITE_LEVEL_MIN);
     ui->whiteLevelHorizontalSlider->setMaximum(WHITE_LEVEL_MAX);
+    ui->blackLevelSpinBox->setMinimum(0);
+    ui->blackLevelSpinBox->setMaximum(0x7FFF);
+    ui->blackLevelSpinBox->setSingleStep(1);
+    ui->blackLevelSpinBox->setDisplayIntegerBase(10);
+    ui->whiteLevelSpinBox->setMinimum(WHITE_LEVEL_MIN);
+    ui->whiteLevelSpinBox->setMaximum(WHITE_LEVEL_MAX);
+    ui->whiteLevelSpinBox->setSingleStep(1);
+    ui->whiteLevelSpinBox->setDisplayIntegerBase(10);
 
     ui->chromaGainHorizontalSlider->setMinimum(0);
     ui->chromaGainHorizontalSlider->setMaximum(200);
@@ -176,6 +184,8 @@ void ChromaDecoderConfigDialog::setVideoLevels(const LdDecodeMetaData::VideoPara
     updatingLevels = true;
     QSignalBlocker blackSliderBlocker(ui->blackLevelHorizontalSlider);
     QSignalBlocker whiteSliderBlocker(ui->whiteLevelHorizontalSlider);
+    QSignalBlocker blackSpinBlocker(ui->blackLevelSpinBox);
+    QSignalBlocker whiteSpinBlocker(ui->whiteLevelSpinBox);
     QSignalBlocker blackResetBlocker(ui->blackLevelResetComboBox);
     QSignalBlocker whiteResetBlocker(ui->whiteLevelResetComboBox);
     if (blackLevel >= 0) {
@@ -191,18 +201,36 @@ void ChromaDecoderConfigDialog::setVideoLevels(const LdDecodeMetaData::VideoPara
     updateLevelLabels();
 }
 
-QString ChromaDecoderConfigDialog::formatLevelValue(qint32 value) const
+QString ChromaDecoderConfigDialog::formatLevelSuffix(qint32 value) const
 {
     if (value < 0) {
-        return QStringLiteral("—");
+        return QString();
     }
-    return QStringLiteral("%1 (0x%2)").arg(value).arg(value, 4, 16, QChar('0'));
+    return QStringLiteral(" (0x%1)").arg(value, 4, 16, QChar('0'));
 }
 
 void ChromaDecoderConfigDialog::updateLevelLabels()
 {
-    ui->blackLevelValueLabel->setText(formatLevelValue(blackLevel));
-    ui->whiteLevelValueLabel->setText(formatLevelValue(whiteLevel));
+    QSignalBlocker blackSpinBlocker(ui->blackLevelSpinBox);
+    QSignalBlocker whiteSpinBlocker(ui->whiteLevelSpinBox);
+
+    if (blackLevel >= 0) {
+        ui->blackLevelSpinBox->setEnabled(true);
+        ui->blackLevelSpinBox->setValue(blackLevel);
+        ui->blackLevelSpinBox->setSuffix(formatLevelSuffix(blackLevel));
+    } else {
+        ui->blackLevelSpinBox->setEnabled(false);
+        ui->blackLevelSpinBox->setSuffix(QString());
+    }
+
+    if (whiteLevel >= 0) {
+        ui->whiteLevelSpinBox->setEnabled(true);
+        ui->whiteLevelSpinBox->setValue(whiteLevel);
+        ui->whiteLevelSpinBox->setSuffix(formatLevelSuffix(whiteLevel));
+    } else {
+        ui->whiteLevelSpinBox->setEnabled(false);
+        ui->whiteLevelSpinBox->setSuffix(QString());
+    }
 }
 
 qint32 ChromaDecoderConfigDialog::levelForResetIndex(int index, bool white) const
@@ -417,6 +445,27 @@ void ChromaDecoderConfigDialog::on_whiteLevelHorizontalSlider_valueChanged(int v
     whiteLevel = whiteSliderToLevel(value);
     updateLevelLabels();
     if (!updatingLevels) {
+        emit videoLevelsChanged(blackLevel, whiteLevel);
+    }
+}
+void ChromaDecoderConfigDialog::on_blackLevelSpinBox_valueChanged(int value)
+{
+    blackLevel = qBound(0, value, 0x7FFF);
+    updateLevelLabels();
+    if (!updatingLevels) {
+        QSignalBlocker sliderBlocker(ui->blackLevelHorizontalSlider);
+        ui->blackLevelHorizontalSlider->setValue(blackLevel);
+        emit videoLevelsChanged(blackLevel, whiteLevel);
+    }
+}
+
+void ChromaDecoderConfigDialog::on_whiteLevelSpinBox_valueChanged(int value)
+{
+    whiteLevel = qBound(WHITE_LEVEL_MIN, value, WHITE_LEVEL_MAX);
+    updateLevelLabels();
+    if (!updatingLevels) {
+        QSignalBlocker sliderBlocker(ui->whiteLevelHorizontalSlider);
+        ui->whiteLevelHorizontalSlider->setValue(whiteLevelToSlider(whiteLevel));
         emit videoLevelsChanged(blackLevel, whiteLevel);
     }
 }

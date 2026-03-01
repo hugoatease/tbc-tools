@@ -7,12 +7,14 @@
 #include <QDir>
 #include <QDateTime>
 #include <QFileDialog>
+#include <QFile>
 #include <QFileInfo>
 #include <QFontMetrics>
 #include <QMessageBox>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
 #include <QStandardPaths>
+#include <QUuid>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QHeaderView>
@@ -213,6 +215,7 @@ ExportDialog::ExportDialog(QWidget *parent) :
 
 ExportDialog::~ExportDialog()
 {
+    cleanupTemporaryMetadataSnapshot();
     delete ui;
 }
 
@@ -409,10 +412,22 @@ void ExportDialog::on_exportButton_clicked()
     }
     appendStatus(tr("Starting export..."));
     appendLog(tr("Starting export..."));
+    QString snapshotErrorMessage;
+    const QString metadataSnapshotPath = createTemporaryMetadataSnapshot(&snapshotErrorMessage);
+    if (metadataSnapshotPath.isEmpty()) {
+        const QString errorToShow = snapshotErrorMessage.isEmpty()
+                                        ? tr("Could not prepare metadata for export.")
+                                        : snapshotErrorMessage;
+        appendStatus(errorToShow);
+        appendLog(errorToShow);
+        QMessageBox::warning(this, tr("Error"), errorToShow);
+        return;
+    }
 
     QString errorMessage;
-    const QStringList arguments = buildArguments(&errorMessage);
+    const QStringList arguments = buildArguments(&errorMessage, metadataSnapshotPath);
     if (arguments.isEmpty()) {
+        cleanupTemporaryMetadataSnapshot();
         if (!errorMessage.isEmpty()) {
             appendStatus(errorMessage);
             appendLog(errorMessage);
@@ -423,6 +438,7 @@ void ExportDialog::on_exportButton_clicked()
 
     const QString exportPath = resolveVideoExportPath();
     if (exportPath.isEmpty()) {
+        cleanupTemporaryMetadataSnapshot();
         appendStatus(tr("tbc-video-export not found."));
         appendLog(tr("tbc-video-export not found."));
         QMessageBox::warning(this, tr("Error"), tr("tbc-video-export not found in PATH or alongside ld-analyse."));
@@ -481,6 +497,7 @@ void ExportDialog::on_exportButton_clicked()
 #endif
     exportProcess->start(programToRun, argsToRun);
     if (!exportProcess->waitForStarted(5000)) {
+        cleanupTemporaryMetadataSnapshot();
         appendStatus(tr("Failed to start tbc-video-export."));
         appendLog(tr("Failed to start tbc-video-export."));
         QMessageBox::warning(this, tr("Error"), tr("Failed to start tbc-video-export."));
@@ -523,6 +540,7 @@ void ExportDialog::on_cancelButton_clicked()
 void ExportDialog::handleProcessFinished(int exitCode, QProcess::ExitStatus exitStatus)
 {
     setBusy(false);
+    cleanupTemporaryMetadataSnapshot();
     const QString combinedOutput = processStdout + QStringLiteral("\n") + processStderr;
     const bool reportedFailure =
         combinedOutput.contains(QRegularExpression(QStringLiteral("\\bExport failed\\b"),
@@ -552,6 +570,7 @@ void ExportDialog::handleProcessFinished(int exitCode, QProcess::ExitStatus exit
 void ExportDialog::handleProcessError(QProcess::ProcessError)
 {
     setBusy(false);
+    cleanupTemporaryMetadataSnapshot();
     const QString errorText = exportProcess ? exportProcess->errorString() : QString();
     appendStatus(errorText.isEmpty() ? tr("Export failed to start.") : errorText);
     appendLog(errorText.isEmpty() ? tr("Export failed to start.") : errorText);
@@ -755,7 +774,7 @@ QStringList ExportDialog::collectAudioTracks() const
     return tracks;
 }
 
-QStringList ExportDialog::buildArguments(QString *errorMessage) const
+QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &inputTbcJsonOverride) const
 {
     QStringList args;
     if (!tbcSource) {
@@ -835,8 +854,50 @@ QStringList ExportDialog::buildArguments(QString *errorMessage) const
         args << QStringLiteral("--transform-threshold") << QString::number(videoParameters.palTransformThreshold, 'f', 3);
     }
 
+    if (!inputTbcJsonOverride.isEmpty()) {
+        args << QStringLiteral("--input-tbc-json") << inputTbcJsonOverride;
+    }
+
     args << inputFile << outputBase;
     return args;
+}
+
+QString ExportDialog::createTemporaryMetadataSnapshot(QString *errorMessage)
+{
+    cleanupTemporaryMetadataSnapshot();
+
+    if (!tbcSource) {
+        if (errorMessage) {
+            *errorMessage = tr("No source loaded.");
+        }
+        return QString();
+    }
+
+    const QString tempPath = QDir::temp().filePath(
+        QStringLiteral("ld-analyse-export-%1.tbc.json")
+            .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+
+    QString snapshotError;
+    if (!tbcSource->writeMetadataSnapshot(tempPath, &snapshotError)) {
+        if (errorMessage) {
+            *errorMessage = snapshotError.isEmpty()
+                                ? tr("Failed to create metadata snapshot.")
+                                : snapshotError;
+        }
+        return QString();
+    }
+
+    temporaryInputJsonPath = tempPath;
+    return temporaryInputJsonPath;
+}
+
+void ExportDialog::cleanupTemporaryMetadataSnapshot()
+{
+    if (temporaryInputJsonPath.isEmpty()) {
+        return;
+    }
+    QFile::remove(temporaryInputJsonPath);
+    temporaryInputJsonPath.clear();
 }
 
 void ExportDialog::appendStatus(const QString &message)

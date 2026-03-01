@@ -55,6 +55,32 @@ void TbcSource::loadSource(QString sourceFilename, QString metadataFilename)
     watcher.setFuture(future);
 }
 
+bool TbcSource::writeMetadataSnapshot(const QString &metadataFilename, QString *errorMessage) const
+{
+    if (!sourceReady) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("No source loaded.");
+        }
+        return false;
+    }
+
+    if (metadataFilename.trimmed().isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("No metadata snapshot filename provided.");
+        }
+        return false;
+    }
+
+    if (!ldDecodeMetaData.write(metadataFilename)) {
+        if (errorMessage) {
+            *errorMessage = QStringLiteral("Could not write temporary metadata snapshot.");
+        }
+        return false;
+    }
+
+    return true;
+}
+
 // Method to load a metadata file without a TBC source
 void TbcSource::loadMetadata(QString metadataFilename, QString displayFilename)
 {
@@ -1542,7 +1568,7 @@ bool TbcSource::startBackgroundSave(QString metadataFilename)
     // to be careful not to destroy the user's only copy of their metadata file if
     // something goes wrong!
 
-    // Write the metadata out to a new temporary file
+    // Write the metadata out to a new temporary file.
     QString newMetadataFilename = metadataFilename + ".new";
     if (!ldDecodeMetaData.write(newMetadataFilename)) {
         // Writing failed

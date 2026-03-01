@@ -22,6 +22,7 @@
 #include <QDebug>
 #include <QMap>
 #include <QMultiMap>
+#include <QStringList>
 #include <QVariant>
 #include "tbc/logging.h"
 
@@ -94,6 +95,28 @@ bool parseVideoSystemName(QString name, VideoSystem &system)
             return true;
         }
     }
+    return false;
+}
+
+static bool isJsonMetadataFilename(const QString &fileName)
+{
+    const QStringList parts = QFileInfo(fileName)
+                                  .fileName()
+                                  .toLower()
+                                  .split(QLatin1Char('.'), Qt::SkipEmptyParts);
+    if (parts.isEmpty()) return false;
+
+    const QString &last = parts.last();
+    if (last == QLatin1String("json")) return true;
+
+    if ((last == QLatin1String("new")
+         || last == QLatin1String("bup")
+         || last == QLatin1String("bak")
+         || last == QLatin1String("tmp"))
+        && parts.size() >= 2) {
+        return parts.at(parts.size() - 2) == QLatin1String("json");
+    }
+
     return false;
 }
 
@@ -744,8 +767,7 @@ void LdDecodeMetaData::clear()
 // Read all metadata from SQLite file
 bool LdDecodeMetaData::read(QString fileName)
 {
-    const QFileInfo inputInfo(fileName);
-    if (inputInfo.suffix().compare(QStringLiteral("json"), Qt::CaseInsensitive) == 0) {
+    if (isJsonMetadataFilename(fileName)) {
         std::ifstream jsonFile(fileName.toStdString());
         if (jsonFile.fail()) {
             qCritical("Opening JSON input file failed: JSON file cannot be opened/does not exist");
@@ -900,8 +922,7 @@ bool LdDecodeMetaData::read(QString fileName)
 // Write all metadata out to an SQLite file
 bool LdDecodeMetaData::write(QString fileName) const
 {
-    const QFileInfo outputInfo(fileName);
-    if (outputInfo.suffix().compare(QStringLiteral("json"), Qt::CaseInsensitive) == 0) {
+    if (isJsonMetadataFilename(fileName)) {
         std::ofstream jsonFile(fileName.toStdString());
         if (jsonFile.fail()) {
             qCritical("Opening JSON output file failed");

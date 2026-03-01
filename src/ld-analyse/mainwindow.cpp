@@ -14,6 +14,7 @@
 #include "tbc/logging.h"
 
 #include <QAbstractButton>
+#include <QApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -21,6 +22,8 @@
 #include <QPainter>
 #include <QPen>
 #include <QPixmap>
+#include <QStyle>
+#include <QStyleFactory>
 #include <QSvgRenderer>
 #include <QtMath>
 #include <QUuid>
@@ -125,6 +128,7 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     ensureSvgButtonIcon(ui->zoomOutPushButton, QStringLiteral(":/icons/Graphics/zoom-out.svg"));
     ensureSvgButtonIcon(ui->originalSizePushButton, QStringLiteral(":/icons/Graphics/zoom-original.svg"));
     ensureSvgButtonIcon(ui->mouseModePushButton, QStringLiteral(":/icons/Graphics/oscilloscope-target.svg"));
+    populateThemesMenu();
 
     // Set up dialogues
     oscilloscopeDialog = new OscilloscopeDialog(this);
@@ -291,6 +295,94 @@ MainWindow::~MainWindow()
     cleanupTempMetadataFile();
 
     delete ui;
+}
+
+void MainWindow::populateThemesMenu()
+{
+    if (!ui || !ui->menuThemes) {
+        return;
+    }
+
+    if (!themesActionGroup) {
+        themesActionGroup = new QActionGroup(this);
+        themesActionGroup->setExclusive(true);
+    }
+
+    const QList<QAction *> existingActions = themesActionGroup->actions();
+    for (QAction *action : existingActions) {
+        themesActionGroup->removeAction(action);
+    }
+    ui->menuThemes->clear();
+
+    QStringList availableThemes = QStyleFactory::keys();
+    availableThemes.removeDuplicates();
+    availableThemes.sort(Qt::CaseInsensitive);
+
+    if (availableThemes.isEmpty()) {
+        QAction *placeholderAction = ui->menuThemes->addAction(tr("No Qt themes available"));
+        placeholderAction->setEnabled(false);
+        return;
+    }
+
+    const QString currentStyleName = QApplication::style() ? QApplication::style()->objectName() : QString();
+
+    for (const QString &styleName : availableThemes) {
+        QAction *themeAction = ui->menuThemes->addAction(styleName);
+        themeAction->setCheckable(true);
+        themeAction->setData(styleName);
+        themesActionGroup->addAction(themeAction);
+
+        if (!currentStyleName.isEmpty() &&
+            styleName.compare(currentStyleName, Qt::CaseInsensitive) == 0) {
+            themeAction->setChecked(true);
+        }
+
+        connect(themeAction, &QAction::triggered, this, [this, themeAction](bool checked) {
+            if (!checked) {
+                return;
+            }
+            applyThemeStyle(themeAction->data().toString());
+        });
+    }
+}
+
+void MainWindow::applyThemeStyle(const QString &styleName)
+{
+    if (styleName.isEmpty()) {
+        return;
+    }
+
+    const QString currentStyleName = QApplication::style() ? QApplication::style()->objectName() : QString();
+    if (!currentStyleName.isEmpty() &&
+        styleName.compare(currentStyleName, Qt::CaseInsensitive) == 0) {
+        return;
+    }
+
+    QStyle *style = QStyleFactory::create(styleName);
+    if (!style) {
+        return;
+    }
+
+    QApplication::setStyle(style);
+    buttonPalette = QApplication::palette();
+
+    const QString activeStyleName = QApplication::style() ? QApplication::style()->objectName() : styleName;
+    if (themesActionGroup) {
+        for (QAction *action : themesActionGroup->actions()) {
+            action->setChecked(action->data().toString().compare(activeStyleName, Qt::CaseInsensitive) == 0);
+        }
+    }
+
+    if (tbcSource.getIsDropoutPresent()) {
+        QPalette tempPalette = buttonPalette;
+        tempPalette.setColor(QPalette::Button, QColor(Qt::lightGray));
+        ui->dropoutsPushButton->setAutoFillBackground(true);
+        ui->dropoutsPushButton->setPalette(tempPalette);
+    } else {
+        ui->dropoutsPushButton->setAutoFillBackground(true);
+        ui->dropoutsPushButton->setPalette(buttonPalette);
+    }
+    ui->dropoutsPushButton->update();
 }
 
 // Update GUI methods for when TBC source files are loaded and unloaded -----------------------------------------------

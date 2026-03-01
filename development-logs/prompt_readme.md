@@ -3259,3 +3259,136 @@ zip warning: name not matched: src/efm-decoder/libs/ezpwd/djelic_bch.h
 Command: date -u +%Y-%m-%dT%H:%M:%SZ
 Output:
 2026-03-01T11:50:36Z
+
+## 2026-03-01T11:54:46Z
+Command: git -C /home/harry/tbc-tools --no-pager status -sb
+Output:
+## metadata-improvements...origin/metadata-improvements [ahead 2]
+ M development-logs/prompt_readme.md
+ M src/ld-analyse/configuration.cpp
+ M src/ld-analyse/configuration.h
+ M src/ld-analyse/mainwindow.cpp
+ M src/ld-analyse/mainwindow.h
+ M src/ld-analyse/videoparametersdialog.cpp
+ M src/ld-analyse/videoparametersdialog.h
+ M src/ld-analyse/videoparametersdialog.ui
+?? export_metadata_passthrough_fixed_2026-02-28.zip
+?? icons_metadata_dialog_fixed_2026-02-27.zip
+?? log_note_video_parameters_fixed_2026-03-01.md
+?? metadata_converter_gui_default_fixed_2026-02-28.zip
+?? metadata_fixed_2026-02-27.zip
+?? video_parameters_fixed_2026-03-01.zip
+
+Command: git -C /home/harry/tbc-tools add development-logs/prompt_readme.md src/ld-analyse/configuration.cpp src/ld-analyse/configuration.h src/ld-analyse/mainwindow.cpp src/ld-analyse/mainwindow.h src/ld-analyse/videoparametersdialog.cpp src/ld-analyse/videoparametersdialog.h src/ld-analyse/videoparametersdialog.ui log_note_video_parameters_fixed_2026-03-01.md
+Output:
+
+Command: git -C /home/harry/tbc-tools commit -m "Add export boundary thickness control" -m "Co-Authored-By: Oz <oz-agent@warp.dev>"
+Output:
+[metadata-improvements c92adde] Add export boundary thickness control
+ 9 files changed, 1830 insertions(+), 20 deletions(-)
+ create mode 100644 log_note_video_parameters_fixed_2026-03-01.md
+
+Command: git -C /home/harry/tbc-tools push
+Output:
+Enumerating objects: 48, done.
+Counting objects: 100% (48/48), done.
+Delta compression using up to 36 threads
+Compressing objects: 100% (31/31), done.
+Writing objects: 100% (32/32), 20.37 KiB | 1.46 MiB/s, done.
+Total 32 (delta 26), reused 0 (delta 0), pack-reused 0
+remote: Resolving deltas: 100% (26/26), completed with 15 local objects.
+To https://github.com/harrypm/tbc-tools.git
+   71ac4d3..c92adde  metadata-improvements -> metadata-improvements
+
+Command: date -u +%Y-%m-%dT%H:%M:%SZ
+Output:
+2026-03-01T11:54:46Z
+
+## 2026-03-01T12:17:06Z
+User input:
+make some folders to tidy up the logs and restore data
+
+Command: mkdir -p /home/harry/tbc-tools/restore-points /home/harry/tbc-tools/development-logs/archive
+Output:
+
+Command: date -u +%Y-%m-%dT%H:%M:%SZ
+Output:
+2026-03-01T12:17:06Z
+
+## 2026-03-01T12:38:29Z
+User input:
+Now I want to tidy up the video decode config window a bit I want the white and black level to be uniform with the outher chroma sliders, I want the reset and values box to be like the video params are with a slider ontop and a editing box with the hard number value alteration, with the reset box/dropdown next to it.
+
+I want it to be smaller like it was before and like how my example edited version has it attached is a side by side picture example if that helps.
+
+Edits (apply_patch):
+- src/ld-analyse/chromadecoderconfigdialog.ui: reorganize black/white level layout to slider-over-spinbox with reset dropdown; shrink min widths.
+- src/ld-analyse/chromadecoderconfigdialog.h: add spinbox slots and update level suffix helper.
+- src/ld-analyse/chromadecoderconfigdialog.cpp: wire spinboxes, sync sliders, and show hex suffix in editable values.
+
+Command: nix develop -c ninja -C /home/harry/tbc-tools/build
+Output:
+warning: Git tree '/home/harry/tbc-tools' is dirty
+ninja: Entering directory `/home/harry/tbc-tools/build'
+[20/20] Linking CXX executable bin/ld-analyse
+
+Command: date -u +%Y-%m-%dT%H:%M:%SZ
+Output:
+2026-03-01T12:38:29Z
+
+## 2026-03-01T12:54:19Z
+User input:
+I want the reset box to be called "Reset" insted of starting value as that should be a default and or reset to selecatable option.
+
+Also making the text to sliders more uniform it would make sence to have black/white identical to the 3 outher sliders below, but to save space I think it makes sence to have the slider direcly to the right side of the name of it, and inside the NTSC/PAL box this could be shorter trastically removing dead space for smaller monitor users.
+
+Edits (apply_patch):
+- src/ld-analyse/chromadecoderconfigdialog.ui: rename reset combo entry to "Reset", tighten video level layout widths/spacing, and reduce NTSC/PAL tab spacers.
+
+Command: nix develop -c ninja -C /home/harry/tbc-tools/build
+Output:
+warning: Git tree '/home/harry/tbc-tools' is dirty
+ninja: Entering directory `/home/harry/tbc-tools/build'
+[18/18] Linking CXX executable bin/ld-analyse
+
+Command: date -u +%Y-%m-%dT%H:%M:%SZ
+Output:
+2026-03-01T12:54:19Z
+
+## 2026-03-01T13:09:23Z
+User input:
+It's teh 3 bottom sliders that have made the window longer I see now they should be made slider on the right side of the text cutting down the space inbetween too.
+
+Then for black/white the text can be above keeping them uniform with the outher 3 gain/phase/noise reduction sliders
+
+Edits (apply_patch):
+- src/ld-analyse/chromadecoderconfigdialog.ui: move black/white labels above sliders; compact gain/phase/luma NR to value+slider rows; tighten sizing.
+
+Command: nix develop -c ninja -C /home/harry/tbc-tools/build
+Output:
+warning: Git tree '/home/harry/tbc-tools' is dirty
+ninja: Entering directory `/home/harry/tbc-tools/build'
+[18/18] Linking CXX executable bin/ld-analyse
+
+Command: date -u +%Y-%m-%dT%H:%M:%SZ
+Output:
+2026-03-01T13:09:23Z
+
+## 2026-03-01T13:51:54Z
+User input:
+1. not affected at all, you applied it to the outher 3 instread...
+2. Spacing is all shifted now so I can't tell.
+3. the overall size is horisontally slimmer more so then expected, it was vertical hight that was the goal as the bottom section was not affected this did not change much at all..
+
+Edits (apply_patch):
+- src/ld-analyse/chromadecoderconfigdialog.ui: compact PAL/NTSC slider rows (value + slider) and widen key sliders to reduce vertical height while restoring width.
+
+Command: nix develop -c ninja -C /home/harry/tbc-tools/build
+Output:
+warning: Git tree '/home/harry/tbc-tools' is dirty
+ninja: Entering directory `/home/harry/tbc-tools/build'
+[18/18] Linking CXX executable bin/ld-analyse
+
+Command: date -u +%Y-%m-%dT%H:%M:%SZ
+Output:
+2026-03-01T13:51:54Z

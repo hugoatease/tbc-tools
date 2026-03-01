@@ -5,6 +5,7 @@
 ## Overview
 
 ld-analyse is a graphical user interface (GUI) tool for analyzing and visualizing Time Base Corrected (TBC) LaserDisc video files produced by ld-decode. It provides comprehensive analysis tools for signal quality assessment, dropout detection, VBI metadata viewing, and real-time video preview.
+It can also open metadata directly (SQLite `.db` or JSON `.json`) and export using current in-memory parameter adjustments without requiring a metadata save first.
 
 ## Usage
 
@@ -34,7 +35,10 @@ ld-analyse [options] <input.tbc>
    - VBI: Metadata display
    - Dropout Analysis: Statistical dropout information
    - SNR Analysis: Signal-to-noise measurements
-5. **Save**: File → Save frame as PNG
+5. **Save/Export**:
+   - File → Save Metadata
+   - File → Save frame as PNG
+   - Export tab for `tbc-video-export`
 
 ## Options
 
@@ -46,10 +50,10 @@ ld-analyse [options] <input.tbc>
 
 #### Display Options
 - `--force-dark-theme`: Force dark theme regardless of system settings
+- `--metadata-only`: Load metadata (`.db` or `.json`) without TBC image data
 
 #### Arguments
-- `input`: Input TBC file to analyze (required)
-- `-v, --version`: Display version information
+- `input`: Input TBC file or metadata file (`.tbc`, `.db`, `.json`)
 
 ## Examples
 
@@ -62,11 +66,27 @@ ld-analyse capture.tbc
 
 ### Input
 - `.tbc` files with associated `.tbc.db` metadata
+- Metadata-only input: `.db` (SQLite) or `.json`
 - Supports PAL (625-line, 50 Hz), NTSC (525-line, 60 Hz), and PAL-M (525-line PAL variant)
 
 ### Output
 - PNG images (frame export)
 - Analysis reports and statistics
+
+## Metadata Workflow
+
+### Saving metadata
+- `File → Save Metadata` writes through a temporary file named by appending `.new` to the metadata filename.
+- If an existing metadata file is present, it is renamed to `.bup`, then `.new` is renamed into place.
+- This preserves the established backup workflow while keeping writes atomic.
+
+### JSON and SQLite handling
+- ld-analyse supports both SQLite (`.db`) and JSON (`.json`) metadata sources.
+- JSON format detection includes temporary/backup naming patterns such as `.json.new` and `.json.bup`, so save/backup operations retain correct JSON handling.
+
+### Export without saving first
+- Export from the in-app Export tab uses current in-memory parameter values, including unsaved adjustments.
+- ld-analyse creates a temporary metadata snapshot and passes it to `tbc-video-export`, so exporting does not require running `Save Metadata` first.
 
 ## Troubleshooting
 

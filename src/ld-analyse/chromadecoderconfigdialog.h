@@ -54,6 +54,8 @@ public slots:
 private slots:
     void on_blackLevelHorizontalSlider_valueChanged(int value);
     void on_whiteLevelHorizontalSlider_valueChanged(int value);
+    void on_blackLevelSpinBox_valueChanged(int value);
+    void on_whiteLevelSpinBox_valueChanged(int value);
     void on_blackLevelResetComboBox_activated(int index);
     void on_whiteLevelResetComboBox_activated(int index);
     void on_chromaGainHorizontalSlider_valueChanged(int value);
@@ -97,7 +99,7 @@ private:
     void updateDialog();
     void updateLevelLabels();
     qint32 levelForResetIndex(int index, bool white) const;
-    QString formatLevelValue(qint32 value) const;
+    QString formatLevelSuffix(qint32 value) const;
 };
 
 #endif // CHROMADECODERCONFIGDIALOG_H

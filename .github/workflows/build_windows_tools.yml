@@ -13,6 +13,9 @@ env:
   FLAC_FILE: "flac-1.5.0-win.zip"
   FLAC_PATH: "flac-1.5.0-win"
   FLAC_URL: "https://ftp.osuosl.org/pub/xiph/releases/flac/flac-1.5.0-win.zip"
+  # Persist vcpkg binary artifacts across runs for faster Windows builds.
+  VCPKG_BINARY_CACHE_DIR: "${{ github.workspace }}\\.vcpkg-binary-cache"
+  VCPKG_BINARY_SOURCES: "clear;files,${{ github.workspace }}\\.vcpkg-binary-cache,readwrite"
 
 jobs:
   build-tbc-tools:
@@ -49,6 +52,14 @@ jobs:
       - uses: lukka/get-cmake@latest
         with:
             cmakeVersion: "^3.31.6" # Need to pin to cmake 3.x until fftw3 is updated to support cmake 4.x.
+      - name: Restore vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_BINARY_CACHE_DIR }}
+          key: ${{ runner.os }}-x64-vcpkg-binary-cache-${{ hashFiles('vcpkg.json') }}-${{ hashFiles('CMakePresets.json') }}
+          restore-keys: |
+            ${{ runner.os }}-x64-vcpkg-binary-cache-${{ hashFiles('vcpkg.json') }}-
+            ${{ runner.os }}-x64-vcpkg-binary-cache-
 
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11

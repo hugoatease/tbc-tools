@@ -67,6 +67,9 @@ testout
 # Temporary files
 *.tmp
 
+# Development log archives
+development-logs/*.zip
+
 # Profiling results
 Benchfile*
 perf.data*

@@ -729,10 +729,16 @@
     <addaction name="actionMetadata_Conversion"/>
     <addaction name="actionExport_Decode_Metadata"/>
    </widget>
+   <widget class="QMenu" name="menuThemes">
+    <property name="title">
+     <string>Themes</string>
+    </property>
+   </widget>
    <addaction name="menuFile"/>
    <addaction name="menuView"/>
    <addaction name="menuWindow"/>
    <addaction name="menuTools"/>
+   <addaction name="menuThemes"/>
    <addaction name="menuHelp"/>
   </widget>
   <widget class="QStatusBar" name="statusBar"/>
