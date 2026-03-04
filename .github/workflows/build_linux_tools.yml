@@ -84,18 +84,12 @@ jobs:
             [ -e "AppDir/usr/bin/$base" ] && continue
             cp -a "$item" "AppDir/usr/bin/$base"
           done
-          FFMPEG_BIN="$(command -v ffmpeg || true)"
-          FFPROBE_BIN="$(command -v ffprobe || true)"
-          if [ -z "$FFMPEG_BIN" ]; then
-            nix build nixpkgs#ffmpeg --out-link ffmpeg-result
-            FFMPEG_BIN="ffmpeg-result/bin/ffmpeg"
-            FFPROBE_BIN="ffmpeg-result/bin/ffprobe"
+          nix build nixpkgs#ffmpeg --out-link ffmpeg-result
+          if [ -f ffmpeg-result/bin/ffmpeg ]; then
+            cp -a ffmpeg-result/bin/ffmpeg AppDir/usr/bin/ffmpeg
           fi
-          if [ -f "$FFMPEG_BIN" ]; then
-            cp -a "$FFMPEG_BIN" AppDir/usr/bin/ffmpeg
-          fi
-          if [ -f "$FFPROBE_BIN" ]; then
-            cp -a "$FFPROBE_BIN" AppDir/usr/bin/ffprobe
+          if [ -f ffmpeg-result/bin/ffprobe ]; then
+            cp -a ffmpeg-result/bin/ffprobe AppDir/usr/bin/ffprobe
           fi
           cp -a result/lib/. AppDir/usr/lib/ || true
           LIBSTDCPP_PATH="$(ldd result/bin/.ld-analyse-wrapped | awk '$1 == "libstdc++.so.6" { print $3; exit }')"

@@ -147,6 +147,10 @@ jobs:
           Invoke-WebRequest "${{ env.FFMPEG_URL }}" -OutFile ffmpeg.zip
           Expand-Archive .\\ffmpeg.zip -DestinationPath .
           Copy-Item -Path .\\${{ env.FFMPEG_PATH}}\\bin\\ffmpeg.exe -Destination release\\
+          if (Test-Path .\\${{ env.FFMPEG_PATH}}\\bin\\ffprobe.exe) {
+            Copy-Item -Path .\\${{ env.FFMPEG_PATH}}\\bin\\ffprobe.exe -Destination release\\
+          }
+          Copy-Item -Path .\\${{ env.FFMPEG_PATH}}\\bin\\*.dll -Destination release\\
           Copy-Item -Path .\\${{ env.FFMPEG_PATH}}\\LICENSE -Destination release\\LICENSES\\copyright-ffmpeg
 
       - name: Download and copy FLAC to release directory
