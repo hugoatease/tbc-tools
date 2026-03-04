@@ -187,6 +187,50 @@ bool isFfv1ProfileName(const QString &profileName)
     return profileName.trimmed().compare(QStringLiteral("ffv1"), Qt::CaseInsensitive) == 0;
 }
 
+bool isPalFamilySystem(int system)
+{
+    return system == PAL || system == PAL_M;
+}
+
+bool isValidChromaDecoderForSystem(const QString &decoderName, int system)
+{
+    const QString normalizedDecoder = decoderName.trimmed().toLower();
+    if (normalizedDecoder.isEmpty()) {
+        return false;
+    }
+    static const QStringList palDecoders = {
+        QStringLiteral("pal2d"),
+        QStringLiteral("transform2d"),
+        QStringLiteral("transform3d"),
+        QStringLiteral("mono")
+    };
+    static const QStringList ntscDecoders = {
+        QStringLiteral("ntsc1d"),
+        QStringLiteral("ntsc2d"),
+        QStringLiteral("ntsc3d"),
+        QStringLiteral("ntsc3dnoadapt"),
+        QStringLiteral("mono")
+    };
+
+    if (isPalFamilySystem(system)) {
+        return palDecoders.contains(normalizedDecoder);
+    }
+    if (system == NTSC) {
+        return ntscDecoders.contains(normalizedDecoder);
+    }
+    return false;
+}
+
+bool listContainsCaseInsensitive(const QStringList &values, const QString &target)
+{
+    for (const QString &value : values) {
+        if (value.compare(target, Qt::CaseInsensitive) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 const QList<int> &supportedFfv1SlicesValues()
 {
     static const QList<int> values = {4, 6, 8, 9, 12, 15, 16, 18, 20, 24, 25, 28, 30, 32};
@@ -1148,6 +1192,9 @@ void ExportDialog::on_exportButton_clicked()
         QMessageBox::warning(this, tr("Error"), errorToShow);
         return;
     }
+    if (isFfv1ProfileName(selectedProfile) && ui->ffv1SlicesSpinBox) {
+        appendLog(tr("FFV1 slices override set to %1.").arg(ui->ffv1SlicesSpinBox->value()));
+    }
     const int totalFrames = qMax(1, tbcSource->getNumberOfFrames());
     int inPoint = ui->inPointSpinBox ? ui->inPointSpinBox->value() : 1;
     int outPoint = ui->outPointSpinBox ? ui->outPointSpinBox->value() : totalFrames;
@@ -2060,7 +2107,8 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
         args << QStringLiteral("--video-system") << videoSystemArg(videoParameters.system);
     }
 
-    if (!videoParameters.chromaDecoder.isEmpty()) {
+    if (!videoParameters.chromaDecoder.isEmpty()
+        && isValidChromaDecoderForSystem(videoParameters.chromaDecoder, videoParameters.system)) {
         args << QStringLiteral("--chroma-decoder") << videoParameters.chromaDecoder;
     }
     if (videoParameters.chromaGain >= 0.0) {
@@ -2094,12 +2142,11 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
         }
     }
 
-    if (videoParameters.ntscPhaseCompensation >= 0) {
+    if (videoParameters.system == NTSC && videoParameters.ntscPhaseCompensation >= 0) {
         args << (videoParameters.ntscPhaseCompensation ? QStringLiteral("--ntsc-phase-comp")
                                                        : QStringLiteral("--no-ntsc-phase-comp"));
     }
-
-    if ((videoParameters.system == PAL || videoParameters.system == PAL_M)
+    if (isPalFamilySystem(videoParameters.system)
         && videoParameters.palTransformThreshold >= 0.0) {
         args << QStringLiteral("--transform-threshold") << QString::number(videoParameters.palTransformThreshold, 'f', 3);
     }
@@ -2276,7 +2323,7 @@ QString ExportDialog::createTemporaryExportConfig(QString *errorMessage,
             continue;
         }
         QJsonObject profileObject = currentValue.toObject();
-        if (profileObject.value(QStringLiteral("name")).toString() != selectedProfile) {
+        if (profileObject.value(QStringLiteral("name")).toString().compare(selectedProfile, Qt::CaseInsensitive) != 0) {
             continue;
         }
         profileObject.insert(QStringLiteral("audio_profile"), selectedAudioProfile);
@@ -2298,13 +2345,15 @@ QString ExportDialog::createTemporaryExportConfig(QString *errorMessage,
         const QStringList selectedVideoProfiles = profileVideoProfileNames(selectedProfileObject);
         QJsonArray videoProfiles = root.value(QStringLiteral("video_profiles")).toArray();
         bool changedVideoProfiles = false;
+        bool updatedSelectedVideoProfile = false;
         for (int i = 0; i < videoProfiles.size(); ++i) {
             if (!videoProfiles.at(i).isObject()) {
                 continue;
             }
             QJsonObject videoProfileObject = videoProfiles.at(i).toObject();
             const QString videoProfileName = videoProfileObject.value(QStringLiteral("name")).toString();
-            if (!selectedVideoProfiles.isEmpty() && !selectedVideoProfiles.contains(videoProfileName)) {
+            const bool selectedVideoProfile = listContainsCaseInsensitive(selectedVideoProfiles, videoProfileName);
+            if (!selectedVideoProfiles.isEmpty() && !selectedVideoProfile) {
                 continue;
             }
             const QString codec = videoProfileObject.value(QStringLiteral("codec")).toString();
@@ -2316,6 +2365,25 @@ QString ExportDialog::createTemporaryExportConfig(QString *errorMessage,
             setOrAppendNumericOption(&videoProfileObject, QStringLiteral("-slices"), ffv1Slices);
             videoProfiles.replace(i, videoProfileObject);
             changedVideoProfiles = true;
+            updatedSelectedVideoProfile = true;
+        }
+        if (!updatedSelectedVideoProfile) {
+            for (int i = 0; i < videoProfiles.size(); ++i) {
+                if (!videoProfiles.at(i).isObject()) {
+                    continue;
+                }
+                QJsonObject videoProfileObject = videoProfiles.at(i).toObject();
+                const QString videoProfileName = videoProfileObject.value(QStringLiteral("name")).toString();
+                const QString codec = videoProfileObject.value(QStringLiteral("codec")).toString();
+                const bool isFfv1VideoProfile = codec.compare(QStringLiteral("ffv1"), Qt::CaseInsensitive) == 0
+                                                || videoProfileName.contains(QStringLiteral("ffv1"), Qt::CaseInsensitive);
+                if (!isFfv1VideoProfile) {
+                    continue;
+                }
+                setOrAppendNumericOption(&videoProfileObject, QStringLiteral("-slices"), ffv1Slices);
+                videoProfiles.replace(i, videoProfileObject);
+                changedVideoProfiles = true;
+            }
         }
         if (changedVideoProfiles) {
             root.insert(QStringLiteral("video_profiles"), videoProfiles);
