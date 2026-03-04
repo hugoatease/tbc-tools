@@ -1254,11 +1254,18 @@ void ExportDialog::on_exportButton_clicked()
 #if defined(Q_OS_UNIX)
     const QString scriptPath = QStandardPaths::findExecutable(QStringLiteral("script"));
     if (!scriptPath.isEmpty()) {
+#if defined(Q_OS_MACOS)
+        programToRun = scriptPath;
+        argsToRun = {QStringLiteral("-q"), QStringLiteral("/dev/null"), exportPath};
+        argsToRun.append(arguments);
+        appendLog(tr("Using script (bsd) to enable ANSI progress output."));
+#else
         const QString scriptCommand = formatShellCommand(exportPath, arguments);
         programToRun = scriptPath;
         argsToRun = {QStringLiteral("-q"), QStringLiteral("-e"), QStringLiteral("-c"),
                      scriptCommand, QStringLiteral("/dev/null")};
         appendLog(tr("Using script to enable ANSI progress output."));
+#endif
     }
 #endif
     exportProcess->start(programToRun, argsToRun);

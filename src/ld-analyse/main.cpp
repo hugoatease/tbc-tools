@@ -127,12 +127,10 @@ int main(int argc, char *argv[])
     qInstallMessageHandler(filteredDebugOutputHandler);
 
     QApplication a(argc, argv);
-#ifdef Q_OS_WIN
-    // Use Fusion on Windows so theme/palette rendering remains consistent.
+    // Use Fusion on all platforms when available for consistent widget styling.
     if (QStyleFactory::keys().contains(QStringLiteral("Fusion"), Qt::CaseInsensitive)) {
         a.setStyle(QStringLiteral("Fusion"));
     }
-#endif
 
     // Set application name and version
     QCoreApplication::setApplicationName("ld-analyse");
