@@ -60,6 +60,18 @@ jobs:
             cp "$wrapped" "dist/bin/$base"
             chmod +x "dist/bin/$base"
           done
+          # Bundle ffmpeg/ffprobe for self-contained exports
+          nix build nixpkgs#ffmpeg --out-link ffmpeg-result
+          if [ ! -f ffmpeg-result/bin/ffmpeg ]; then
+            echo "Missing ffmpeg from nixpkgs build"
+            exit 1
+          fi
+          cp ffmpeg-result/bin/ffmpeg dist/bin/ffmpeg
+          chmod +x dist/bin/ffmpeg
+          if [ -f ffmpeg-result/bin/ffprobe ]; then
+            cp ffmpeg-result/bin/ffprobe dist/bin/ffprobe
+            chmod +x dist/bin/ffprobe
+          fi
 
       - name: Get version info
         id: version

@@ -41,7 +41,7 @@ jobs:
             build_preset: vcpkg-arm64
             cache_subdir: windows-arm64
             artifact_name: tbc-tools_windows_arm64
-            bundle_external_tools: false
+            bundle_external_tools: true
     name: Build tbc-tools (${{ matrix.arch }})
     runs-on: ${{ matrix.runs_on }}
 
@@ -163,9 +163,13 @@ jobs:
           Invoke-WebRequest "${{ env.TBC_VIDEO_EXPORT_URL }}" -OutFile ".\\${{ env.TBC_VIDEO_EXPORT_FILE }}"
           Copy-Item -Path ".\\${{ env.TBC_VIDEO_EXPORT_FILE }}" -Destination release\\
           Invoke-WebRequest "${{ env.TBC_VIDEO_EXPORT_LICENSE_URL }}" -OutFile release\\LICENSES\\copyright-tbc-video-export
-          Push-Location release
-          .\\${{ env.TBC_VIDEO_EXPORT_FILE }} --dump-default-config
-          Pop-Location
+          if ("${{ matrix.arch }}" -eq "x86_64") {
+            Push-Location release
+            .\\${{ env.TBC_VIDEO_EXPORT_FILE }} --dump-default-config
+            Pop-Location
+          } else {
+            Write-Host "Skipping tbc-video-export --dump-default-config on arm64."
+          }
 
       - name: Copy sqlite runtime to release directory
         run: |
