@@ -23,6 +23,7 @@
 #include <QPainter>
 #include <QPen>
 #include <QPixmap>
+#include <QProcess>
 #include <QRegularExpression>
 #include <QSignalBlocker>
 #include <QStyle>
@@ -35,6 +36,7 @@
 #include <QUuid>
 
 #include "metadataconverterutil.h"
+#include "../ld-process-vits/processingpool.h"
 namespace {
 QString chromaDecoderNameFromConfig(VideoSystem system,
                                     const PalColour::Configuration &palConfig,
@@ -218,6 +220,86 @@ int nominalFrameRateForSystem(VideoSystem system)
     default:
         return 30;
     }
+}
+
+QString resolveExternalExecutable(const QStringList &toolNames)
+{
+    for (const QString &name : toolNames) {
+        const QString toolPath = QStandardPaths::findExecutable(name);
+        if (!toolPath.isEmpty()) {
+            return toolPath;
+        }
+    }
+
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QStringList candidateDirs = {
+        QStringLiteral("."),
+        QStringLiteral(".."),
+        QStringLiteral("../bin"),
+        QStringLiteral("../../bin")
+    };
+
+    for (const QString &dir : candidateDirs) {
+        for (const QString &name : toolNames) {
+            const QString localCandidate = QDir(appDir).filePath(dir + QLatin1Char('/') + name);
+            if (QFileInfo::exists(localCandidate)) {
+                return localCandidate;
+            }
+        }
+    }
+
+    return QString();
+}
+
+bool runExternalTool(const QString &program, const QStringList &arguments, QString *errorMessage)
+{
+    QProcess process;
+    process.start(program, arguments);
+    if (!process.waitForFinished(-1)) {
+        if (errorMessage) {
+            *errorMessage = QObject::tr("The tool did not finish execution.");
+        }
+        return false;
+    }
+
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        const QString stdErr = QString::fromLocal8Bit(process.readAllStandardError()).trimmed();
+        const QString stdOut = QString::fromLocal8Bit(process.readAllStandardOutput()).trimmed();
+        if (errorMessage) {
+            *errorMessage = stdErr.isEmpty() ? stdOut : stdErr;
+            if (errorMessage->isEmpty()) {
+                *errorMessage = QObject::tr("The tool failed with exit code %1.")
+                                    .arg(process.exitCode());
+            }
+        }
+        return false;
+    }
+
+    return true;
+}
+
+QString normalizedPathForCompare(const QString &path)
+{
+    if (path.isEmpty()) {
+        return QString();
+    }
+
+    const QFileInfo info(path);
+    const QString canonicalPath = info.canonicalFilePath();
+    if (!canonicalPath.isEmpty()) {
+        return canonicalPath;
+    }
+    return info.absoluteFilePath();
+}
+
+bool sameFilePath(const QString &left, const QString &right)
+{
+    const QString normalizedLeft = normalizedPathForCompare(left);
+    const QString normalizedRight = normalizedPathForCompare(right);
+    if (normalizedLeft.isEmpty() || normalizedRight.isEmpty()) {
+        return false;
+    }
+    return normalizedLeft == normalizedRight;
 }
 } // namespace
 
@@ -1732,6 +1814,158 @@ void MainWindow::on_actionExport_Decode_Metadata_triggered()
 
     QMessageBox::information(this, tr("Export complete"),
                              tr("Exported decode metadata to %1").arg(outputFileName));
+}
+
+void MainWindow::on_actionProcess_VBI_triggered()
+{
+    QString defaultInput;
+    if (tbcSource.getIsSourceLoaded()) {
+        defaultInput = tbcSource.getCurrentSourceFilename();
+    }
+    const QString startPath = defaultInput.isEmpty() ? configuration.getSourceDirectory() : defaultInput;
+    const QString inputFileName = QFileDialog::getOpenFileName(this,
+                                                               tr("Select TBC file for VBI processing"),
+                                                               startPath,
+                                                               tr("TBC files (*.tbc *.ytbc *.ctbc *.tbcy *.tbcc);;All Files (*)"));
+    if (inputFileName.isEmpty()) {
+        return;
+    }
+
+    const QString toolPath = resolveExternalExecutable({QStringLiteral("ld-process-vbi")});
+    if (toolPath.isEmpty()) {
+        QMessageBox::warning(this, tr("Tool not found"),
+                             tr("ld-process-vbi was not found in PATH or alongside the application."));
+        return;
+    }
+
+    QString errorMessage;
+    if (!runExternalTool(toolPath, {inputFileName}, &errorMessage)) {
+        QMessageBox::warning(this, tr("Process failed"),
+                             errorMessage.isEmpty()
+                                 ? tr("ld-process-vbi failed.")
+                                 : errorMessage);
+        return;
+    }
+
+    statusBar()->showMessage(tr("VBI processing completed for %1").arg(inputFileName), 4000);
+    if (tbcSource.getIsSourceLoaded() && sameFilePath(inputFileName, tbcSource.getCurrentSourceFilename())) {
+        loadTbcFile(lastFilename);
+    }
+}
+
+void MainWindow::on_actionProcess_VITS_triggered()
+{
+    QString defaultInput;
+    if (tbcSource.getIsSourceLoaded()) {
+        defaultInput = tbcSource.getCurrentSourceFilename();
+    }
+    const QString startPath = defaultInput.isEmpty() ? configuration.getSourceDirectory() : defaultInput;
+    const QString inputFileName = QFileDialog::getOpenFileName(this,
+                                                               tr("Select TBC file for VITS processing"),
+                                                               startPath,
+                                                               tr("TBC files (*.tbc *.ytbc *.ctbc *.tbcy *.tbcc);;All Files (*)"));
+    if (inputFileName.isEmpty()) {
+        return;
+    }
+
+    const QString toolPath = resolveExternalExecutable({QStringLiteral("ld-process-vits")});
+    if (toolPath.isEmpty()) {
+        QMessageBox::warning(this, tr("Tool not found"),
+                             tr("ld-process-vits was not found in PATH or alongside the application."));
+        return;
+    }
+
+    QString errorMessage;
+    if (!runExternalTool(toolPath, {inputFileName}, &errorMessage)) {
+        QMessageBox::warning(this, tr("Process failed"),
+                             errorMessage.isEmpty()
+                                 ? tr("ld-process-vits failed.")
+                                 : errorMessage);
+        return;
+    }
+
+    statusBar()->showMessage(tr("VITS processing completed for %1").arg(inputFileName), 4000);
+    if (tbcSource.getIsSourceLoaded() && sameFilePath(inputFileName, tbcSource.getCurrentSourceFilename())) {
+        loadTbcFile(lastFilename);
+    }
+}
+
+void MainWindow::on_actionFix_JSON_SNR_triggered()
+{
+    QString defaultInput;
+    if (metadataJsonLoaded && !metadataJsonFilename.isEmpty()) {
+        defaultInput = metadataJsonFilename;
+    } else if (tbcSource.getIsSourceLoaded()) {
+        defaultInput = tbcSource.getCurrentMetadataFilename();
+    }
+
+    const QString startPath = defaultInput.isEmpty() ? configuration.getSourceDirectory() : defaultInput;
+    const QString metadataFilename = QFileDialog::getOpenFileName(this,
+                                                                  tr("Select metadata file for SNR fix"),
+                                                                  startPath,
+                                                                  tr("Metadata files (*.json *.db);;All Files (*)"));
+    if (metadataFilename.isEmpty()) {
+        return;
+    }
+
+    QString inputTbcFilename = resolveSourceFilenameForMetadata(metadataFilename);
+    if (inputTbcFilename.isEmpty()) {
+        inputTbcFilename = QFileDialog::getOpenFileName(this,
+                                                        tr("Select source TBC file for SNR fix"),
+                                                        configuration.getSourceDirectory(),
+                                                        tr("TBC files (*.tbc *.ytbc *.ctbc *.tbcy *.tbcc);;All Files (*)"));
+        if (inputTbcFilename.isEmpty()) {
+            return;
+        }
+    }
+
+    LdDecodeMetaData metadata;
+    if (!metadata.read(metadataFilename)) {
+        QMessageBox::warning(this, tr("Metadata load failed"),
+                             tr("Unable to read metadata file:\n%1").arg(metadataFilename));
+        return;
+    }
+
+    const QString backupFilename = metadataFilename + QStringLiteral(".vbup");
+    if (QFileInfo::exists(backupFilename)) {
+        const QMessageBox::StandardButton overwrite =
+            QMessageBox::question(this,
+                                  tr("Backup exists"),
+                                  tr("Backup file already exists:\n%1\n\nOverwrite it?").arg(backupFilename),
+                                  QMessageBox::Yes | QMessageBox::No,
+                                  QMessageBox::No);
+        if (overwrite != QMessageBox::Yes) {
+            return;
+        }
+
+        if (!QFile::remove(backupFilename)) {
+            QMessageBox::warning(this, tr("Backup failed"),
+                                 tr("Unable to remove existing backup file:\n%1").arg(backupFilename));
+            return;
+        }
+    }
+
+    if (!QFile::copy(metadataFilename, backupFilename)) {
+        QMessageBox::warning(this, tr("Backup failed"),
+                             tr("Unable to create backup file:\n%1").arg(backupFilename));
+        return;
+    }
+
+    const qint32 maxThreads = qMax(1, QThread::idealThreadCount());
+    ProcessingPool processingPool(inputTbcFilename, metadataFilename, maxThreads, metadata);
+    if (!processingPool.process()) {
+        QMessageBox::warning(this, tr("Process failed"),
+                             tr("SNR recalculation failed for:\n%1").arg(metadataFilename));
+        return;
+    }
+
+    statusBar()->showMessage(tr("Fix JSON SNR completed for %1").arg(metadataFilename), 4000);
+    if (tbcSource.getIsSourceLoaded() &&
+        (sameFilePath(metadataFilename, tbcSource.getCurrentMetadataFilename())
+         || sameFilePath(metadataFilename, metadataJsonFilename)
+         || sameFilePath(inputTbcFilename, tbcSource.getCurrentSourceFilename()))) {
+        loadTbcFile(lastFilename);
+    }
 }
 
 // Start saving the modified metadata

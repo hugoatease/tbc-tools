@@ -134,9 +134,12 @@ jobs:
             export PATH="$(dirname "$QMAKE"):$PATH"
           fi
 
-          EXTRA_QT_MODULES="core;gui;opengl;widgets;sql" ./${{ env.APPIMAGE_QT_FILE }} --appdir AppDir
+          if ! EXTRA_QT_MODULES="core;gui;opengl;widgets;sql" ./${{ env.APPIMAGE_QT_FILE }} --appdir AppDir; then
+            echo "linuxdeploy-plugin-qt failed; using manual Qt plugin fallback."
+          fi
 
-          # Ensure SVG icon support is bundled (toolbar icons in ld-analyse are SVG resources)
+          # Bundle required Qt runtime plugins explicitly (handles Nix Qt layouts where
+          # linuxdeploy-plugin-qt cannot find some plugins, e.g. qtsvg split packages).
           copy_qt_plugin() {
             plugin_rel="$1"
             plugin_src="$(find /nix/store -type f -path "*/plugins/${plugin_rel}" | sort | head -n 1 || true)"
@@ -148,6 +151,10 @@ jobs:
             cp -L "$plugin_src" "AppDir/usr/plugins/${plugin_rel}"
             echo "Bundled Qt plugin: ${plugin_rel} <- ${plugin_src}"
           }
+          copy_qt_plugin "platforms/libqxcb.so"
+          copy_qt_plugin "platforminputcontexts/libcomposeplatforminputcontextplugin.so"
+          copy_qt_plugin "xcbglintegrations/libqxcb-glx-integration.so"
+          copy_qt_plugin "sqldrivers/libqsqlite.so"
 
           copy_qt_plugin "iconengines/libqsvgicon.so"
           copy_qt_plugin "imageformats/libqsvg.so"
@@ -171,6 +178,9 @@ jobs:
             done
           done
 
+          # Some copied Nix store files are read-only; make bundle writable so linuxdeploy
+          # can strip binaries/libs in non-root environments.
+          chmod -R u+w AppDir/usr/bin AppDir/usr/lib AppDir/usr/plugins
           # Create minimal desktop file
           mkdir -p AppDir/usr/share/applications
           cat > AppDir/usr/share/applications/tbc-tools.desktop << EOF
@@ -198,6 +208,8 @@ jobs:
             exit 1
           fi
           cp "$APPIMAGE_OUT" release/tbc-tools-x86_64.AppImage
+      - name: Validate x86_64 AppImage bundle
+        run: bash ci/verify_linux_bundle.sh x86-appimage release/tbc-tools-x86_64.AppImage
 
       - name: Copy scripts
         run: find scripts -maxdepth 1 -type f -executable -exec cp {} release/ \; || true
@@ -228,7 +240,7 @@ jobs:
           nix_path: nixpkgs=channel:nixos-unstable
 
       - name: Create release directory
-        run: mkdir -p release/bin release/lib
+        run: mkdir -p release/bin release/lib release/plugins
 
       - name: Build with Nix
         run: |
@@ -278,6 +290,49 @@ jobs:
               done
             done
           done
+
+          # Bundle required Qt runtime plugins explicitly for portable GUI operation.
+          copy_qt_plugin() {
+            plugin_rel="$1"
+            plugin_src="$(find /nix/store -type f -path "*/plugins/${plugin_rel}" | sort | head -n 1 || true)"
+            if [ -z "$plugin_src" ]; then
+              echo "Required Qt plugin missing from Nix store: ${plugin_rel}"
+              exit 1
+            fi
+            mkdir -p "release/plugins/$(dirname "$plugin_rel")"
+            cp -L "$plugin_src" "release/plugins/${plugin_rel}"
+            echo "Bundled Qt plugin: ${plugin_rel} <- ${plugin_src}"
+          }
+
+          copy_qt_plugin "platforms/libqxcb.so"
+          copy_qt_plugin "platforminputcontexts/libcomposeplatforminputcontextplugin.so"
+          copy_qt_plugin "xcbglintegrations/libqxcb-glx-integration.so"
+          copy_qt_plugin "sqldrivers/libqsqlite.so"
+          copy_qt_plugin "iconengines/libqsvgicon.so"
+          copy_qt_plugin "imageformats/libqsvg.so"
+
+          pending=1
+          while [ "$pending" -eq 1 ]; do
+            pending=0
+            for elf in release/plugins/*/*.so release/lib/*.so*; do
+              [ -f "$elf" ] || continue
+              for dep in $(ldd "$elf" 2>/dev/null | awk '/=> \// { print $3 }'); do
+                [ -f "$dep" ] || continue
+                base="$(basename "$dep")"
+                if echo "$base" | grep -Eq "$SKIP_LIB_REGEX"; then
+                  continue
+                fi
+                dest="release/lib/$base"
+                if [ ! -e "$dest" ]; then
+                  cp -L "$dep" "$dest"
+                  pending=1
+                fi
+              done
+            done
+          done
+
+      - name: Validate arm64 release bundle
+        run: bash ci/verify_linux_bundle.sh arm64-release release
 
       - name: Copy scripts
         run: find scripts -maxdepth 1 -type f -executable -exec cp {} release/ \; || true

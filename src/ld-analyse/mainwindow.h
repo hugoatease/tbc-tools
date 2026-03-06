@@ -82,6 +82,9 @@ private slots:
     void on_actionChroma_decoder_configuration_triggered();
     void on_actionToggleChromaDuringSeek_triggered();
     void on_actionExport_Decode_Metadata_triggered();
+    void on_actionProcess_VBI_triggered();
+    void on_actionProcess_VITS_triggered();
+    void on_actionFix_JSON_SNR_triggered();
 
     // Media control frame handlers
     void on_previousPushButton_clicked();

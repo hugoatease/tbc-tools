@@ -751,12 +751,17 @@
     <addaction name="actionSNR_analysis"/>
     <addaction name="actionWhite_SNR_analysis"/>
     <addaction name="actionVBI"/>
-    <addaction name="actionLine_scope"/>
-    <addaction name="actionVectorscope"/>
     <addaction name="actionClosed_Captions"/>
     <addaction name="separator"/>
     <addaction name="actionVideo_parameters"/>
     <addaction name="actionChroma_decoder_configuration"/>
+   </widget>
+   <widget class="QMenu" name="menuScopes">
+    <property name="title">
+     <string>Scopes</string>
+    </property>
+    <addaction name="actionVectorscope"/>
+    <addaction name="actionLine_scope"/>
    </widget>
    <widget class="QMenu" name="menuHelp">
     <property name="title">
@@ -780,8 +785,12 @@
    </widget>
    <widget class="QMenu" name="menuTools">
     <property name="title">
-     <string>Metadata</string>
+     <string>Tools</string>
     </property>
+    <addaction name="actionProcess_VBI"/>
+    <addaction name="actionProcess_VITS"/>
+    <addaction name="actionFix_JSON_SNR"/>
+    <addaction name="separator"/>
     <addaction name="actionMetadata_Status"/>
     <addaction name="actionMetadata_Conversion"/>
     <addaction name="actionExport_Decode_Metadata"/>
@@ -793,6 +802,7 @@
    </widget>
    <addaction name="menuFile"/>
    <addaction name="menuView"/>
+   <addaction name="menuScopes"/>
    <addaction name="menuWindow"/>
    <addaction name="menuTools"/>
    <addaction name="menuThemes"/>
@@ -825,6 +835,21 @@
   <action name="actionExport_Decode_Metadata">
    <property name="text">
     <string>ld-export-decode-metadata...</string>
+   </property>
+  </action>
+  <action name="actionProcess_VBI">
+   <property name="text">
+    <string>Process VBI...</string>
+   </property>
+  </action>
+  <action name="actionProcess_VITS">
+   <property name="text">
+    <string>Process VITS...</string>
+   </property>
+  </action>
+  <action name="actionFix_JSON_SNR">
+   <property name="text">
+    <string>Fix JSON SNR...</string>
    </property>
   </action>
   <action name="actionExit">

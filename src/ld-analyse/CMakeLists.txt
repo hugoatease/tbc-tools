@@ -23,6 +23,8 @@ set(ld-analyse_SOURCES
     visibledropoutanalysisdialog.cpp visibledropoutanalysisdialog.ui
     whitesnranalysisdialog.cpp whitesnranalysisdialog.ui
     plotwidget.cpp
+    ../ld-process-vits/processingpool.cpp
+    ../ld-process-vits/vitsanalyser.cpp
 )
 
 qt_add_resources(ld-analyse_SOURCES ld-analyse-resources.qrc)
