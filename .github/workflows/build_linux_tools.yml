@@ -85,12 +85,20 @@ jobs:
             cp -a "$item" "AppDir/usr/bin/$base"
           done
           nix build nixpkgs#ffmpeg --out-link ffmpeg-result
-          if [ -f ffmpeg-result/bin/ffmpeg ]; then
-            cp -a ffmpeg-result/bin/ffmpeg AppDir/usr/bin/ffmpeg
+          FFMPEG_BIN=""
+          FFPROBE_BIN=""
+          for ffout in ffmpeg-result ffmpeg-result-*; do
+            [ -d "$ffout/bin" ] || continue
+            [ -z "$FFMPEG_BIN" ] && [ -f "$ffout/bin/ffmpeg" ] && FFMPEG_BIN="$ffout/bin/ffmpeg"
+            [ -z "$FFPROBE_BIN" ] && [ -f "$ffout/bin/ffprobe" ] && FFPROBE_BIN="$ffout/bin/ffprobe"
+          done
+          if [ -z "$FFMPEG_BIN" ] || [ -z "$FFPROBE_BIN" ]; then
+            echo "Failed to locate ffmpeg/ffprobe under ffmpeg-result outputs"
+            ls -la ffmpeg-result* || true
+            exit 1
           fi
-          if [ -f ffmpeg-result/bin/ffprobe ]; then
-            cp -a ffmpeg-result/bin/ffprobe AppDir/usr/bin/ffprobe
-          fi
+          cp -a "$FFMPEG_BIN" AppDir/usr/bin/ffmpeg
+          cp -a "$FFPROBE_BIN" AppDir/usr/bin/ffprobe
           cp -a result/lib/. AppDir/usr/lib/ || true
           LIBSTDCPP_PATH="$(ldd result/bin/.ld-analyse-wrapped | awk '$1 == "libstdc++.so.6" { print $3; exit }')"
           LIBGCC_PATH="$(ldd result/bin/.ld-analyse-wrapped | awk '$1 == "libgcc_s.so.1" { print $3; exit }')"
@@ -260,12 +268,20 @@ jobs:
             cp -a "$item" "release/bin/$base"
           done
           nix build nixpkgs#ffmpeg --out-link ffmpeg-result
-          if [ -f ffmpeg-result/bin/ffmpeg ]; then
-            cp -a ffmpeg-result/bin/ffmpeg release/bin/ffmpeg
+          FFMPEG_BIN=""
+          FFPROBE_BIN=""
+          for ffout in ffmpeg-result ffmpeg-result-*; do
+            [ -d "$ffout/bin" ] || continue
+            [ -z "$FFMPEG_BIN" ] && [ -f "$ffout/bin/ffmpeg" ] && FFMPEG_BIN="$ffout/bin/ffmpeg"
+            [ -z "$FFPROBE_BIN" ] && [ -f "$ffout/bin/ffprobe" ] && FFPROBE_BIN="$ffout/bin/ffprobe"
+          done
+          if [ -z "$FFMPEG_BIN" ] || [ -z "$FFPROBE_BIN" ]; then
+            echo "Failed to locate ffmpeg/ffprobe under ffmpeg-result outputs"
+            ls -la ffmpeg-result* || true
+            exit 1
           fi
-          if [ -f ffmpeg-result/bin/ffprobe ]; then
-            cp -a ffmpeg-result/bin/ffprobe release/bin/ffprobe
-          fi
+          cp -a "$FFMPEG_BIN" release/bin/ffmpeg
+          cp -a "$FFPROBE_BIN" release/bin/ffprobe
           cp -a result/lib/. release/lib/ || true
           LIBSTDCPP_PATH="$(ldd result/bin/.ld-analyse-wrapped | awk '$1 == "libstdc++.so.6" { print $3; exit }')"
           LIBGCC_PATH="$(ldd result/bin/.ld-analyse-wrapped | awk '$1 == "libgcc_s.so.1" { print $3; exit }')"
