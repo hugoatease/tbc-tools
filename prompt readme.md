@@ -1894,6 +1894,25 @@ fi
   Created /Users/harry/tbc-tools/restore_point_20260309T071158Z.zip
   ```
 
+## Update (UTC): 2026-03-09T07:10:29Z
+
+## Actions
+- Staged advanced scope UI changes and committed them.
+
+## Tool Calls & Outputs
+### run_shell_command
+- Command: `git --no-pager add src/ld-analyse/oscilloscopedialog.cpp src/ld-analyse/oscilloscopedialog.h src/ld-analyse/tbcsource.cpp src/ld-analyse/tbcsource.h src/ld-analyse/plotwidget.cpp "prompt readme.md" log_note_advanced_scope_controls_2026-03-09.md`
+  Output:
+  ```
+  ```
+- Command: `git --no-pager commit -m "Refine advanced oscilloscope controls" -m "Co-Authored-By: Oz <oz-agent@warp.dev>"`
+  Output:
+  ```
+  [scanline-ossiliscope-upgrades 15e1076d] Refine advanced oscilloscope controls
+   7 files changed, 707 insertions(+), 58 deletions(-)
+   create mode 100644 log_note_advanced_scope_controls_2026-03-09.md
+  ```
+
 ## Update (UTC): 2026-03-09T07:00:16Z
 
 ## User Input
