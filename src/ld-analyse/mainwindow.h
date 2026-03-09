@@ -19,6 +19,9 @@
 #include <QMessageBox>
 #include <QLabel>
 #include <QMouseEvent>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
 #include <QRect>
 #include <QTimer>
 #include <QVector>
@@ -134,6 +137,10 @@ private slots:
 	
 	// UI handler
 	void resize_on_aspect();
+protected:
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dragMoveEvent(QDragMoveEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
 
 private:
     Ui::MainWindow *ui;

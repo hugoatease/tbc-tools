@@ -1,11 +1,11 @@
 /******************************************************************************
  * plotwidget.h
- * ld-analyse - TBC output analysis GUI
+ * orc-gui - Adapted from ld-analyse
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
- * SPDX-FileCopyrightText: 2025 Simon Inns
+ * SPDX-FileCopyrightText: 2025-2026 Simon Inns
  *
- * This file is part of ld-decode-tools.
+ * This file is part of decode-orc.
  ******************************************************************************/
 
 #ifndef PLOTWIDGET_H
@@ -53,6 +53,13 @@ public:
     void setAxisRange(Qt::Orientation orientation, double min, double max);
     void setAxisAutoScale(Qt::Orientation orientation, bool enable);
     void setYAxisIntegerLabels(bool integerOnly);
+    void setAxisTickStep(Qt::Orientation orientation, double step, double origin = 0.0);
+    
+    // Secondary Y-axis (right side)
+    void setSecondaryYAxisEnabled(bool enabled);
+    void setSecondaryYAxisTitle(const QString &title);
+    void setSecondaryYAxisRange(double min, double max);
+    void setSecondaryYAxisTickStep(double step, double origin = 0.0);
     
     // Grid
     void setGridEnabled(bool enabled);
@@ -67,6 +74,10 @@ public:
     PlotMarker* addMarker();
     void removeMarker(PlotMarker *marker);
     void clearMarkers();
+    
+    // Clear and show message
+    void showNoDataMessage(const QString &message = "No data available");
+    void clearNoDataMessage();  ///< Clear the "no data" message if showing
     
     // Legend
     void setLegendEnabled(bool enabled);
@@ -89,9 +100,15 @@ public:
 signals:
     void plotAreaChanged(const QRectF &rect);
     void seriesClicked(PlotSeries *series, const QPointF &point);
+    void plotClicked(const QPointF &dataPoint);  // Emitted when plot area is clicked, in data coordinates
+    void plotDragged(const QPointF &dataPoint);  // Emitted continuously during drag, in data coordinates
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
+    bool eventFilter(QObject *obj, QEvent *event) override;
 
 private slots:
     void onSceneSelectionChanged();
@@ -108,12 +125,24 @@ private:
     // Axes
     QString m_xAxisTitle;
     QString m_yAxisTitle;
+    QString m_secondaryYAxisTitle;
     double m_xMin, m_xMax;
     double m_yMin, m_yMax;
+    double m_secondaryYMin, m_secondaryYMax;
     bool m_xAutoScale;
     bool m_yAutoScale;
     bool m_yIntegerLabels;
     bool m_isDarkTheme;
+    bool m_secondaryYAxisEnabled;
+    double m_xAxisTickStep;
+    double m_xAxisTickOrigin;
+    bool m_xAxisUseCustomTicks;
+    double m_yAxisTickStep;
+    double m_yAxisTickOrigin;
+    double m_secondaryYAxisTickStep;
+    double m_secondaryYAxisTickOrigin;
+    bool m_yAxisUseCustomTicks;
+    bool m_secondaryYAxisUseCustomTicks;
     
     // Components
     PlotGrid *m_grid;
@@ -121,6 +150,7 @@ private:
     PlotAxisLabels *m_axisLabels;
     QList<PlotSeries*> m_series;
     QList<PlotMarker*> m_markers;
+    QGraphicsTextItem *m_noDataTextItem;  // Track "no data" message
     
     // Settings
     bool m_gridEnabled;
@@ -128,6 +158,8 @@ private:
     bool m_zoomEnabled;
     bool m_panEnabled;
     QColor m_canvasBackground;
+    bool m_usePaletteCanvasBackground;
+    bool m_isDragging;  // Track if mouse is being dragged
     
 public:
     // Coordinate mapping methods (needed by plot items)
@@ -190,14 +222,27 @@ public:
     QRectF boundingRect() const override;
     void paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget *widget) override;
     
-    void updateGrid(const QRectF &plotRect, const QRectF &dataRect, bool isDarkTheme = false);
+    void updateGrid(const QRectF &plotRect, const QRectF &dataRect, bool isDarkTheme = false,
+                    double xMin = 0, double xMax = 100, double yMin = 0, double yMax = 100,
+                    bool xUseCustomTicks = false, double xTickStep = 0, double xTickOrigin = 0,
+                    bool yUseCustomTicks = false, double yTickStep = 0, double yTickOrigin = 0,
+                    bool secondaryYEnabled = false, double secondaryYMin = 0, double secondaryYMax = 100,
+                    bool secondaryYUseCustomTicks = false, double secondaryYTickStep = 0, double secondaryYTickOrigin = 0);
 
 private:
     QPen m_pen;
+    bool m_usePalettePen;
     bool m_enabled;
     bool m_isDarkTheme;
     QRectF m_plotRect;
     QRectF m_dataRect;
+    double m_xMin, m_xMax, m_yMin, m_yMax;
+    bool m_xUseCustomTicks, m_yUseCustomTicks;
+    double m_xTickStep, m_xTickOrigin, m_yTickStep, m_yTickOrigin;
+    bool m_secondaryYEnabled;
+    double m_secondaryYMin, m_secondaryYMax;
+    bool m_secondaryYUseCustomTicks;
+    double m_secondaryYTickStep, m_secondaryYTickOrigin;
     PlotWidget *m_plotWidget;
 };
 
@@ -261,7 +306,12 @@ public:
     void updateLabels(const QRectF &plotRect, const QRectF &dataRect, 
                      const QString &xTitle, const QString &yTitle,
                      double xMin, double xMax, double yMin, double yMax,
-                     bool yIntegerLabels = false, bool isDarkTheme = false);
+                     bool yIntegerLabels = false, bool isDarkTheme = false,
+                     bool secondaryYEnabled = false, const QString &secondaryYTitle = QString(),
+                     double secondaryYMin = 0, double secondaryYMax = 100,
+                     bool xUseCustomTicks = false, double xTickStep = 0, double xTickOrigin = 0,
+                     bool yUseCustomTicks = false, double yTickStep = 0, double yTickOrigin = 0,
+                     bool secondaryYUseCustomTicks = false, double secondaryYTickStep = 0, double secondaryYTickOrigin = 0);
     
     QRectF boundingRect() const override;
     void paint(QPainter *painter, const QStyleOptionGraphicsItem *option, QWidget *widget) override;
@@ -271,9 +321,21 @@ private:
     QRectF m_dataRect;
     QString m_xTitle;
     QString m_yTitle;
+    QString m_secondaryYTitle;
     bool m_yIntegerLabels;
     bool m_isDarkTheme;
+    bool m_secondaryYEnabled;
     double m_xMin, m_xMax, m_yMin, m_yMax;
+    double m_secondaryYMin, m_secondaryYMax;
+    bool m_xUseCustomTicks;
+    double m_xTickStep;
+    double m_xTickOrigin;
+    bool m_yUseCustomTicks;
+    double m_yTickStep;
+    double m_yTickOrigin;
+    bool m_secondaryYUseCustomTicks;
+    double m_secondaryYTickStep;
+    double m_secondaryYTickOrigin;
     PlotWidget *m_plotWidget;
 };
 

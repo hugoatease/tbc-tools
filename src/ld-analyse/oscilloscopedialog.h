@@ -16,8 +16,10 @@
 #include <QPainter>
 #include <QDebug>
 #include <QMouseEvent>
+#include <QTabWidget>
 
 #include "tbcsource.h"
+#include "plotwidget.h"
 
 namespace Ui {
 class OscilloscopeDialog;
@@ -64,8 +66,23 @@ private:
     TbcSource::ScanLineData cachedScanLineData;
     bool hasCachedData;
     bool bothSourcesMode;
+    qint32 cachedPictureDot;
+    
+    // Advanced decode-orc style tab (keeps original scope intact)
+    QTabWidget *scopeTabWidget;
+    QWidget *scopeOriginalTab;
+    QWidget *scopeAdvancedTab;
+    PlotWidget *advancedPlotWidget;
+    PlotSeries *advancedCompositeSeries;
+    PlotSeries *advancedYSeries;
+    PlotSeries *advancedCSeries;
+    PlotMarker *advancedSampleMarker;
 
     QImage getFieldLineTraceImage(TbcSource::ScanLineData scanLineData, qint32 pictureDot, bool bothSources, qint32 scopeHeight, qint32 scopeWidth);
+    void setupAdvancedScopeTab();
+    void updateAdvancedScope(const TbcSource::ScanLineData &scanLineData, qint32 pictureDot, bool bothSources);
+    void updateAdvancedSampleMarker(qint32 pictureDot);
+    double sampleToMillivolts(qint32 sampleValue, const TbcSource::ScanLineData &scanLineData) const;
     void mouseLevelSelect(qint32 oY);
     void mousePictureDotSelect(qint32 oX);
 };
