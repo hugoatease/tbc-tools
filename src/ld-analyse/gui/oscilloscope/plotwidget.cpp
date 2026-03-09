@@ -14,16 +14,6 @@
 #include <QtMath>
 #include <QApplication>
 #include <cmath>
-namespace {
-QFont plotUiFont(const QWidget *widget, int pointDelta)
-{
-    QFont baseFont = widget ? widget->font() : QApplication::font();
-    if (baseFont.pointSize() > 0) {
-        baseFont.setPointSize(baseFont.pointSize() + pointDelta);
-    }
-    return baseFont;
-}
-}
 
 PlotWidget::PlotWidget(QWidget *parent)
     : QWidget(parent)
@@ -285,7 +275,8 @@ void PlotWidget::showNoDataMessage(const QString &message)
     m_noDataTextItem = new QGraphicsTextItem(message);
     
     // Set font and color based on theme
-    QFont font = plotUiFont(this, 1);
+    QFont font = m_noDataTextItem->font();
+    font.setPointSize(14);
     m_noDataTextItem->setFont(font);
     
     m_noDataTextItem->setDefaultTextColor(theme_tokens::mutedText(QApplication::palette()));
@@ -540,7 +531,7 @@ void PlotWidget::updatePlotArea()
     
     // Increase right margin if secondary Y-axis is enabled
     if (m_secondaryYAxisEnabled) {
-        rightMargin = 84;  // Space for secondary Y-axis labels and title while keeping plot area larger
+        rightMargin = 100;  // Space for secondary Y-axis labels and title
     }
     
     m_plotRect = QRectF(leftMargin, topMargin, 
@@ -947,7 +938,7 @@ void PlotLegend::updateLegend(const QList<PlotSeries*> &series, const QRectF &pl
     }
     
     // Calculate legend size
-    QFont font = plotUiFont(m_plotWidget, 1);
+    QFont font;
     QFontMetrics fm(font);
     
     int maxWidth = 0;
@@ -993,7 +984,7 @@ void PlotLegend::paint(QPainter *painter, const QStyleOptionGraphicsItem *option
     painter->setPen(QPen(palette.color(QPalette::Mid), 1.0));
     painter->drawRect(m_boundingRect);
     
-    QFont font = plotUiFont(m_plotWidget, 1);
+    QFont font;
     QFontMetrics fm(font);
     painter->setFont(font);
     
@@ -1081,7 +1072,8 @@ void PlotAxisLabels::paint(QPainter *painter, const QStyleOptionGraphicsItem *op
     QColor axisColor = QApplication::palette().color(QPalette::WindowText);
     
     painter->setPen(QPen(axisColor));
-    QFont font = plotUiFont(m_plotWidget, 1);
+    QFont font = painter->font();
+    font.setPointSize(9);
     painter->setFont(font);
     QFontMetrics fm(font);
     

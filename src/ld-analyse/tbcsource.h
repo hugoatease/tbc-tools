@@ -47,6 +47,7 @@ public:
         qint32 blackIre;
         qint32 whiteIre;
         qint32 fieldWidth;
+        double sampleRate = -1.0;
         qint32 colourBurstStart;
         qint32 colourBurstEnd;
         qint32 activeVideoStart;

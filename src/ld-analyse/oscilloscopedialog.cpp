@@ -13,6 +13,10 @@
 #include "tbc/logging.h"
 
 #include <cassert>
+#include <QVBoxLayout>
+#include <QSignalBlocker>
+#include <QtMath>
+#include <limits>
 
 OscilloscopeDialog::OscilloscopeDialog(QWidget *parent) :
     QDialog(parent),
@@ -29,6 +33,18 @@ OscilloscopeDialog::OscilloscopeDialog(QWidget *parent) :
     fieldWidth = 0;
     hasCachedData = false;
     bothSourcesMode = false;
+    cachedPictureDot = 0;
+    scopeTabWidget = nullptr;
+    scopeOriginalTab = nullptr;
+    scopeAdvancedTab = nullptr;
+    advancedPlotWidget = nullptr;
+    advancedCompositeSeries = nullptr;
+    advancedYSeries = nullptr;
+    advancedCSeries = nullptr;
+    advancedSampleMarker = nullptr;
+    advancedSampleInfoLabel = nullptr;
+    advancedSidePanel = nullptr;
+    fieldToggleButton = nullptr;
 
     // Configure the GUI
     ui->xCoordSpinBox->setMinimum(0);
@@ -36,19 +52,384 @@ OscilloscopeDialog::OscilloscopeDialog(QWidget *parent) :
     ui->yCoordSpinBox->setMinimum(0);
     ui->yCoordSpinBox->setMaximum(maximumY - 1);
 
+    ui->previousPushButton->setText(tr("Line Up"));
+    ui->previousPushButton->setToolTip(tr("Move to previous line"));
     ui->previousPushButton->setAutoRepeat(true);
     ui->previousPushButton->setAutoRepeatInterval(50);
 
+    ui->nextPushButton->setText(tr("Line Down"));
+    ui->nextPushButton->setToolTip(tr("Move to next line"));
     ui->nextPushButton->setAutoRepeat(true);
     ui->nextPushButton->setAutoRepeatInterval(50);
 
     ui->previousPushButton->setFocusPolicy(Qt::NoFocus);
     ui->nextPushButton->setFocusPolicy(Qt::NoFocus);
+
+    setupAdvancedScopeTab();
 }
 
 OscilloscopeDialog::~OscilloscopeDialog()
 {
     delete ui;
+}
+
+void OscilloscopeDialog::setupAdvancedScopeTab()
+{
+    if (!ui || !ui->horizontalLayout || !ui->scopeLabel) {
+        return;
+    }
+
+    scopeTabWidget = new QTabWidget(this);
+    scopeOriginalTab = new QWidget(scopeTabWidget);
+    scopeAdvancedTab = new QWidget(scopeTabWidget);
+
+    auto *originalLayout = new QVBoxLayout(scopeOriginalTab);
+    originalLayout->setContentsMargins(0, 0, 0, 0);
+    originalLayout->setSpacing(0);
+
+    auto *advancedLayout = new QVBoxLayout(scopeAdvancedTab);
+    advancedLayout->setContentsMargins(0, 0, 0, 0);
+    advancedLayout->setSpacing(0);
+
+    ui->horizontalLayout->removeWidget(ui->scopeLabel);
+    ui->scopeLabel->setParent(scopeOriginalTab);
+    originalLayout->addWidget(ui->scopeLabel);
+
+    advancedPlotWidget = new PlotWidget(scopeAdvancedTab);
+    advancedPlotWidget->setAxisTitle(Qt::Horizontal, tr("Time (µs)"));
+    advancedPlotWidget->setAxisTitle(Qt::Vertical, tr("mV (millivolts)"));
+    advancedPlotWidget->setGridEnabled(true);
+    advancedPlotWidget->setLegendEnabled(true);
+    advancedPlotWidget->setZoomEnabled(true);
+    advancedPlotWidget->setPanEnabled(true);
+    advancedPlotWidget->setYAxisIntegerLabels(false);
+    advancedLayout->addWidget(advancedPlotWidget, 1);
+
+    advancedSidePanel = new QWidget(ui->frame);
+    auto *advancedControls = new QVBoxLayout(advancedSidePanel);
+    advancedControls->setContentsMargins(0, 0, 0, 0);
+    advancedControls->setSpacing(6);
+    advancedSampleInfoLabel = new QLabel(advancedSidePanel);
+    advancedSampleInfoLabel->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    if (ui->standardLineLabel) {
+        advancedSampleInfoLabel->setFont(ui->standardLineLabel->font());
+    } else if (ui->fieldLineLabel) {
+        advancedSampleInfoLabel->setFont(ui->fieldLineLabel->font());
+    }
+    advancedControls->addWidget(advancedSampleInfoLabel, 1);
+    advancedControls->addStretch();
+
+    if (ui->verticalLayout) {
+        if (!fieldToggleButton) {
+            fieldToggleButton = new QPushButton(tr("Field 1/2"), ui->frame);
+            fieldToggleButton->setToolTip(tr("Toggle field 1/2"));
+            if (ui->previousPushButton) {
+                fieldToggleButton->setSizePolicy(ui->previousPushButton->sizePolicy());
+                fieldToggleButton->setMinimumSize(ui->previousPushButton->minimumSize());
+                fieldToggleButton->setMaximumSize(ui->previousPushButton->maximumSize());
+            }
+            fieldToggleButton->setFocusPolicy(Qt::NoFocus);
+            connect(fieldToggleButton, &QPushButton::clicked, this, &OscilloscopeDialog::on_fieldToggleButton_clicked);
+            ui->verticalLayout->insertWidget(2, fieldToggleButton);
+        }
+        if (ui->verticalSpacer) {
+            ui->verticalLayout->removeItem(ui->verticalSpacer);
+        }
+        ui->verticalLayout->addWidget(advancedSidePanel);
+        if (ui->verticalSpacer) {
+            ui->verticalLayout->addItem(ui->verticalSpacer);
+        }
+    }
+
+    scopeTabWidget->addTab(scopeOriginalTab, tr("Basic"));
+    scopeTabWidget->addTab(scopeAdvancedTab, tr("Advanced"));
+    ui->horizontalLayout->insertWidget(0, scopeTabWidget, 1);
+
+    const auto updateDropoutVisibility = [this](int index) {
+        if (!ui || !ui->dropoutsCheckBox) {
+            return;
+        }
+        const bool isAdvanced = (scopeTabWidget && scopeTabWidget->widget(index) == scopeAdvancedTab);
+        ui->dropoutsCheckBox->setVisible(!isAdvanced);
+        if (advancedSidePanel) {
+            advancedSidePanel->setVisible(isAdvanced);
+        }
+    };
+    connect(scopeTabWidget, &QTabWidget::currentChanged, this, updateDropoutVisibility);
+    updateDropoutVisibility(scopeTabWidget->currentIndex());
+
+    const auto onAdvancedPlotPositionChanged = [this](const QPointF &dataPoint) {
+        if (!hasCachedData || cachedScanLineData.fieldWidth < 1) {
+            return;
+        }
+        const double usPerSample = (cachedScanLineData.sampleRate > 0.0)
+            ? (1000000.0 / cachedScanLineData.sampleRate)
+            : 1.0;
+        const double samplePos = usPerSample > 0.0 ? (dataPoint.x() / usPerSample) : dataPoint.x();
+        const qint32 newX = qBound(0, qRound(samplePos), cachedScanLineData.fieldWidth - 1);
+        if (newX == lastScopeX) {
+            updateAdvancedSampleMarker(newX);
+            updateAdvancedInfoLabel(newX, cachedScanLineData);
+            return;
+        }
+
+        lastScopeX = newX;
+        {
+            const QSignalBlocker blocker(ui->xCoordSpinBox);
+            ui->xCoordSpinBox->setValue(lastScopeX);
+        }
+        updateAdvancedSampleMarker(lastScopeX);
+        updateAdvancedInfoLabel(lastScopeX, cachedScanLineData);
+        emit scopeCoordsChanged(lastScopeX, lastScopeY);
+    };
+
+    connect(advancedPlotWidget, &PlotWidget::plotClicked, this, onAdvancedPlotPositionChanged);
+    connect(advancedPlotWidget, &PlotWidget::plotDragged, this, onAdvancedPlotPositionChanged);
+}
+
+double OscilloscopeDialog::sampleToMillivolts(qint32 sampleValue, const TbcSource::ScanLineData &scanLineData) const
+{
+    const qint32 levelSpan = scanLineData.whiteIre - scanLineData.blackIre;
+    if (levelSpan == 0) {
+        return static_cast<double>(sampleValue);
+    }
+
+    const bool ntscLike = scanLineData.systemDescription.contains(QStringLiteral("NTSC"), Qt::CaseInsensitive)
+            || scanLineData.systemDescription.contains(QStringLiteral("PAL-M"), Qt::CaseInsensitive);
+    const double ireToMv = ntscLike ? 7.143 : 7.0;
+    const double ire = (static_cast<double>(sampleValue) - static_cast<double>(scanLineData.blackIre))
+            * 100.0 / static_cast<double>(levelSpan);
+    return ire * ireToMv;
+}
+
+double OscilloscopeDialog::sampleToIre(qint32 sampleValue, const TbcSource::ScanLineData &scanLineData) const
+{
+    const qint32 levelSpan = scanLineData.whiteIre - scanLineData.blackIre;
+    if (levelSpan == 0) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    return (static_cast<double>(sampleValue) - static_cast<double>(scanLineData.blackIre))
+            * 100.0 / static_cast<double>(levelSpan);
+}
+
+void OscilloscopeDialog::updateAdvancedInfoLabel(qint32 pictureDot, const TbcSource::ScanLineData &scanLineData)
+{
+    if (!advancedSampleInfoLabel) {
+        return;
+    }
+    if (scanLineData.fieldWidth < 1 || scanLineData.composite.isEmpty()) {
+        advancedSampleInfoLabel->setText(QString());
+        return;
+    }
+
+    const qint32 clampedDot = qBound(0, pictureDot, scanLineData.fieldWidth - 1);
+    const double usPerSample = (scanLineData.sampleRate > 0.0)
+        ? (1000000.0 / scanLineData.sampleRate)
+        : 1.0;
+    const double timeUs = static_cast<double>(clampedDot) * usPerSample;
+
+    const bool showYC = ui->YCcheckBox && ui->YCcheckBox->isChecked();
+    const bool showY = ui->YcheckBox && ui->YcheckBox->isChecked();
+    const bool showC = ui->CcheckBox && ui->CcheckBox->isChecked();
+
+    qint32 sampleValue = scanLineData.composite[clampedDot];
+    if (showY && clampedDot < scanLineData.luma.size()) {
+        sampleValue = scanLineData.luma[clampedDot];
+    } else if (showC) {
+        if (scanLineData.chroma.size() == scanLineData.fieldWidth) {
+            sampleValue = scanLineData.chroma[clampedDot];
+        } else if (clampedDot < scanLineData.luma.size()) {
+            sampleValue = scanLineData.composite[clampedDot] - scanLineData.luma[clampedDot];
+        }
+    } else if (showYC) {
+        sampleValue = scanLineData.composite[clampedDot];
+    }
+
+    const double mvValue = sampleToMillivolts(sampleValue, scanLineData);
+    const double ireValue = sampleToIre(sampleValue, scanLineData);
+
+    QString infoText = tr("Time: %1 µs").arg(timeUs, 0, 'f', 3);
+    infoText += tr("\nSample: %1").arg(clampedDot);
+    infoText += tr("\nmV: %1").arg(mvValue, 0, 'f', 1);
+    if (qIsFinite(ireValue)) {
+        infoText += tr("\nIRE: %1").arg(ireValue, 0, 'f', 1);
+    }
+
+    advancedSampleInfoLabel->setText(infoText);
+}
+
+void OscilloscopeDialog::updateAdvancedSampleMarker(qint32 pictureDot)
+{
+    if (!advancedPlotWidget || !hasCachedData || cachedScanLineData.fieldWidth < 1) {
+        return;
+    }
+
+    if (advancedSampleMarker) {
+        advancedPlotWidget->removeMarker(advancedSampleMarker);
+        advancedSampleMarker = nullptr;
+    }
+
+    const qint32 clampedDot = qBound(0, pictureDot, cachedScanLineData.fieldWidth - 1);
+    const double usPerSample = (cachedScanLineData.sampleRate > 0.0)
+        ? (1000000.0 / cachedScanLineData.sampleRate)
+        : 1.0;
+    const double timeUs = static_cast<double>(clampedDot) * usPerSample;
+    advancedSampleMarker = advancedPlotWidget->addMarker();
+    advancedSampleMarker->setStyle(PlotMarker::VLine);
+    advancedSampleMarker->setPosition(QPointF(timeUs, 0.0));
+    advancedSampleMarker->setPen(QPen(QColor(0, 255, 0), 2));
+}
+
+void OscilloscopeDialog::updateAdvancedScope(const TbcSource::ScanLineData &scanLineData, qint32 pictureDot, bool bothSources)
+{
+    if (!advancedPlotWidget) {
+        return;
+    }
+    if (scanLineData.fieldWidth < 1 || scanLineData.composite.isEmpty()) {
+        advancedPlotWidget->showNoDataMessage(tr("No data available for this line"));
+        return;
+    }
+
+    advancedPlotWidget->clearNoDataMessage();
+
+    if (!advancedCompositeSeries) {
+        advancedCompositeSeries = advancedPlotWidget->addSeries(tr("Composite"));
+        advancedCompositeSeries->setPen(QPen(QColor(100, 200, 255), 1));
+    }
+    if (!advancedYSeries) {
+        advancedYSeries = advancedPlotWidget->addSeries(tr("Luma (Y)"));
+        advancedYSeries->setPen(QPen(QColor(255, 255, 100), 1));
+    }
+    if (!advancedCSeries) {
+        advancedCSeries = advancedPlotWidget->addSeries(tr("Chroma (C)"));
+        advancedCSeries->setPen(QPen(QColor(120, 160, 255), 1));
+    }
+
+    const bool showYC = ui->YCcheckBox->isChecked();
+    const bool showY = ui->YcheckBox->isChecked();
+    const bool showC = ui->CcheckBox->isChecked();
+
+    QVector<qint32> chromaData(scanLineData.fieldWidth);
+    if (showC) {
+        if (bothSources && scanLineData.chroma.size() == scanLineData.fieldWidth) {
+            chromaData = scanLineData.chroma;
+        } else {
+            for (qint32 i = 0; i < scanLineData.fieldWidth; i++) {
+                chromaData[i] = scanLineData.composite[i] - scanLineData.luma[i];
+            }
+        }
+    }
+
+    const double usPerSample = (scanLineData.sampleRate > 0.0)
+        ? (1000000.0 / scanLineData.sampleRate)
+        : 1.0;
+
+    QVector<QPointF> compositePoints;
+    QVector<QPointF> yPoints;
+    QVector<QPointF> cPoints;
+    compositePoints.reserve(scanLineData.fieldWidth);
+    yPoints.reserve(scanLineData.fieldWidth);
+    cPoints.reserve(scanLineData.fieldWidth);
+
+    double dataMinMv = 0.0;
+    double dataMaxMv = 0.0;
+    bool firstValue = true;
+    auto trackMinMax = [&firstValue, &dataMinMv, &dataMaxMv](double value) {
+        if (firstValue) {
+            dataMinMv = value;
+            dataMaxMv = value;
+            firstValue = false;
+        } else {
+            dataMinMv = qMin(dataMinMv, value);
+            dataMaxMv = qMax(dataMaxMv, value);
+        }
+    };
+
+    for (qint32 i = 0; i < scanLineData.fieldWidth; i++) {
+        const double timeUs = static_cast<double>(i) * usPerSample;
+        if (showYC) {
+            const double mv = sampleToMillivolts(scanLineData.composite[i], scanLineData);
+            compositePoints.append(QPointF(timeUs, mv));
+            trackMinMax(mv);
+        }
+        if (showY && i < scanLineData.luma.size()) {
+            const double mv = sampleToMillivolts(scanLineData.luma[i], scanLineData);
+            yPoints.append(QPointF(timeUs, mv));
+            trackMinMax(mv);
+        }
+        if (showC && i < chromaData.size()) {
+            const double mv = sampleToMillivolts(chromaData[i], scanLineData);
+            cPoints.append(QPointF(timeUs, mv));
+            trackMinMax(mv);
+        }
+    }
+
+    advancedCompositeSeries->setVisible(showYC);
+    advancedCompositeSeries->setData(compositePoints);
+    advancedYSeries->setVisible(showY);
+    advancedYSeries->setData(yPoints);
+    advancedCSeries->setVisible(showC);
+    advancedCSeries->setData(cPoints);
+
+    const int visibleSeries = static_cast<int>(showYC) + static_cast<int>(showY) + static_cast<int>(showC);
+    advancedPlotWidget->setLegendEnabled(visibleSeries > 1);
+    const bool ntscLike = scanLineData.systemDescription.contains(QStringLiteral("NTSC"), Qt::CaseInsensitive)
+            || scanLineData.systemDescription.contains(QStringLiteral("PAL-M"), Qt::CaseInsensitive);
+    const double ireToMv = ntscLike ? 7.143 : 7.0;
+    constexpr double mvTickStep = 100.0;
+    constexpr double ireMinLimit = -40.0;
+    constexpr double ireMaxLimit = 120.0;
+    const double mvMinLimit = ireMinLimit * ireToMv;
+    const double mvMaxLimit = qMin(900.0, ireMaxLimit * ireToMv);
+
+    // Use fixed decode-orc style limits to keep real-world scaling consistent
+    const double minMv = mvMinLimit;
+    const double maxMv = mvMaxLimit;
+
+    const double maxTimeUs = qMax(1.0, static_cast<double>(scanLineData.fieldWidth - 1)) * usPerSample;
+    advancedPlotWidget->setAxisRange(Qt::Horizontal, 0.0, maxTimeUs);
+    advancedPlotWidget->setAxisRange(Qt::Vertical, minMv, maxMv);
+    advancedPlotWidget->setAxisAutoScale(Qt::Horizontal, false);
+    advancedPlotWidget->setAxisAutoScale(Qt::Vertical, false);
+    advancedPlotWidget->setAxisTickStep(Qt::Horizontal, 2.0, 0.0);
+    advancedPlotWidget->setAxisTickStep(Qt::Vertical, mvTickStep, 0.0);
+    advancedPlotWidget->setSecondaryYAxisEnabled(true);
+    advancedPlotWidget->setSecondaryYAxisTitle(tr("IRE"));
+    const double minIreRange = ireMinLimit;
+    const double maxIreRange = ireMaxLimit;
+    advancedPlotWidget->setSecondaryYAxisRange(minIreRange, maxIreRange);
+    advancedPlotWidget->setSecondaryYAxisTickStep(20.0, 0.0);
+
+    advancedPlotWidget->clearMarkers();
+    advancedSampleMarker = nullptr;
+
+    if (scanLineData.colourBurstStart >= 0 && scanLineData.colourBurstEnd >= 0) {
+        auto *burstStart = advancedPlotWidget->addMarker();
+        burstStart->setStyle(PlotMarker::VLine);
+        burstStart->setPosition(QPointF(static_cast<double>(scanLineData.colourBurstStart) * usPerSample, 0.0));
+        burstStart->setPen(QPen(QColor(0, 255, 255), 1, Qt::DashLine));
+
+        auto *burstEnd = advancedPlotWidget->addMarker();
+        burstEnd->setStyle(PlotMarker::VLine);
+        burstEnd->setPosition(QPointF(static_cast<double>(scanLineData.colourBurstEnd) * usPerSample, 0.0));
+        burstEnd->setPen(QPen(QColor(0, 255, 255), 1, Qt::DashLine));
+    }
+
+    if (scanLineData.activeVideoStart >= 0 && scanLineData.activeVideoEnd >= 0) {
+        auto *activeStart = advancedPlotWidget->addMarker();
+        activeStart->setStyle(PlotMarker::VLine);
+        activeStart->setPosition(QPointF(static_cast<double>(scanLineData.activeVideoStart) * usPerSample, 0.0));
+        activeStart->setPen(QPen(QColor(255, 255, 100), 1, Qt::DashLine));
+
+        auto *activeEnd = advancedPlotWidget->addMarker();
+        activeEnd->setStyle(PlotMarker::VLine);
+        activeEnd->setPosition(QPointF(static_cast<double>(scanLineData.activeVideoEnd) * usPerSample, 0.0));
+        activeEnd->setPen(QPen(QColor(255, 255, 100), 1, Qt::DashLine));
+    }
+
+    updateAdvancedSampleMarker(pictureDot);
+    updateAdvancedInfoLabel(pictureDot, scanLineData);
+    advancedPlotWidget->replot();
 }
 
 void OscilloscopeDialog::showTraceImage(TbcSource::ScanLineData scanLineData, qint32 xCoord, qint32 yCoord, qint32 frameWidth, qint32 frameHeight, bool bothSources)
@@ -58,6 +439,12 @@ void OscilloscopeDialog::showTraceImage(TbcSource::ScanLineData scanLineData, qi
     // Validate scan line data before doing anything
     if (scanLineData.fieldWidth < 1 || scanLineData.composite.empty()) {
         tbcDebugStream() << "OscilloscopeDialog::showTraceImage(): Invalid scan line data, skipping - fieldWidth:" << scanLineData.fieldWidth;
+        if (advancedPlotWidget) {
+            advancedPlotWidget->showNoDataMessage(tr("No data available for this line"));
+        }
+        if (advancedSampleInfoLabel) {
+            advancedSampleInfoLabel->setText(QString());
+        }
         return;
     }
 
@@ -81,6 +468,7 @@ void OscilloscopeDialog::showTraceImage(TbcSource::ScanLineData scanLineData, qi
     maximumY = frameHeight;
     lastScopeX = xCoord;
     lastScopeY = yCoord;
+    cachedPictureDot = xCoord;
     
     // Cache the scan line data for resize events (only after validation passes)
     cachedScanLineData = scanLineData;
@@ -112,6 +500,9 @@ void OscilloscopeDialog::showTraceImage(TbcSource::ScanLineData scanLineData, qi
     ui->fieldLineLabel->setText(QString("Field %1 line %2")
                                         .arg(scanLineData.lineNumber.isFirstField() ? "1" : "2")
                                         .arg(scanLineData.lineNumber.field1()));
+
+    // Update decode-orc style advanced view
+    updateAdvancedScope(scanLineData, cachedPictureDot, bothSources);
 
     // QT Bug workaround for some macOS versions
     #if defined(Q_OS_MACOS)
@@ -303,11 +694,41 @@ void OscilloscopeDialog::on_nextPushButton_clicked()
     }
 }
 
+void OscilloscopeDialog::on_fieldToggleButton_clicked()
+{
+    if (!ui || !ui->yCoordSpinBox) {
+        return;
+    }
+
+    qint32 current = lastScopeY;
+    qint32 target = current;
+
+    if ((current % 2) == 0) {
+        if (current + 1 < maximumY) {
+            target = current + 1;
+        } else if (current - 1 >= 0) {
+            target = current - 1;
+        }
+    } else {
+        if (current - 1 >= 0) {
+            target = current - 1;
+        } else if (current + 1 < maximumY) {
+            target = current + 1;
+        }
+    }
+
+    if (target != current) {
+        ui->yCoordSpinBox->setValue(target);
+    }
+}
+
 void OscilloscopeDialog::on_xCoordSpinBox_valueChanged(int arg1)
 {
     (void)arg1;
-    if (ui->xCoordSpinBox->value() != lastScopeX)
+    if (ui->xCoordSpinBox->value() != lastScopeX) {
+        cachedPictureDot = ui->xCoordSpinBox->value();
         emit scopeCoordsChanged(ui->xCoordSpinBox->value(), lastScopeY);
+    }
 }
 
 void OscilloscopeDialog::on_yCoordSpinBox_valueChanged(int arg1)
@@ -395,6 +816,11 @@ void OscilloscopeDialog::mousePictureDotSelect(qint32 oX)
 
     // Remember the last dot selected
     lastScopeX = unscaledX;
+    cachedPictureDot = unscaledX;
+    updateAdvancedSampleMarker(cachedPictureDot);
+    if (hasCachedData) {
+        updateAdvancedInfoLabel(cachedPictureDot, cachedScanLineData);
+    }
 
     emit scopeCoordsChanged(lastScopeX, lastScopeY);
 }

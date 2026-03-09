@@ -61,18 +61,17 @@ jobs:
             chmod +x "dist/bin/$base"
           done
           # Bundle ffmpeg/ffprobe for self-contained exports
-          FFMPEG_STORE="$(nix-store -q --references result 2>/dev/null | grep -E '/ffmpeg-[^/]+$' | head -n 1 || true)"
+          FFMPEG_STORE="$(nix-store -q --references result 2>/dev/null | grep -E '/ffmpeg-[^/]+-bin$' | head -n 1 || true)"
           if [ -z "$FFMPEG_STORE" ]; then
-            nix build nixpkgs#ffmpeg --out-link ffmpeg-result
-            FFMPEG_STORE="$(readlink ffmpeg-result || true)"
+            FFMPEG_STORE="$(nix build nixpkgs#ffmpeg.bin --no-link --print-out-paths 2>/dev/null | tail -n 1 || true)"
           fi
-          if [ -z "$FFMPEG_STORE" ] || [ ! -f "$FFMPEG_STORE/bin/ffmpeg" ]; then
+          if [ -z "$FFMPEG_STORE" ] || [ ! -x "$FFMPEG_STORE/bin/ffmpeg" ]; then
             echo "Missing ffmpeg from nixpkgs build"
             exit 1
           fi
           cp "$FFMPEG_STORE/bin/ffmpeg" dist/bin/ffmpeg
           chmod +x dist/bin/ffmpeg
-          if [ -f "$FFMPEG_STORE/bin/ffprobe" ]; then
+          if [ -x "$FFMPEG_STORE/bin/ffprobe" ]; then
             cp "$FFMPEG_STORE/bin/ffprobe" dist/bin/ffprobe
             chmod +x dist/bin/ffprobe
           fi

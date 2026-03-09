@@ -32,7 +32,10 @@
 #include <QStringList>
 #include <QTextStream>
 #include <QDateTime>
+#include <QMimeData>
+#include <QProcess>
 #include <QtMath>
+#include <QUrl>
 #include <QUuid>
 
 #include "metadataconverterutil.h"
@@ -251,6 +254,41 @@ QString resolveExternalExecutable(const QStringList &toolNames)
     return QString();
 }
 
+bool isSupportedInputExtension(const QString &filePath)
+{
+    const QString suffix = QFileInfo(filePath).suffix().toLower();
+    return suffix == QStringLiteral("tbc")
+        || suffix == QStringLiteral("ytbc")
+        || suffix == QStringLiteral("ctbc")
+        || suffix == QStringLiteral("tbcy")
+        || suffix == QStringLiteral("tbcc")
+        || suffix == QStringLiteral("db")
+        || suffix == QStringLiteral("json");
+}
+
+QString firstSupportedDroppedFile(const QMimeData *mimeData)
+{
+    if (!mimeData || !mimeData->hasUrls()) {
+        return QString();
+    }
+
+    const QList<QUrl> urls = mimeData->urls();
+    for (const QUrl &url : urls) {
+        if (!url.isLocalFile()) {
+            continue;
+        }
+        const QString localPath = url.toLocalFile();
+        if (localPath.isEmpty()) {
+            continue;
+        }
+        if (isSupportedInputExtension(localPath)) {
+            return localPath;
+        }
+    }
+
+    return QString();
+}
+
 bool runExternalTool(const QString &program, const QStringList &arguments, QString *errorMessage)
 {
     QProcess process;
@@ -301,6 +339,39 @@ bool sameFilePath(const QString &left, const QString &right)
     }
     return normalizedLeft == normalizedRight;
 }
+
+#if defined(Q_OS_MACOS)
+QString chooseFileViaAppleScript(const QString &startPath)
+{
+    QString directoryPath = startPath;
+    QFileInfo pathInfo(directoryPath);
+    if (directoryPath.isEmpty() || !pathInfo.exists()) {
+        directoryPath = QDir::homePath();
+    } else if (pathInfo.isFile()) {
+        directoryPath = pathInfo.absolutePath();
+    }
+
+    QString escapedPath = directoryPath;
+    escapedPath.replace(QStringLiteral("\\"), QStringLiteral("\\\\"));
+    escapedPath.replace(QStringLiteral("\""), QStringLiteral("\\\""));
+
+    const QString script = QStringLiteral(
+        "set defaultLocation to POSIX file \"%1\"\n"
+        "set chosenFile to choose file with prompt \"Open TBC/metadata file\" default location defaultLocation\n"
+        "POSIX path of chosenFile").arg(escapedPath);
+
+    QProcess process;
+    process.start(QStringLiteral("/usr/bin/osascript"), {QStringLiteral("-e"), script});
+    if (!process.waitForFinished(120000)) {
+        return QString();
+    }
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        return QString();
+    }
+
+    return QString::fromUtf8(process.readAllStandardOutput()).trimmed();
+}
+#endif
 } // namespace
 
 MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidget *parent) :
@@ -308,6 +379,20 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+    setAcceptDrops(true);
+    if (centralWidget()) {
+        centralWidget()->setAcceptDrops(true);
+    }
+    if (ui->mainTabWidget) {
+        ui->mainTabWidget->setAcceptDrops(true);
+    }
+    if (ui->viewerTab) {
+        ui->viewerTab->setAcceptDrops(true);
+    }
+    if (ui->imageViewerLabel) {
+        ui->imageViewerLabel->setAcceptDrops(true);
+    }
+    connect(ui->actionOpen_TBC_file, &QAction::triggered, this, &MainWindow::on_actionOpen_TBC_file_triggered, Qt::UniqueConnection);
     if (ui->mainTabWidget && ui->viewerTab) {
         ui->mainTabWidget->setCurrentWidget(ui->viewerTab);
     }
@@ -639,6 +724,7 @@ void MainWindow::setGuiEnabled(bool enabled)
     ui->actionVideo_parameters->setEnabled(enabled);
     ui->actionChroma_decoder_configuration->setEnabled(enabled);
     ui->actionReload_TBC->setEnabled(enabled);
+    ui->actionOpen_TBC_file->setEnabled(true);
 
     // "Save Metadata" should be disabled by default
     ui->actionSave_Metadata->setEnabled(false);
@@ -647,6 +733,49 @@ void MainWindow::setGuiEnabled(bool enabled)
     ui->zoomInPushButton->setEnabled(enabled);
     ui->zoomOutPushButton->setEnabled(enabled);
     ui->originalSizePushButton->setEnabled(enabled);
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent *event)
+{
+    if (!event) {
+        return;
+    }
+
+    if (!firstSupportedDroppedFile(event->mimeData()).isEmpty()) {
+        event->acceptProposedAction();
+    } else {
+        event->ignore();
+    }
+}
+
+void MainWindow::dragMoveEvent(QDragMoveEvent *event)
+{
+    if (!event) {
+        return;
+    }
+
+    if (!firstSupportedDroppedFile(event->mimeData()).isEmpty()) {
+        event->acceptProposedAction();
+    } else {
+        event->ignore();
+    }
+}
+
+void MainWindow::dropEvent(QDropEvent *event)
+{
+    if (!event) {
+        return;
+    }
+
+    const QString droppedFile = firstSupportedDroppedFile(event->mimeData());
+    if (droppedFile.isEmpty()) {
+        event->ignore();
+        return;
+    }
+
+    lastFilename = droppedFile;
+    loadTbcFile(droppedFile);
+    event->acceptProposedAction();
 }
 
 TbcSource& MainWindow::getTbcSource()
@@ -1733,13 +1862,48 @@ void MainWindow::on_actionExit_triggered()
 void MainWindow::on_actionOpen_TBC_file_triggered()
 {
     tbcDebugStream() << "MainWindow::on_actionOpen_TBC_file_triggered(): Called";
+    if (busyDialog && busyDialog->isVisible()) {
+        busyDialog->hide();
+    }
+    if (!isEnabled()) {
+        setEnabled(true);
+    }
+    QString startPath = configuration.getSourceDirectory();
+    QFileInfo startPathInfo(startPath);
+    if (startPath.isEmpty() || !startPathInfo.exists()) {
+        startPath = QDir::homePath();
+    } else if (startPathInfo.isFile()) {
+        startPath = startPathInfo.absolutePath();
+    }
 
-    QString inputFileName = QFileDialog::getOpenFileName(this,
-                tr("Open TBC/metadata file"),
-                configuration.getSourceDirectory(),
-                tr("TBC/Metadata (*.tbc *.ytbc *.ctbc *.tbcy *.tbcc *.db *.json);;"
-                   "TBC output (*.tbc *.ytbc *.ctbc *.tbcy *.tbcc);;"
-                   "Metadata (*.db *.json);;All Files (*)"));
+    QStringList filters;
+    filters << tr("TBC/Metadata (*.tbc *.ytbc *.ctbc *.tbcy *.tbcc *.db *.json)")
+            << tr("TBC output (*.tbc *.ytbc *.ctbc *.tbcy *.tbcc)")
+            << tr("Metadata (*.db *.json)")
+            << tr("All Files (*)");
+
+    QString inputFileName;
+#if defined(Q_OS_MACOS)
+    inputFileName = chooseFileViaAppleScript(startPath);
+#else
+    QFileDialog fileDialog(this, tr("Open TBC/metadata file"), startPath);
+    fileDialog.setFileMode(QFileDialog::ExistingFile);
+    fileDialog.setNameFilters(filters);
+    fileDialog.selectNameFilter(filters.first());
+    fileDialog.setAcceptMode(QFileDialog::AcceptOpen);
+    if (fileDialog.exec() == QDialog::Accepted) {
+        const QStringList selectedFiles = fileDialog.selectedFiles();
+        if (!selectedFiles.isEmpty()) {
+            inputFileName = selectedFiles.first();
+        }
+    }
+#endif
+
+    if (!inputFileName.isEmpty() && !isSupportedInputExtension(inputFileName)) {
+        QMessageBox::warning(this, tr("Unsupported file"),
+                             tr("Please select a supported file type (.tbc, .ytbc, .ctbc, .tbcy, .tbcc, .db, .json)."));
+        return;
+    }
 
     // Was a filename specified?
     if (!inputFileName.isEmpty() && !inputFileName.isNull()) {
