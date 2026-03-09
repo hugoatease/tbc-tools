@@ -17,6 +17,8 @@
 #include <QDebug>
 #include <QMouseEvent>
 #include <QTabWidget>
+#include <QLabel>
+#include <QPushButton>
 
 #include "tbcsource.h"
 #include "plotwidget.h"
@@ -42,6 +44,7 @@ signals:
 private slots:
     void on_previousPushButton_clicked();
     void on_nextPushButton_clicked();
+    void on_fieldToggleButton_clicked();
     void on_xCoordSpinBox_valueChanged(int arg1);
     void on_yCoordSpinBox_valueChanged(int arg1);
     void on_YCcheckBox_clicked();
@@ -77,12 +80,17 @@ private:
     PlotSeries *advancedYSeries;
     PlotSeries *advancedCSeries;
     PlotMarker *advancedSampleMarker;
+    QLabel *advancedSampleInfoLabel;
+    QWidget *advancedSidePanel;
+    QPushButton *fieldToggleButton;
 
     QImage getFieldLineTraceImage(TbcSource::ScanLineData scanLineData, qint32 pictureDot, bool bothSources, qint32 scopeHeight, qint32 scopeWidth);
     void setupAdvancedScopeTab();
     void updateAdvancedScope(const TbcSource::ScanLineData &scanLineData, qint32 pictureDot, bool bothSources);
     void updateAdvancedSampleMarker(qint32 pictureDot);
     double sampleToMillivolts(qint32 sampleValue, const TbcSource::ScanLineData &scanLineData) const;
+    double sampleToIre(qint32 sampleValue, const TbcSource::ScanLineData &scanLineData) const;
+    void updateAdvancedInfoLabel(qint32 pictureDot, const TbcSource::ScanLineData &scanLineData);
     void mouseLevelSelect(qint32 oY);
     void mousePictureDotSelect(qint32 oX);
 };

@@ -14,6 +14,16 @@
 #include <QtMath>
 #include <QApplication>
 #include <cmath>
+namespace {
+QFont plotUiFont(const QWidget *widget, int pointDelta)
+{
+    QFont baseFont = widget ? widget->font() : QApplication::font();
+    if (baseFont.pointSize() > 0) {
+        baseFont.setPointSize(baseFont.pointSize() + pointDelta);
+    }
+    return baseFont;
+}
+}
 
 PlotWidget::PlotWidget(QWidget *parent)
     : QWidget(parent)
@@ -275,8 +285,7 @@ void PlotWidget::showNoDataMessage(const QString &message)
     m_noDataTextItem = new QGraphicsTextItem(message);
     
     // Set font and color based on theme
-    QFont font = m_noDataTextItem->font();
-    font.setPointSize(14);
+    QFont font = plotUiFont(this, 1);
     m_noDataTextItem->setFont(font);
     
     m_noDataTextItem->setDefaultTextColor(theme_tokens::mutedText(QApplication::palette()));
@@ -938,7 +947,7 @@ void PlotLegend::updateLegend(const QList<PlotSeries*> &series, const QRectF &pl
     }
     
     // Calculate legend size
-    QFont font;
+    QFont font = plotUiFont(m_plotWidget, 1);
     QFontMetrics fm(font);
     
     int maxWidth = 0;
@@ -984,7 +993,7 @@ void PlotLegend::paint(QPainter *painter, const QStyleOptionGraphicsItem *option
     painter->setPen(QPen(palette.color(QPalette::Mid), 1.0));
     painter->drawRect(m_boundingRect);
     
-    QFont font;
+    QFont font = plotUiFont(m_plotWidget, 1);
     QFontMetrics fm(font);
     painter->setFont(font);
     
@@ -1072,8 +1081,7 @@ void PlotAxisLabels::paint(QPainter *painter, const QStyleOptionGraphicsItem *op
     QColor axisColor = QApplication::palette().color(QPalette::WindowText);
     
     painter->setPen(QPen(axisColor));
-    QFont font = painter->font();
-    font.setPointSize(9);
+    QFont font = plotUiFont(m_plotWidget, 1);
     painter->setFont(font);
     QFontMetrics fm(font);
     
