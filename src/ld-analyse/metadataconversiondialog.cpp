@@ -16,6 +16,69 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QMessageBox>
+namespace {
+QWidget *dialogParentWidget(QWidget *widget)
+{
+    if (!widget) {
+        return nullptr;
+    }
+
+    QWidget *window = widget->window();
+    return window ? window : widget;
+}
+
+QStringList dialogNameFilters(const QString &filters)
+{
+    return filters.split(QStringLiteral(";;"), Qt::SkipEmptyParts);
+}
+
+void applyCommonFileDialogOptions(QFileDialog *dialog)
+{
+    if (!dialog) {
+        return;
+    }
+
+    dialog->setOption(QFileDialog::DontResolveSymlinks, true);
+#if defined(Q_OS_MACOS)
+    dialog->setOption(QFileDialog::DontUseNativeDialog, true);
+#endif
+}
+
+QString runOpenFileDialog(QWidget *parent,
+                          const QString &title,
+                          const QString &startPath,
+                          const QString &filters)
+{
+    QFileDialog dialog(dialogParentWidget(parent), title, startPath);
+    dialog.setAcceptMode(QFileDialog::AcceptOpen);
+    dialog.setFileMode(QFileDialog::ExistingFile);
+    dialog.setNameFilters(dialogNameFilters(filters));
+    applyCommonFileDialogOptions(&dialog);
+    if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty()) {
+        return QString();
+    }
+    return dialog.selectedFiles().constFirst();
+}
+
+QString runSaveFileDialog(QWidget *parent,
+                          const QString &title,
+                          const QString &startPath,
+                          const QString &filters)
+{
+    QFileDialog dialog(dialogParentWidget(parent), title, startPath);
+    dialog.setAcceptMode(QFileDialog::AcceptSave);
+    dialog.setFileMode(QFileDialog::AnyFile);
+    dialog.setNameFilters(dialogNameFilters(filters));
+    if (!startPath.isEmpty()) {
+        dialog.selectFile(startPath);
+    }
+    applyCommonFileDialogOptions(&dialog);
+    if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty()) {
+        return QString();
+    }
+    return dialog.selectedFiles().constFirst();
+}
+} // namespace
 
 MetadataConversionDialog::MetadataConversionDialog(QWidget *parent) :
     QDialog(parent),
@@ -66,10 +129,10 @@ void MetadataConversionDialog::on_inputBrowseButton_clicked()
     const QString filter = jsonToSqlite
                                ? tr("JSON metadata (*.json);;All Files (*)")
                                : tr("SQLite metadata (*.db);;All Files (*)");
-    const QString inputFileName = QFileDialog::getOpenFileName(this,
-                                                               tr("Select metadata input"),
-                                                               sourceDirectory,
-                                                               filter);
+    const QString inputFileName = runOpenFileDialog(this,
+                                                    tr("Select metadata input"),
+                                                    sourceDirectory,
+                                                    filter);
     if (inputFileName.isEmpty()) {
         return;
     }
@@ -94,11 +157,10 @@ void MetadataConversionDialog::on_outputBrowseButton_clicked()
     if (suggestedOutput.isEmpty()) {
         suggestedOutput = MetadataConverterUtil::defaultMetadataOutputPath(ui->inputLineEdit->text().trimmed(), jsonToSqlite);
     }
-
-    const QString outputFileName = QFileDialog::getSaveFileName(this,
-                                                                tr("Select metadata output"),
-                                                                suggestedOutput,
-                                                                filter);
+    const QString outputFileName = runSaveFileDialog(this,
+                                                     tr("Select metadata output"),
+                                                     suggestedOutput,
+                                                     filter);
     if (outputFileName.isEmpty()) {
         return;
     }

@@ -147,7 +147,7 @@ void TransformPal3D::filterFields(const QVector<SourceField> &inputFields, qint3
                 applyFilter();
 
                 // Compute the inverse FFT
-                inverseFFTTile(tileX, tileY, tileZ, startIndex, endIndex);
+                inverseFFTTile(tileX, tileY, tileZ, inputFields, startIndex, endIndex);
             }
         }
     }
@@ -163,6 +163,7 @@ void TransformPal3D::forwardFFTTile(qint32 tileX, qint32 tileY, qint32 tileZ, co
     // Copy the input signal into fftReal, applying the window function
     for (qint32 z = 0; z < ZTILE; z++) {
         const qint32 fieldIndex = tileZ + z;
+        const qint32 fieldOffset = inputFields[fieldIndex].getOffset();
         const quint16 *inputPtr = inputFields[fieldIndex].data.data();
 
         for (qint32 y = 0; y < YTILE; y++) {
@@ -170,7 +171,7 @@ void TransformPal3D::forwardFFTTile(qint32 tileX, qint32 tileY, qint32 tileZ, co
             // we're reading from (either because it's above/below
             // the active region, or because it's in the other
             // field), fill it with black instead.
-            if (y < startY || y >= endY || ((tileY + y) % 2) != (fieldIndex % 2)) {
+            if (y < startY || y >= endY || ((tileY + y) % 2) != fieldOffset) {
                 for (qint32 x = 0; x < XTILE; x++) {
                     fftReal[(((z * YTILE) + y) * XTILE) + x] = videoParameters.black16bIre * windowFunction[z][y][x];
                 }
@@ -190,7 +191,8 @@ void TransformPal3D::forwardFFTTile(qint32 tileX, qint32 tileY, qint32 tileZ, co
 }
 
 // Apply the inverse FFT to fftComplexOut, overlaying the result into chromaBuf
-void TransformPal3D::inverseFFTTile(qint32 tileX, qint32 tileY, qint32 tileZ, qint32 startIndex, qint32 endIndex)
+void TransformPal3D::inverseFFTTile(qint32 tileX, qint32 tileY, qint32 tileZ, const QVector<SourceField> &inputFields,
+                                    qint32 startIndex, qint32 endIndex)
 {
     // Work out what portion of this tile is inside the active area
     const qint32 startX = qMax(videoParameters.activeVideoStart - tileX, 0);
@@ -205,12 +207,14 @@ void TransformPal3D::inverseFFTTile(qint32 tileX, qint32 tileY, qint32 tileZ, qi
 
     // Overlay the result, normalising the FFTW output, into the chroma buffers
     for (qint32 z = startZ; z < endZ; z++) {
-        const qint32 outputIndex = tileZ + z - startIndex;
+        const qint32 fieldIndex = tileZ + z;
+        const qint32 outputIndex = fieldIndex - startIndex;
+        const qint32 fieldOffset = inputFields[fieldIndex].getOffset();
         double *outputPtr = chromaBuf[outputIndex].data();
 
         for (qint32 y = startY; y < endY; y++) {
             // If this frame line is not part of this field, ignore it.
-            if (((tileY + y) % 2) != (outputIndex % 2)) {
+            if (((tileY + y) % 2) != fieldOffset) {
                 continue;
             }
 

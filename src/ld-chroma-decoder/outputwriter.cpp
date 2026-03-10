@@ -296,11 +296,25 @@ void OutputWriter::convertLine(qint32 lineNumber, const ComponentFrame &componen
 
     const qint32 outputLine = topPadLines + lineNumber;
 
-    const bool preserveFullSignalRange = !config.trimToActiveRegion;
-    const double yOffset = preserveFullSignalRange ? 0.0 : static_cast<double>(videoParameters.black16bIre);
-    double yRange = preserveFullSignalRange ? 65535.0
-                                            : static_cast<double>(videoParameters.white16bIre - videoParameters.black16bIre);
-    double uvRange = static_cast<double>(videoParameters.white16bIre - videoParameters.black16bIre);
+    const bool hybridLevelWindowMode = !config.trimToActiveRegion && !config.fullFrameDecode;
+    const bool lineInActiveRegion = inputLine >= videoParameters.firstActiveFrameLine
+                                    && inputLine < videoParameters.lastActiveFrameLine;
+
+    auto useLeveledRangeAtX = [&](qint32 x) -> bool {
+        if (!hybridLevelWindowMode) {
+            return true;
+        }
+        if (!lineInActiveRegion) {
+            return false;
+        }
+        const qint32 inputX = inputStartX + x;
+        return inputX >= videoParameters.activeVideoStart
+               && inputX < videoParameters.activeVideoEnd;
+    };
+
+    const double leveledYOffset = static_cast<double>(videoParameters.black16bIre);
+    double yRange = static_cast<double>(videoParameters.white16bIre - videoParameters.black16bIre);
+    double uvRange = yRange;
     if (yRange <= 0.0) {
         yRange = 1.0;
     }
@@ -312,11 +326,14 @@ void OutputWriter::convertLine(qint32 lineNumber, const ComponentFrame &componen
         case RGB48: {
             // Convert Y'UV to full-range R'G'B' [Poynton eq 28.6 p337]
             quint16 *out = outputFrame.data() + (activeWidth * outputLine * 3);
-
+            const double leveledYScale = 65535.0 / yRange;
             const double yScale = 65535.0 / yRange;
             const double uvScale = 65535.0 / uvRange;
 
             for (qint32 x = 0; x < activeWidth; x++) {
+                const bool leveledRange = useLeveledRangeAtX(x);
+                const double yOffset = leveledRange ? leveledYOffset : 0.0;
+                const double yScale = leveledRange ? leveledYScale : 1.0;
                 // Scale Y'UV to 0-65535
                 const double rY = qBound(0.0, (inY[x] - yOffset) * yScale, 65535.0);
                 const double rU = inU[x] * uvScale;
@@ -336,12 +353,16 @@ void OutputWriter::convertLine(qint32 lineNumber, const ComponentFrame &componen
             quint16 *outY  = outputFrame.data() + (activeWidth * outputLine);
             quint16 *outCB = outY + (activeWidth * outputHeight);
             quint16 *outCR = outCB + (activeWidth * outputHeight);
-
+            const double leveledYScale = Y_SCALE / yRange;
+            const double fullSignalYScale = Y_SCALE / 65535.0;
             const double yScale = Y_SCALE / yRange;
             const double cbScale = (C_SCALE / (ONE_MINUS_Kb * kB)) / uvRange;
             const double crScale = (C_SCALE / (ONE_MINUS_Kr * kR)) / uvRange;
 
             for (qint32 x = 0; x < activeWidth; x++) {
+                const bool leveledRange = useLeveledRangeAtX(x);
+                const double yOffset = leveledRange ? leveledYOffset : 0.0;
+                const double yScale = leveledRange ? leveledYScale : fullSignalYScale;
                 outY[x]  = static_cast<quint16>(qBound(Y_MIN, ((inY[x] - yOffset) * yScale)  + Y_ZERO, Y_MAX));
                 outCB[x] = static_cast<quint16>(qBound(C_MIN, (inU[x]             * cbScale) + C_ZERO, C_MAX));
                 outCR[x] = static_cast<quint16>(qBound(C_MIN, (inV[x]             * crScale) + C_ZERO, C_MAX));
@@ -352,10 +373,14 @@ void OutputWriter::convertLine(qint32 lineNumber, const ComponentFrame &componen
         case GRAY16: {
             // Throw away UV and just convert Y' to the same scale as Y'CbCr
             quint16 *out = outputFrame.data() + (activeWidth * outputLine);
-
+            const double leveledYScale = Y_SCALE / yRange;
+            const double fullSignalYScale = Y_SCALE / 65535.0;
             const double yScale = Y_SCALE / yRange;
 
             for (qint32 x = 0; x < activeWidth; x++) {
+                const bool leveledRange = useLeveledRangeAtX(x);
+                const double yOffset = leveledRange ? leveledYOffset : 0.0;
+                const double yScale = leveledRange ? leveledYScale : fullSignalYScale;
                 out[x] = static_cast<quint16>(qBound(Y_MIN, ((inY[x] - yOffset) * yScale) + Y_ZERO, Y_MAX));
             }
 

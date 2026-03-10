@@ -59,6 +59,7 @@ private:
     void syncRangeTimecodeEditors();
     QString resolveVideoExportPath() const;
     QString resolveFfmpegPath() const;
+    QString resolveLdChromaDecoderPath() const;
     QString defaultOutputBaseName(const QString &inputFile) const;
     QString sanitizeOutputBaseName(const QString &path) const;
     bool findExistingOutputFiles(const QString &outputBase, QStringList *existingFiles) const;

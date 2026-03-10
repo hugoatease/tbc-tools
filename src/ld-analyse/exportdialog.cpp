@@ -89,6 +89,151 @@ QString formatShellCommand(const QString &program, const QStringList &args)
     return parts.join(' ');
 }
 
+QWidget *dialogParentWidget(QWidget *widget)
+{
+    if (!widget) {
+        return nullptr;
+    }
+
+    QWidget *window = widget->window();
+    return window ? window : widget;
+}
+
+QStringList dialogNameFilters(const QString &filters)
+{
+    return filters.split(QStringLiteral(";;"), Qt::SkipEmptyParts);
+}
+
+void applyCommonFileDialogOptions(QFileDialog *dialog)
+{
+    if (!dialog) {
+        return;
+    }
+
+    dialog->setOption(QFileDialog::DontResolveSymlinks, true);
+#if defined(Q_OS_MACOS)
+    dialog->setOption(QFileDialog::DontUseNativeDialog, true);
+#endif
+}
+
+QString runOpenFileDialog(QWidget *parent,
+                          const QString &title,
+                          const QString &startPath,
+                          const QString &filters)
+{
+    QFileDialog dialog(dialogParentWidget(parent), title, startPath);
+    dialog.setAcceptMode(QFileDialog::AcceptOpen);
+    dialog.setFileMode(QFileDialog::ExistingFile);
+    dialog.setNameFilters(dialogNameFilters(filters));
+    applyCommonFileDialogOptions(&dialog);
+    if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty()) {
+        return QString();
+    }
+    return dialog.selectedFiles().constFirst();
+}
+
+QString runDirectoryDialog(QWidget *parent,
+                           const QString &title,
+                           const QString &startPath)
+{
+    QFileDialog dialog(dialogParentWidget(parent), title, startPath);
+    dialog.setFileMode(QFileDialog::Directory);
+    dialog.setOption(QFileDialog::ShowDirsOnly, true);
+    applyCommonFileDialogOptions(&dialog);
+    if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty()) {
+        return QString();
+    }
+    return dialog.selectedFiles().constFirst();
+}
+
+QStringList defaultExecutableSearchDirs(const QString &currentInputFile)
+{
+    QStringList candidateDirs;
+    auto appendUniqueDir = [&candidateDirs](const QString &dirPath) {
+        if (dirPath.isEmpty()) {
+            return;
+        }
+        for (const QString &existing : candidateDirs) {
+            if (existing.compare(dirPath, Qt::CaseInsensitive) == 0) {
+                return;
+            }
+        }
+        candidateDirs << dirPath;
+    };
+
+    const QString appDir = QCoreApplication::applicationDirPath();
+    if (!appDir.isEmpty()) {
+        appendUniqueDir(appDir);
+
+        QDir parentDir(appDir);
+        for (int i = 0; i < 4; ++i) {
+            if (!parentDir.cdUp()) {
+                break;
+            }
+            appendUniqueDir(parentDir.absolutePath());
+        }
+    }
+
+    const QString currentDir = QDir::currentPath();
+    if (!currentDir.isEmpty()) {
+        appendUniqueDir(currentDir);
+        appendUniqueDir(QDir(currentDir).filePath(QStringLiteral("build/bin")));
+    }
+
+    if (!currentInputFile.isEmpty()) {
+        const QString inputDir = QFileInfo(currentInputFile).absolutePath();
+        appendUniqueDir(inputDir);
+    }
+
+    const QString homeDir = QDir::homePath();
+    if (!homeDir.isEmpty()) {
+        const QString localBin = QDir(homeDir).filePath(QStringLiteral(".local/bin"));
+        const QString userBin = QDir(homeDir).filePath(QStringLiteral("bin"));
+        appendUniqueDir(localBin);
+        appendUniqueDir(userBin);
+    }
+
+#if defined(Q_OS_MACOS)
+    const QStringList platformDirs = {
+        QStringLiteral("/opt/homebrew/bin"),
+        QStringLiteral("/opt/homebrew/sbin"),
+        QStringLiteral("/usr/local/bin"),
+        QStringLiteral("/usr/local/sbin"),
+        QStringLiteral("/usr/bin"),
+        QStringLiteral("/bin")
+    };
+#elif defined(Q_OS_UNIX)
+    const QStringList platformDirs = {
+        QStringLiteral("/usr/local/bin"),
+        QStringLiteral("/usr/local/sbin"),
+        QStringLiteral("/usr/bin"),
+        QStringLiteral("/bin"),
+        QStringLiteral("/snap/bin")
+    };
+#else
+    const QStringList platformDirs;
+#endif
+
+    for (const QString &dir : platformDirs) {
+        appendUniqueDir(dir);
+    }
+
+    return candidateDirs;
+}
+
+void prependUniquePathEntries(QStringList *pathEntries, const QStringList &prependDirs)
+{
+    if (!pathEntries) {
+        return;
+    }
+
+    for (auto it = prependDirs.crbegin(); it != prependDirs.crend(); ++it) {
+        if (!it->isEmpty() && !pathEntries->contains(*it)) {
+            pathEntries->prepend(*it);
+        }
+    }
+}
+
 QStringList parseProfiles(const QString &rawOutput, QString *defaultProfile)
 {
     QStringList profiles;
@@ -130,35 +275,6 @@ QStringList parseProfiles(const QString &rawOutput, QString *defaultProfile)
     return profiles;
 }
 
-bool toolSupportsOption(const QString &program, const QString &option)
-{
-    if (program.isEmpty() || option.isEmpty()) {
-        return false;
-    }
-
-    static QHash<QString, bool> supportCache;
-    const QString cacheKey = program + QLatin1Char('|') + option;
-    if (supportCache.contains(cacheKey)) {
-        return supportCache.value(cacheKey);
-    }
-
-    QProcess helpProcess;
-    helpProcess.setProcessChannelMode(QProcess::MergedChannels);
-    helpProcess.start(program, QStringList() << QStringLiteral("--help"));
-    bool supported = false;
-    if (helpProcess.waitForStarted(3000)) {
-        if (helpProcess.waitForFinished(10000)
-            && helpProcess.exitStatus() == QProcess::NormalExit) {
-            const QString helpOutput = QString::fromLocal8Bit(helpProcess.readAllStandardOutput());
-            supported = helpOutput.contains(option);
-        } else {
-            helpProcess.kill();
-        }
-    }
-
-    supportCache.insert(cacheKey, supported);
-    return supported;
-}
 
 struct ActiveAreaFrameDefaults {
     int ffll = 0;
@@ -179,6 +295,7 @@ ActiveAreaFrameDefaults activeAreaDefaultsForSystem(int system)
     }
 }
 
+
 bool hasExplicitVerticalFraming(const LdDecodeMetaData::VideoParameters &videoParameters)
 {
     return videoParameters.firstActiveFieldLine > 0
@@ -198,6 +315,23 @@ bool usesCustomVerticalFraming(const LdDecodeMetaData::VideoParameters &videoPar
            || videoParameters.lastActiveFieldLine != defaults.lfll
            || videoParameters.firstActiveFrameLine != defaults.ffrl
            || videoParameters.lastActiveFrameLine != defaults.lfrl;
+}
+
+bool hasAnyNonDefaultVerticalFraming(const LdDecodeMetaData::VideoParameters &videoParameters)
+{
+    if (!videoParameters.isValid) {
+        return false;
+    }
+
+    const ActiveAreaFrameDefaults defaults = activeAreaDefaultsForSystem(videoParameters.system);
+    return (videoParameters.firstActiveFieldLine > 0
+            && videoParameters.firstActiveFieldLine != defaults.ffll)
+           || (videoParameters.lastActiveFieldLine > 0
+               && videoParameters.lastActiveFieldLine != defaults.lfll)
+           || (videoParameters.firstActiveFrameLine > 0
+               && videoParameters.firstActiveFrameLine != defaults.ffrl)
+           || (videoParameters.lastActiveFrameLine > 0
+               && videoParameters.lastActiveFrameLine != defaults.lfrl);
 }
 
 double frameRateForSystem(int system)
@@ -467,6 +601,32 @@ bool parseProgressLine(const QString &line, ExportDialog::ExportProcessStat *sta
         || parseInfoProgressLine(line, stat)
         || parseFfmpegProgressLine(line, stat)
         || parseCompletionSummaryLine(line, stat);
+}
+
+bool executableSupportsOption(const QString &program, const QString &option)
+{
+    if (program.isEmpty() || option.isEmpty()) {
+        return false;
+    }
+
+    static QHash<QString, bool> supportCache;
+    const QString cacheKey = program + QStringLiteral("|") + option;
+    if (supportCache.contains(cacheKey)) {
+        return supportCache.value(cacheKey);
+    }
+
+    QProcess helpProcess;
+    helpProcess.setProcessChannelMode(QProcess::MergedChannels);
+    helpProcess.start(program, QStringList() << QStringLiteral("--help"));
+
+    bool supportsOption = false;
+    if (helpProcess.waitForStarted(3000) && helpProcess.waitForFinished(5000)) {
+        const QString helpOutput = QString::fromLocal8Bit(helpProcess.readAllStandardOutput());
+        supportsOption = helpOutput.contains(option);
+    }
+
+    supportCache.insert(cacheKey, supportsOption);
+    return supportsOption;
 }
 
 }
@@ -921,9 +1081,12 @@ void ExportDialog::updateFromSource()
             }
             if (ui->resolutionModeComboBox) {
                 const LdDecodeMetaData::VideoParameters &videoParameters = tbcSource->getVideoParameters();
-                const QString modeData = usesCustomVerticalFraming(videoParameters)
-                                             ? QStringLiteral("user_defined")
-                                             : QStringLiteral("active_area");
+                QString modeData = QStringLiteral("active_area");
+                if (tbcSource->getOutputConfiguration().fullFrameDecode) {
+                    modeData = QStringLiteral("full_frame_4fsc");
+                } else if (usesCustomVerticalFraming(videoParameters)) {
+                    modeData = QStringLiteral("user_defined");
+                }
                 const int modeIndex = ui->resolutionModeComboBox->findData(modeData);
                 if (modeIndex >= 0) {
                     ui->resolutionModeComboBox->setCurrentIndex(modeIndex);
@@ -1028,25 +1191,45 @@ void ExportDialog::on_outputBrowseButton_clicked()
     if (suggestedOutput.isEmpty() && !currentInputFile.isEmpty()) {
         suggestedOutput = defaultOutputBaseName(currentInputFile);
     }
-
-    const QString selected = QFileDialog::getSaveFileName(this,
-                                                          tr("Select output base name"),
-                                                          suggestedOutput,
-                                                          tr("All Files (*)"));
-    if (selected.isEmpty()) {
+    QFileInfo suggestedInfo(suggestedOutput);
+    QString initialDirectory;
+    if (!suggestedOutput.isEmpty()) {
+        if (suggestedInfo.exists() && suggestedInfo.isDir()) {
+            initialDirectory = suggestedInfo.absoluteFilePath();
+        } else {
+            initialDirectory = suggestedInfo.absolutePath();
+        }
+    }
+    if (initialDirectory.isEmpty() && !currentInputFile.isEmpty()) {
+        initialDirectory = QFileInfo(currentInputFile).absolutePath();
+    }
+    if (initialDirectory.isEmpty()) {
+        initialDirectory = QDir::homePath();
+    }
+    const QString selectedDirectory = runDirectoryDialog(this,
+                                                         tr("Select output directory"),
+                                                         initialDirectory);
+    if (selectedDirectory.isEmpty()) {
         return;
     }
+    QString baseName = QFileInfo(suggestedOutput).completeBaseName();
+    if (baseName.isEmpty() && !currentInputFile.isEmpty()) {
+        baseName = QFileInfo(currentInputFile).completeBaseName();
+    }
+    if (baseName.isEmpty()) {
+        baseName = QStringLiteral("output");
+    }
 
-    ui->outputLineEdit->setText(sanitizeOutputBaseName(selected));
+    ui->outputLineEdit->setText(QDir(selectedDirectory).filePath(baseName));
     outputAutoSet = false;
 }
 
 void ExportDialog::on_audio1BrowseButton_clicked()
 {
-    const QString selected = QFileDialog::getOpenFileName(this,
-                                                          tr("Select audio track 1"),
-                                                          QString(),
-                                                          tr("Audio Files (*.wav *.flac *.aiff *.aif *.mp3 *.m4a *.aac *.ogg);;All Files (*)"));
+    const QString selected = runOpenFileDialog(this,
+                                               tr("Select audio track 1"),
+                                               currentInputFile.isEmpty() ? QString() : QFileInfo(currentInputFile).absolutePath(),
+                                               tr("Audio Files (*.wav *.flac *.aiff *.aif *.mp3 *.m4a *.aac *.ogg);;All Files (*)"));
     if (!selected.isEmpty()) {
         ui->audio1LineEdit->setText(selected);
     }
@@ -1054,10 +1237,10 @@ void ExportDialog::on_audio1BrowseButton_clicked()
 
 void ExportDialog::on_audio2BrowseButton_clicked()
 {
-    const QString selected = QFileDialog::getOpenFileName(this,
-                                                          tr("Select audio track 2"),
-                                                          QString(),
-                                                          tr("Audio Files (*.wav *.flac *.aiff *.aif *.mp3 *.m4a *.aac *.ogg);;All Files (*)"));
+    const QString selected = runOpenFileDialog(this,
+                                               tr("Select audio track 2"),
+                                               currentInputFile.isEmpty() ? QString() : QFileInfo(currentInputFile).absolutePath(),
+                                               tr("Audio Files (*.wav *.flac *.aiff *.aif *.mp3 *.m4a *.aac *.ogg);;All Files (*)"));
     if (!selected.isEmpty()) {
         ui->audio2LineEdit->setText(selected);
     }
@@ -1065,10 +1248,10 @@ void ExportDialog::on_audio2BrowseButton_clicked()
 
 void ExportDialog::on_audio3BrowseButton_clicked()
 {
-    const QString selected = QFileDialog::getOpenFileName(this,
-                                                          tr("Select audio track 3"),
-                                                          QString(),
-                                                          tr("Audio Files (*.wav *.flac *.aiff *.aif *.mp3 *.m4a *.aac *.ogg);;All Files (*)"));
+    const QString selected = runOpenFileDialog(this,
+                                               tr("Select audio track 3"),
+                                               currentInputFile.isEmpty() ? QString() : QFileInfo(currentInputFile).absolutePath(),
+                                               tr("Audio Files (*.wav *.flac *.aiff *.aif *.mp3 *.m4a *.aac *.ogg);;All Files (*)"));
     if (!selected.isEmpty()) {
         ui->audio3LineEdit->setText(selected);
     }
@@ -1076,10 +1259,10 @@ void ExportDialog::on_audio3BrowseButton_clicked()
 
 void ExportDialog::on_audio4BrowseButton_clicked()
 {
-    const QString selected = QFileDialog::getOpenFileName(this,
-                                                          tr("Select audio track 4"),
-                                                          QString(),
-                                                          tr("Audio Files (*.wav *.flac *.aiff *.aif *.mp3 *.m4a *.aac *.ogg);;All Files (*)"));
+    const QString selected = runOpenFileDialog(this,
+                                               tr("Select audio track 4"),
+                                               currentInputFile.isEmpty() ? QString() : QFileInfo(currentInputFile).absolutePath(),
+                                               tr("Audio Files (*.wav *.flac *.aiff *.aif *.mp3 *.m4a *.aac *.ogg);;All Files (*)"));
     if (!selected.isEmpty()) {
         ui->audio4LineEdit->setText(selected);
     }
@@ -1251,30 +1434,11 @@ void ExportDialog::on_exportButton_clicked()
     exportProcess->setWorkingDirectory(QFileInfo(currentInputFile).absolutePath());
     {
         QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-        QStringList prependDirs;
-        const QString appDir = QCoreApplication::applicationDirPath();
-        if (!appDir.isEmpty()) {
-            prependDirs << appDir;
-        }
-        if (!currentInputFile.isEmpty()) {
-            const QString inputDir = QFileInfo(currentInputFile).absolutePath();
-            if (!inputDir.isEmpty()) {
-                prependDirs << inputDir;
-            }
-        }
-        const QString homeDir = QDir::homePath();
-        if (!homeDir.isEmpty()) {
-            prependDirs << QDir(homeDir).filePath(QStringLiteral(".local/bin"))
-                        << QDir(homeDir).filePath(QStringLiteral("bin"));
-        }
+        const QStringList prependDirs = defaultExecutableSearchDirs(currentInputFile);
 
         QStringList pathEntries = env.value(QStringLiteral("PATH"))
                                       .split(QDir::listSeparator(), Qt::SkipEmptyParts);
-        for (auto it = prependDirs.crbegin(); it != prependDirs.crend(); ++it) {
-            if (!it->isEmpty() && !pathEntries.contains(*it)) {
-                pathEntries.prepend(*it);
-            }
-        }
+        prependUniquePathEntries(&pathEntries, prependDirs);
         if (!pathEntries.isEmpty()) {
             env.insert(QStringLiteral("PATH"), pathEntries.join(QDir::listSeparator()));
         }
@@ -1605,11 +1769,12 @@ void ExportDialog::updateProcessStat(const ExportProcessStat &stat)
 void ExportDialog::setBusy(bool busy)
 {
     const bool enabled = exportAvailable && !busy;
+    const bool browseEnabled = !busy;
     ui->exportButton->setEnabled(enabled);
     if (ui->cancelButton) {
         ui->cancelButton->setEnabled(busy);
     }
-    ui->outputBrowseButton->setEnabled(enabled);
+    ui->outputBrowseButton->setEnabled(browseEnabled);
     ui->audio1BrowseButton->setEnabled(enabled);
     ui->audio2BrowseButton->setEnabled(enabled);
     ui->audio3BrowseButton->setEnabled(enabled);
@@ -1636,7 +1801,7 @@ void ExportDialog::setBusy(bool busy)
     if (ui->ffv1SlicesSpinBox) {
         ui->ffv1SlicesSpinBox->setEnabled(enabled);
     }
-    ui->outputLineEdit->setEnabled(enabled);
+    ui->outputLineEdit->setEnabled(browseEnabled);
     ui->audio1LineEdit->setEnabled(enabled);
     ui->audio2LineEdit->setEnabled(enabled);
     ui->audio3LineEdit->setEnabled(enabled);
@@ -1662,30 +1827,7 @@ QString ExportDialog::resolveVideoExportPath() const
     if (!fromPath.isEmpty()) {
         return fromPath;
     }
-
-    const QString appDir = QCoreApplication::applicationDirPath();
-    QStringList candidateDirs;
-    if (!appDir.isEmpty()) {
-        candidateDirs << appDir;
-    }
-
-    if (!currentInputFile.isEmpty()) {
-        const QString inputDir = QFileInfo(currentInputFile).absolutePath();
-        if (!inputDir.isEmpty() && !candidateDirs.contains(inputDir)) {
-            candidateDirs << inputDir;
-        }
-    }
-    const QString homeDir = QDir::homePath();
-    if (!homeDir.isEmpty()) {
-        const QString localBin = QDir(homeDir).filePath(QStringLiteral(".local/bin"));
-        const QString userBin = QDir(homeDir).filePath(QStringLiteral("bin"));
-        if (!candidateDirs.contains(localBin)) {
-            candidateDirs << localBin;
-        }
-        if (!candidateDirs.contains(userBin)) {
-            candidateDirs << userBin;
-        }
-    }
+    const QStringList candidateDirs = defaultExecutableSearchDirs(currentInputFile);
 
     QStringList candidateNames;
 #if defined(Q_OS_WIN)
@@ -1707,36 +1849,42 @@ QString ExportDialog::resolveVideoExportPath() const
     return QString();
 }
 
+QString ExportDialog::resolveLdChromaDecoderPath() const
+{
+    const QStringList candidateDirs = defaultExecutableSearchDirs(currentInputFile);
+
+    QStringList candidateNames;
+#if defined(Q_OS_WIN)
+    candidateNames << QStringLiteral("ld-chroma-decoder.exe") << QStringLiteral("ld-chroma-decoder");
+#else
+    candidateNames << QStringLiteral("ld-chroma-decoder");
+#endif
+
+    for (const QString &dir : candidateDirs) {
+        for (const QString &name : candidateNames) {
+            const QString candidate = QDir(dir).filePath(name);
+            QFileInfo candidateInfo(candidate);
+            if (candidateInfo.exists() && candidateInfo.isExecutable()) {
+                return candidate;
+            }
+        }
+    }
+
+    const QString fromPath = QStandardPaths::findExecutable(QStringLiteral("ld-chroma-decoder"));
+    if (!fromPath.isEmpty()) {
+        return fromPath;
+    }
+
+    return QString();
+}
+
 QString ExportDialog::resolveFfmpegPath() const
 {
     const QString fromPath = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
     if (!fromPath.isEmpty()) {
         return fromPath;
     }
-
-    const QString appDir = QCoreApplication::applicationDirPath();
-    QStringList candidateDirs;
-    if (!appDir.isEmpty()) {
-        candidateDirs << appDir;
-    }
-
-    if (!currentInputFile.isEmpty()) {
-        const QString inputDir = QFileInfo(currentInputFile).absolutePath();
-        if (!inputDir.isEmpty() && !candidateDirs.contains(inputDir)) {
-            candidateDirs << inputDir;
-        }
-    }
-    const QString homeDir = QDir::homePath();
-    if (!homeDir.isEmpty()) {
-        const QString localBin = QDir(homeDir).filePath(QStringLiteral(".local/bin"));
-        const QString userBin = QDir(homeDir).filePath(QStringLiteral("bin"));
-        if (!candidateDirs.contains(localBin)) {
-            candidateDirs << localBin;
-        }
-        if (!candidateDirs.contains(userBin)) {
-            candidateDirs << userBin;
-        }
-    }
+    const QStringList candidateDirs = defaultExecutableSearchDirs(currentInputFile);
 
     QStringList candidateNames;
 #if defined(Q_OS_WIN)
@@ -2087,12 +2235,30 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
     }
 
     const LdDecodeMetaData::VideoParameters &videoParameters = tbcSource->getVideoParameters();
+    const bool isPalSystem = (videoParameters.system == PAL || videoParameters.system == PAL_M);
+    const bool isNtscSystem = (videoParameters.system == NTSC);
     if (videoParameters.isValid) {
         args << QStringLiteral("--video-system") << videoSystemArg(videoParameters.system);
     }
 
     if (!videoParameters.chromaDecoder.isEmpty()) {
-        args << QStringLiteral("--chroma-decoder") << videoParameters.chromaDecoder;
+        const QString decoderName = videoParameters.chromaDecoder.trimmed().toLower();
+        bool decoderAllowed = false;
+        if (isPalSystem) {
+            decoderAllowed = decoderName == QStringLiteral("pal2d")
+                             || decoderName == QStringLiteral("transform2d")
+                             || decoderName == QStringLiteral("transform3d")
+                             || decoderName == QStringLiteral("mono");
+        } else if (isNtscSystem) {
+            decoderAllowed = decoderName == QStringLiteral("ntsc1d")
+                             || decoderName == QStringLiteral("ntsc2d")
+                             || decoderName == QStringLiteral("ntsc3d")
+                             || decoderName == QStringLiteral("ntsc3dnoadapt")
+                             || decoderName == QStringLiteral("mono");
+        }
+        if (decoderAllowed) {
+            args << QStringLiteral("--chroma-decoder") << decoderName;
+        }
     }
     if (videoParameters.chromaGain >= 0.0) {
         args << QStringLiteral("--chroma-gain") << QString::number(videoParameters.chromaGain, 'f', 6);
@@ -2104,43 +2270,59 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
     if (!isSplitSource && videoParameters.lumaNR >= 0.0) {
         args << QStringLiteral("--luma-nr") << QString::number(videoParameters.lumaNR, 'f', 3);
     }
-    const QString resolutionMode = ui->resolutionModeComboBox
-                                       ? ui->resolutionModeComboBox->currentData().toString()
-                                       : QStringLiteral("active_area");
-    const bool prioritizeUserDefinedFraming = usesCustomVerticalFraming(videoParameters);
+    QString resolutionMode = ui->resolutionModeComboBox
+                                 ? ui->resolutionModeComboBox->currentData().toString()
+                                 : QStringLiteral("active_area");
+    if ((resolutionMode == QStringLiteral("active_area")
+         || resolutionMode == QStringLiteral("user_defined"))
+        && tbcSource->getOutputConfiguration().fullFrameDecode) {
+        resolutionMode = QStringLiteral("full_frame_4fsc");
+    }
+
+    auto appendFramingArgs = [&args](int ffll, int lfll, int ffrl, int lfrl) {
+        if (ffll > 0) {
+            args << QStringLiteral("--ffll") << QString::number(ffll);
+        }
+        if (lfll > 0) {
+            args << QStringLiteral("--lfll") << QString::number(lfll);
+        }
+        if (ffrl > 0) {
+            args << QStringLiteral("--ffrl") << QString::number(ffrl);
+        }
+        if (lfrl > 0) {
+            args << QStringLiteral("--lfrl") << QString::number(lfrl);
+        }
+    };
+    const bool forwardActiveLines = hasAnyNonDefaultVerticalFraming(videoParameters);
     if (resolutionMode == QStringLiteral("full_frame_4fsc")) {
-        const QString exportPath = resolveVideoExportPath();
-        if (!exportPath.isEmpty() && !toolSupportsOption(exportPath, QStringLiteral("--full-frame"))) {
+        const QString decoderPath = resolveLdChromaDecoderPath();
+        const bool supportsFullFrame = executableSupportsOption(decoderPath, QStringLiteral("--full-frame"));
+        if (supportsFullFrame) {
+            args << QStringLiteral("--full-frame");
+        } else {
             if (errorMessage) {
-                *errorMessage = tr("Selected export mode requires a tbc-video-export build with --full-frame support.");
+                if (decoderPath.isEmpty()) {
+                    *errorMessage = tr("Full-Frame 4fsc export requires ld-chroma-decoder with --full-frame support, but no decoder executable was found.");
+                } else {
+                    *errorMessage = tr("Full-Frame 4fsc export requires ld-chroma-decoder with --full-frame support. Detected decoder does not support it: %1").arg(decoderPath);
+                }
             }
             return QStringList();
         }
-        args << QStringLiteral("--full-frame");
     } else if (resolutionMode == QStringLiteral("active_vbi")) {
         args << QStringLiteral("--vbi");
-    } else if (resolutionMode == QStringLiteral("user_defined") || prioritizeUserDefinedFraming) {
-        if (videoParameters.firstActiveFieldLine > 0) {
-            args << QStringLiteral("--ffll") << QString::number(videoParameters.firstActiveFieldLine);
-        }
-        if (videoParameters.lastActiveFieldLine > 0) {
-            args << QStringLiteral("--lfll") << QString::number(videoParameters.lastActiveFieldLine);
-        }
-        if (videoParameters.firstActiveFrameLine > 0) {
-            args << QStringLiteral("--ffrl") << QString::number(videoParameters.firstActiveFrameLine);
-        }
-        if (videoParameters.lastActiveFrameLine > 0) {
-            args << QStringLiteral("--lfrl") << QString::number(videoParameters.lastActiveFrameLine);
-        }
+    } else if (resolutionMode == QStringLiteral("user_defined") || forwardActiveLines) {
+        appendFramingArgs(videoParameters.firstActiveFieldLine,
+                          videoParameters.lastActiveFieldLine,
+                          videoParameters.firstActiveFrameLine,
+                          videoParameters.lastActiveFrameLine);
     }
 
-    if (videoParameters.ntscPhaseCompensation >= 0) {
+    if (isNtscSystem && videoParameters.ntscPhaseCompensation >= 0) {
         args << (videoParameters.ntscPhaseCompensation ? QStringLiteral("--ntsc-phase-comp")
                                                        : QStringLiteral("--no-ntsc-phase-comp"));
     }
-
-    if ((videoParameters.system == PAL || videoParameters.system == PAL_M)
-        && videoParameters.palTransformThreshold >= 0.0) {
+    if (isPalSystem && videoParameters.palTransformThreshold >= 0.0) {
         args << QStringLiteral("--transform-threshold") << QString::number(videoParameters.palTransformThreshold, 'f', 3);
     }
 

@@ -241,6 +241,68 @@ QString firstSupportedDroppedFile(const QMimeData *mimeData)
 
     return QString();
 }
+
+QWidget *dialogParentWidget(QWidget *widget)
+{
+    if (!widget) {
+        return nullptr;
+    }
+
+    QWidget *window = widget->window();
+    return window ? window : widget;
+}
+
+QStringList dialogNameFilters(const QString &filters)
+{
+    return filters.split(QStringLiteral(";;"), Qt::SkipEmptyParts);
+}
+
+void applyCommonFileDialogOptions(QFileDialog *dialog)
+{
+    if (!dialog) {
+        return;
+    }
+
+    dialog->setOption(QFileDialog::DontResolveSymlinks, true);
+#if defined(Q_OS_MACOS)
+    dialog->setOption(QFileDialog::DontUseNativeDialog, true);
+#endif
+}
+
+QString runOpenFileDialog(QWidget *parent,
+                          const QString &title,
+                          const QString &startPath,
+                          const QString &filters)
+{
+    QFileDialog dialog(dialogParentWidget(parent), title, startPath);
+    dialog.setAcceptMode(QFileDialog::AcceptOpen);
+    dialog.setFileMode(QFileDialog::ExistingFile);
+    dialog.setNameFilters(dialogNameFilters(filters));
+    applyCommonFileDialogOptions(&dialog);
+    if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty()) {
+        return QString();
+    }
+    return dialog.selectedFiles().constFirst();
+}
+
+QString runSaveFileDialog(QWidget *parent,
+                          const QString &title,
+                          const QString &startPath,
+                          const QString &filters)
+{
+    QFileDialog dialog(dialogParentWidget(parent), title, startPath);
+    dialog.setAcceptMode(QFileDialog::AcceptSave);
+    dialog.setFileMode(QFileDialog::AnyFile);
+    dialog.setNameFilters(dialogNameFilters(filters));
+    if (!startPath.isEmpty()) {
+        dialog.selectFile(startPath);
+    }
+    applyCommonFileDialogOptions(&dialog);
+    if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty()) {
+        return QString();
+    }
+    return dialog.selectedFiles().constFirst();
+}
 } // namespace
 
 MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidget *parent) :
@@ -1690,13 +1752,13 @@ void MainWindow::on_actionExit_triggered()
 void MainWindow::on_actionOpen_TBC_file_triggered()
 {
     tbcDebugStream() << "MainWindow::on_actionOpen_TBC_file_triggered(): Called";
-
-    QString inputFileName = QFileDialog::getOpenFileName(this,
-                tr("Open TBC/metadata file"),
-                configuration.getSourceDirectory(),
-                tr("TBC/Metadata (*.tbc *.ytbc *.ctbc *.tbcy *.tbcc *.db *.json);;"
-                   "TBC output (*.tbc *.ytbc *.ctbc *.tbcy *.tbcc);;"
-                   "Metadata (*.db *.json);;All Files (*)"));
+    QString inputFileName = runOpenFileDialog(
+        this,
+        tr("Open TBC/metadata file"),
+        configuration.getSourceDirectory(),
+        tr("TBC/Metadata (*.tbc *.ytbc *.ctbc *.tbcy *.tbcc *.db *.json);;"
+           "TBC output (*.tbc *.ytbc *.ctbc *.tbcy *.tbcc);;"
+           "Metadata (*.db *.json);;All Files (*)"));
 
     // Was a filename specified?
     if (!inputFileName.isEmpty() && !inputFileName.isNull()) {
@@ -1743,19 +1805,21 @@ void MainWindow::on_actionExport_Decode_Metadata_triggered()
         defaultInput = tbcSource.getCurrentMetadataFilename();
     }
     const QString startPath = defaultInput.isEmpty() ? configuration.getSourceDirectory() : defaultInput;
-    const QString inputFileName = QFileDialog::getOpenFileName(this,
-                                                               tr("Select metadata database"),
-                                                               startPath,
-                                                               tr("SQLite metadata (*.db);;All Files (*)"));
+    const QString inputFileName = runOpenFileDialog(
+        this,
+        tr("Select metadata database"),
+        startPath,
+        tr("SQLite metadata (*.db);;All Files (*)"));
     if (inputFileName.isEmpty()) {
         return;
     }
 
     const QString defaultOutput = MetadataConverterUtil::defaultExportDecodeMetadataOutputPath(inputFileName);
-    const QString outputFileName = QFileDialog::getSaveFileName(this,
-                                                                tr("Select export JSON output"),
-                                                                defaultOutput,
-                                                                tr("Export JSON (*.json);;All Files (*)"));
+    const QString outputFileName = runSaveFileDialog(
+        this,
+        tr("Select export JSON output"),
+        defaultOutput,
+        tr("Export JSON (*.json);;All Files (*)"));
     if (outputFileName.isEmpty()) {
         return;
     }
@@ -1886,10 +1950,11 @@ void MainWindow::on_actionSave_frame_as_PNG_triggered()
 
     filenameSuggestion += "_" + tbcSource.getCurrentSourceFilename().split("/").last() + tr(".png");
 
-    QString pngFilename = QFileDialog::getSaveFileName(this,
-                tr("Save PNG file"),
-                filenameSuggestion,
-                tr("PNG image (*.png);;All Files (*)"));
+    QString pngFilename = runSaveFileDialog(
+        this,
+        tr("Save PNG file"),
+        filenameSuggestion,
+        tr("PNG image (*.png);;All Files (*)"));
 
     // Was a filename specified?
     if (!pngFilename.isEmpty() && !pngFilename.isNull()) {
