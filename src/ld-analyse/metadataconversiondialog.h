@@ -31,10 +31,10 @@ public:
 private slots:
     void on_inputBrowseButton_clicked();
     void on_outputBrowseButton_clicked();
-    void on_directionComboBox_currentIndexChanged(int index);
     void on_convertButton_clicked();
 
 private:
+    void updateDirectionFromInput(bool forceOutputUpdate);
     Ui::MetadataConversionDialog *ui;
     QString sourceDirectory;
 };
