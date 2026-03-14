@@ -551,7 +551,7 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
             chromaSeekMode = true;
             originalChromaState = true;
             tbcSource.setChromaDecoder(false);
-            ui->videoPushButton->setText(tr("Source"));
+            updateVideoPushButton();
         }
     });
     // Button press/release signals for chroma seek mode are auto-connected by Qt's auto-connection mechanism
@@ -827,7 +827,7 @@ void MainWindow::resetGui()
     ui->nextPushButton->setAutoRepeatInterval(1);
 
     // Set option button states
-    ui->videoPushButton->setText(tr("Source"));
+    updateVideoPushButton();
     displayAspectRatio = true;
     updateAspectPushButton();
     updateSourcesPushButton();
@@ -878,6 +878,8 @@ void MainWindow::updateGuiLoaded()
 
     // Update the status bar readout
     updateBottomStatusReadout();
+    // Update video mode button
+    updateVideoPushButton();
 
     // Update source mode button
     updateSourcesPushButton();
@@ -944,7 +946,7 @@ void MainWindow::updateGuiUnloaded()
     timeCodeStatus.hide();
 
     // Set option button states
-    ui->videoPushButton->setText(tr("Source"));
+    updateVideoPushButton();
     (this->width() >= 930) ? ui->dropoutsPushButton->setText(tr("Dropouts Off")) : ui->dropoutsPushButton->setText(tr("Drop N"));
     displayAspectRatio = false;
     updateAspectPushButton();
@@ -974,6 +976,29 @@ void MainWindow::updateGuiUnloaded()
     }
 }
 
+void MainWindow::updateVideoPushButton()
+{
+    if (!ui || !ui->videoPushButton) {
+        return;
+    }
+
+    if (!tbcSource.getChromaDecoder()) {
+        ui->videoPushButton->setText(tr("Source"));
+        return;
+    }
+
+    switch (tbcSource.getChromaDecodeMode()) {
+    case TbcSource::ACTIVE_ONLY_CHROMA_MODE:
+        ui->videoPushButton->setText(tr("Active"));
+        break;
+    case TbcSource::HYBRID_CHROMA_MODE:
+        ui->videoPushButton->setText(tr("Hybrid"));
+        break;
+    case TbcSource::FULL_FRAME_CHROMA_MODE:
+        ui->videoPushButton->setText(tr("Chroma"));
+        break;
+    }
+}
 // Update the aspect ratio button
 void MainWindow::updateAspectPushButton()
 {
@@ -2599,15 +2624,15 @@ void MainWindow::on_posHorizontalSlider_customContextMenuRequested(const QPoint 
 // Source/Chroma select button clicked
 void MainWindow::on_videoPushButton_clicked()
 {
-    if (tbcSource.getChromaDecoder()) {
-        // Chroma decoder off
-        tbcSource.setChromaDecoder(false);
-        ui->videoPushButton->setText(tr("Source"));
-    } else {
-        // Chroma decoder on
+    if (!tbcSource.getChromaDecoder()) {
+        tbcSource.setChromaDecodeMode(TbcSource::HYBRID_CHROMA_MODE);
         tbcSource.setChromaDecoder(true);
-        ui->videoPushButton->setText(tr("Chroma"));
+    } else if (tbcSource.getChromaDecodeMode() == TbcSource::FULL_FRAME_CHROMA_MODE) {
+        tbcSource.setChromaDecoder(false);
+    } else {
+        tbcSource.setChromaDecodeMode(TbcSource::FULL_FRAME_CHROMA_MODE);
     }
+    updateVideoPushButton();
 
     // Show the current image
     showImage();
@@ -2704,7 +2729,7 @@ void MainWindow::enterChromaSeekMode(QPushButton* button)
         chromaSeekMode = true;
         originalChromaState = true;
         tbcSource.setChromaDecoder(false);
-        ui->videoPushButton->setText(tr("Source"));
+        updateVideoPushButton();
     }
 }
 
@@ -2718,7 +2743,7 @@ void MainWindow::exitChromaSeekMode(QPushButton* button)
                 // Exit seek mode and restore chroma
                 chromaSeekMode = false;
                 tbcSource.setChromaDecoder(originalChromaState);
-                ui->videoPushButton->setText(tr("Chroma"));
+                updateVideoPushButton();
                 updateImage(); // Fast refresh without reloading - frame data already loaded
             }
         });
@@ -3064,6 +3089,7 @@ void MainWindow::videoParametersChangedSignalHandler(const LdDecodeMetaData::Vid
 
     // Update the image viewer
     updateImage();
+    updateVideoPushButton();
 
     updateMetadataStatusPanel();
 }
@@ -3125,6 +3151,7 @@ void MainWindow::chromaDecoderConfigChangedSignalHandler()
 
     // Update the image viewer
     updateImage();
+    updateVideoPushButton();
 
     updateMetadataStatusPanel();
 }
