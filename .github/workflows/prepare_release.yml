@@ -1,0 +1,220 @@
+name: "Prepare Release Draft"
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (example: 7.3.0 or v7.3.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: prepare-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare-release:
+    name: Bump versions, tag, and create draft release
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          submodules: true
+
+      - name: Normalize and validate version input
+        id: version
+        run: |
+          RAW_INPUT="${{ github.event.inputs.version }}"
+          NORMALIZED_VERSION="${RAW_INPUT#v}"
+          if [[ ! "$NORMALIZED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid version: '$RAW_INPUT'. Use SemVer like 7.3.0 or v7.3.0."
+            exit 1
+          fi
+
+          TAG_NAME="v${NORMALIZED_VERSION}"
+          echo "version=${NORMALIZED_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure tag and release do not already exist
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          TAG_NAME="${{ steps.version.outputs.tag }}"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG_NAME}" >/dev/null 2>&1; then
+            echo "Tag '${TAG_NAME}' already exists on origin."
+            exit 1
+          fi
+
+          if gh release view "${TAG_NAME}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release '${TAG_NAME}' already exists."
+            exit 1
+          fi
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Update codebase version tags
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import re
+
+          repo_root = pathlib.Path(".")
+          version = os.environ["VERSION"]
+
+          flake_path = repo_root / "flake.nix"
+          flake_content = flake_path.read_text(encoding="utf-8")
+          updated_flake_content, replacements = re.subn(
+              r'packageVersion = "[0-9]+\.[0-9]+\.[0-9]+";',
+              f'packageVersion = "{version}";',
+              flake_content,
+              count=1,
+          )
+          if replacements != 1:
+              raise SystemExit("Failed to update packageVersion in flake.nix")
+          flake_path.write_text(updated_flake_content, encoding="utf-8")
+
+          vcpkg_path = repo_root / "vcpkg.json"
+          vcpkg_data = json.loads(vcpkg_path.read_text(encoding="utf-8"))
+          vcpkg_data["version"] = version
+          vcpkg_path.write_text(
+              json.dumps(vcpkg_data, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Commit version updates
+        run: |
+          git add flake.nix vcpkg.json
+
+          if git diff --cached --quiet; then
+            echo "Version files were already up to date."
+          else
+            git commit -m "chore(release): prepare ${{ steps.version.outputs.tag }}"
+            git push origin "HEAD:${{ github.ref_name }}"
+          fi
+
+      - name: Create and push release tag
+        run: |
+          TAG_NAME="${{ steps.version.outputs.tag }}"
+          git tag -a "${TAG_NAME}" -m "Release ${TAG_NAME}"
+          git push origin "${TAG_NAME}"
+
+      - name: Create draft release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          TAG_NAME="${{ steps.version.outputs.tag }}"
+
+          gh release create "${TAG_NAME}" \
+            --repo "${{ github.repository }}" \
+            --title "${TAG_NAME}" \
+            --draft \
+            --generate-notes
+
+  build-linux:
+    name: Build Linux binaries
+    needs: prepare-release
+    uses: ./.github/workflows/build_linux_tools.yml
+    with:
+      checkout_ref: refs/tags/${{ needs.prepare-release.outputs.tag }}
+    secrets: inherit
+
+  build-windows:
+    name: Build Windows binaries
+    needs: prepare-release
+    uses: ./.github/workflows/build_windows_tools.yml
+    with:
+      checkout_ref: refs/tags/${{ needs.prepare-release.outputs.tag }}
+    secrets: inherit
+
+  build-macos:
+    name: Build macOS binaries
+    needs: prepare-release
+    uses: ./.github/workflows/build_macos_tools.yml
+    with:
+      checkout_ref: refs/tags/${{ needs.prepare-release.outputs.tag }}
+      release_tag: ${{ needs.prepare-release.outputs.tag }}
+    secrets: inherit
+
+  upload-release-assets:
+    name: Upload release assets to draft
+    needs: [prepare-release, build-linux, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
+      GITHUB_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: tbc-tools_linux_x86_64
+          path: ./artifacts/
+
+      - name: Download Linux ARM64 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: tbc-tools_linux_arm64
+          path: ./artifacts/
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: tbc-tools_windows_x86_64
+          path: ./artifacts/windows/
+
+      - name: Download Windows ARM64 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: tbc-tools_windows_arm64
+          path: ./artifacts/windows-arm/
+
+      - name: Download macOS x86_64 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: tbc-tools_macos_x86_64
+          path: ./artifacts/
+
+      - name: Download macOS arm64 artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: tbc-tools_macos_arm64
+          path: ./artifacts/
+
+      - name: Create Windows release archive
+        run: |
+          cd artifacts/windows
+          zip -r ../tbc-tools_windows_x86_64.zip .
+          cd ../..
+
+      - name: Create Windows ARM64 release archive
+        run: |
+          cd artifacts/windows-arm
+          zip -r ../tbc-tools_windows_arm64.zip .
+          cd ../..
+
+      - name: Upload assets to draft release
+        run: |
+          gh release upload "$RELEASE_TAG" ./artifacts/tbc-tools_linux_x86_64.tar.xz --repo "${{ github.repository }}" --clobber
+          gh release upload "$RELEASE_TAG" ./artifacts/tbc-tools_linux_arm64.tar.xz --repo "${{ github.repository }}" --clobber
+          gh release upload "$RELEASE_TAG" ./artifacts/tbc-tools_windows_x86_64.zip --repo "${{ github.repository }}" --clobber
+          gh release upload "$RELEASE_TAG" ./artifacts/tbc-tools_windows_arm64.zip --repo "${{ github.repository }}" --clobber
+          gh release upload "$RELEASE_TAG" ./artifacts/tbc-tools_x86_64.dmg --repo "${{ github.repository }}" --clobber
+          gh release upload "$RELEASE_TAG" ./artifacts/tbc-tools_arm64.dmg --repo "${{ github.repository }}" --clobber

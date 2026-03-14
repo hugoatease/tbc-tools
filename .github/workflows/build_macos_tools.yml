@@ -2,12 +2,18 @@ name: "Build macOS tools"
 
 on:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      checkout_ref:
+        description: "Git ref to checkout when invoked as a reusable workflow"
+        required: false
+        type: string
+      release_tag:
+        description: "Release tag to use for bundle version metadata"
+        required: false
+        type: string
   release:
     types: [created]
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
 permissions:
   contents: read
   actions: write
@@ -32,6 +38,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           submodules: true
+          ref: ${{ inputs.checkout_ref || github.ref }}
 
       - name: Install Nix
         uses: cachix/install-nix-action@v27
@@ -82,7 +89,9 @@ jobs:
       - name: Get version info
         id: version
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
+          if [ -n "${{ inputs.release_tag }}" ]; then
+            echo "version=${{ inputs.release_tag }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" = "release" ]; then
             echo "version=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
           else
             echo "version=$(git describe --tags --always --dirty)" >> $GITHUB_OUTPUT

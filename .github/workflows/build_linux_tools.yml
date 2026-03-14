@@ -2,6 +2,12 @@ name: "Build Linux tools"
 
 on:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      checkout_ref:
+        description: "Git ref to checkout when invoked as a reusable workflow"
+        required: false
+        type: string
   release:
     types: [created]
 
@@ -48,6 +54,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           submodules: true
+          ref: ${{ inputs.checkout_ref || github.ref }}
 
       - name: Install Nix
         shell: bash
@@ -241,6 +248,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           submodules: true
+          ref: ${{ inputs.checkout_ref || github.ref }}
 
       - name: Install Nix
         uses: cachix/install-nix-action@v27
