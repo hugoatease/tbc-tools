@@ -422,6 +422,16 @@ jobs:
             echo "Found /nix/store references in app bundle"
             exit 1
           fi
+      - name: Archive app bundle for universal merge
+        run: |
+          tar -C dist -czf "tbc-tools_${{ matrix.arch }}.app.tgz" tbc-tools.app
+
+      - name: Upload app bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tbc-tools_macos_${{ matrix.arch }}_app
+          path: tbc-tools_${{ matrix.arch }}.app.tgz
+          if-no-files-found: error
 
       - name: Create DMG
         run: |
@@ -444,4 +454,120 @@ jobs:
         with:
           name: tbc-tools_macos_${{ matrix.arch }}
           path: tbc-tools_${{ matrix.arch }}.dmg
+          if-no-files-found: error
+  build-universal-macos:
+    name: Build universal macOS app/dmg
+    runs-on: macos-latest
+    needs: build-tbc-tools
+    steps:
+      - name: Download arm64 app artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tbc-tools_macos_arm64_app
+          path: universal/arm64-artifact
+
+      - name: Download x86_64 app artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tbc-tools_macos_x86_64_app
+          path: universal/x86_64-artifact
+
+      - name: Extract app bundles
+        shell: bash
+        run: |
+          mkdir -p universal/arm64 universal/x86_64
+          tar -xzf universal/arm64-artifact/tbc-tools_arm64.app.tgz -C universal/arm64
+          tar -xzf universal/x86_64-artifact/tbc-tools_x86_64.app.tgz -C universal/x86_64
+
+      - name: Create universal app bundle
+        shell: bash
+        run: |
+          APP_ARM="universal/arm64/tbc-tools.app"
+          APP_X86="universal/x86_64/tbc-tools.app"
+          APP_UNI="universal/tbc-tools.app"
+
+          if [ ! -d "$APP_ARM" ] || [ ! -d "$APP_X86" ]; then
+            echo "Missing input app bundles for universal merge"
+            exit 1
+          fi
+
+          rsync -a "$APP_ARM/" "$APP_UNI/"
+
+          is_macho() {
+            file "$1" 2>/dev/null | grep -q "Mach-O"
+          }
+
+          while IFS= read -r -d '' arm_file; do
+            rel="${arm_file#$APP_ARM/}"
+            x86_file="$APP_X86/$rel"
+            uni_file="$APP_UNI/$rel"
+
+            if [ ! -f "$x86_file" ]; then
+              continue
+            fi
+
+            if is_macho "$arm_file" && is_macho "$x86_file"; then
+              tmp_file="${uni_file}.tmp"
+              if ! lipo -create "$arm_file" "$x86_file" -output "$tmp_file"; then
+                echo "Failed to create universal binary for: $rel"
+                rm -f "$tmp_file"
+                exit 1
+              fi
+              mv "$tmp_file" "$uni_file"
+              chmod +x "$uni_file" 2>/dev/null || true
+            fi
+          done < <(find "$APP_ARM" -type f -print0)
+
+          BIN="$APP_UNI/Contents/MacOS/ld-analyse"
+          if [ ! -f "$BIN" ]; then
+            echo "Missing merged main executable: $BIN"
+            exit 1
+          fi
+          ARCHS="$(lipo -archs "$BIN" 2>/dev/null || true)"
+          echo "Universal executable archs: $ARCHS"
+          echo "$ARCHS" | grep -qw arm64 || { echo "arm64 arch missing in universal binary"; exit 1; }
+          echo "$ARCHS" | grep -qw x86_64 || { echo "x86_64 arch missing in universal binary"; exit 1; }
+
+      - name: Install create-dmg
+        run: |
+          if ! command -v create-dmg >/dev/null 2>&1; then
+            brew install create-dmg
+          fi
+
+      - name: Codesign universal app bundle (ad-hoc)
+        run: |
+          codesign --force --deep --sign - "universal/tbc-tools.app"
+
+      - name: Create universal DMG
+        run: |
+          create-dmg \
+            --volname "TBC Tools Universal" \
+            --volicon "universal/tbc-tools.app/Contents/Resources/tbc-tools.icns" \
+            --window-pos 200 120 \
+            --window-size 800 400 \
+            --icon-size 100 \
+            --icon "tbc-tools.app" 200 190 \
+            --hide-extension "tbc-tools.app" \
+            --app-drop-link 600 190 \
+            --skip-jenkins \
+            --format UDBZ \
+            "tbc-tools_universal.dmg" \
+            "universal/tbc-tools.app"
+
+      - name: Archive universal app bundle
+        run: |
+          tar -C universal -czf "tbc-tools_universal.app.tgz" tbc-tools.app
+
+      - name: Upload universal app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tbc-tools_macos_universal_app
+          path: tbc-tools_universal.app.tgz
+          if-no-files-found: error
+
+      - name: Upload universal DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tbc-tools_macos_universal
+          path: tbc-tools_universal.dmg
           if-no-files-found: error
