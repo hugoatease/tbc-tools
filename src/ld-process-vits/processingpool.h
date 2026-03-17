@@ -59,6 +59,8 @@ private:
     QMutex inputMutex;
     qint32 inputFieldNumber;
     qint32 lastFieldNumber;
+    qint32 processedFieldNumber;
+    qint32 progressReportInterval;
     LdDecodeMetaData &ldDecodeMetaData;
     SourceVideo sourceVideo;
 

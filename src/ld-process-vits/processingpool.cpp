@@ -59,7 +59,11 @@ bool ProcessingPool::process()
     // Initialise processing state
     inputFieldNumber = 1;
     lastFieldNumber = ldDecodeMetaData.getNumberOfFields();
+    processedFieldNumber = 0;
+    progressReportInterval = qMax<qint32>(1, lastFieldNumber / 200);
     totalTimer.start();
+    qInfo().nospace() << "Processing fields " << processedFieldNumber << "/" << lastFieldNumber
+                      << " (0%, " << lastFieldNumber << " to go)";
 
     // Start a vector of decoding threads to process the video
     QVector<QThread *> threads;
@@ -133,6 +137,18 @@ bool ProcessingPool::setOutputField(qint32 fieldNumber, LdDecodeMetaData::Field 
 
     // Save the field data to the metadata (only VITS metrics metadata is affected)
     ldDecodeMetaData.updateFieldVitsMetrics(fieldMetadata.vitsMetrics, fieldNumber);
+
+    processedFieldNumber++;
+    const bool shouldReport = (processedFieldNumber == lastFieldNumber)
+        || ((processedFieldNumber % progressReportInterval) == 0);
+    if (shouldReport) {
+        const qint32 percentage = (lastFieldNumber > 0)
+            ? ((processedFieldNumber * 100) / lastFieldNumber)
+            : 0;
+        const qint32 remainingFields = qMax<qint32>(0, lastFieldNumber - processedFieldNumber);
+        qInfo().nospace() << "Processing fields " << processedFieldNumber << "/" << lastFieldNumber
+                          << " (" << percentage << "%, " << remainingFields << " to go)";
+    }
 
     return true;
 }

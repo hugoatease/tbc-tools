@@ -149,6 +149,28 @@ protected:
     void dropEvent(QDropEvent *event) override;
 
 private:
+    struct UiStateSnapshot {
+        bool valid = false;
+        qint32 frameNumber = 1;
+        qint32 fieldNumber = 1;
+        TbcSource::ViewMode viewMode = TbcSource::ViewMode::FRAME_VIEW;
+        bool stretchField = true;
+        bool reverseFieldOrder = false;
+        bool highlightDropouts = false;
+        bool chromaEnabled = false;
+        TbcSource::ChromaDecodeMode chromaDecodeMode = TbcSource::ChromaDecodeMode::HYBRID_CHROMA_MODE;
+        TbcSource::SourceMode sourceMode = TbcSource::SourceMode::ONE_SOURCE;
+        bool aspectRatioEnabled = false;
+        double imageScaleFactor = 1.0;
+        int activeMainTabIndex = 0;
+        bool showVbiDialog = false;
+        bool showDropoutDialog = false;
+        bool showVisibleDropoutDialog = false;
+        bool showBlackSnrDialog = false;
+        bool showWhiteSnrDialog = false;
+        bool showVideoParametersDialog = false;
+        bool showChromaConfigDialog = false;
+    };
     Ui::MainWindow *ui;
 
     // Dialogues
@@ -242,7 +264,7 @@ private:
     void exitChromaSeekMode(QPushButton* button);
 
     // TBC source signal handlers
-    void loadTbcFile(QString inputFileName, bool forceMetadataOnly = false);
+    void loadTbcFile(QString inputFileName, bool forceMetadataOnly = false, bool preserveStatusDuringReload = false);
     void cleanupTempMetadataFile();
     void updateOscilloscopeDialogue();
     void updateVectorscopeDialogue();
@@ -250,9 +272,16 @@ private:
     void applyThemeStyle(const QString &styleName);
     void mouseScanLineSelect(qint32 oX, qint32 oY);
 	void resizeEvent(QResizeEvent *event);
+    bool runExternalToolWithProgress(const QString &program, const QStringList &arguments,
+                                     const QString &toolDisplayName, QString *errorMessage);
+    void queueAnalysisRefreshPreservingUserState(const QString &processedInputFile);
+    UiStateSnapshot captureUiStateSnapshot() const;
+    void applyUiStateSnapshot(const UiStateSnapshot &snapshot);
     QActionGroup *themesActionGroup = nullptr;
     QAction *saveAllModesPngAction = nullptr;
     QAction *copyCurrentDisplayAction = nullptr;
+    UiStateSnapshot pendingUiStateSnapshot;
+    bool restoreUiStateAfterReload = false;
 };
 
 #endif // MAINWINDOW_H

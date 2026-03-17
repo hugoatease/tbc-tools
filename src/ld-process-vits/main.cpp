@@ -29,11 +29,76 @@
 #include <QThread>
 #include <QFile>
 #include <QFileInfo>
+#include <QDir>
+#include <QDateTime>
 
 #include "tbc/logging.h"
 #include "lddecodemetadata.h"
 #include "sourcevideo.h"
 #include "processingpool.h"
+namespace {
+void appendMetadataCandidate(QStringList &candidates, const QString &candidate)
+{
+    if (candidate.isEmpty()) {
+        return;
+    }
+    if (!candidates.contains(candidate)) {
+        candidates << candidate;
+    }
+}
+
+QStringList metadataCandidatesForInput(const QString &inputFilename)
+{
+    QStringList candidates;
+    appendMetadataCandidate(candidates, inputFilename + QStringLiteral(".db"));
+    appendMetadataCandidate(candidates, inputFilename + QStringLiteral(".json"));
+
+    const QFileInfo inputInfo(inputFilename);
+    const QString basePath = QDir(inputInfo.absolutePath()).filePath(inputInfo.completeBaseName());
+    appendMetadataCandidate(candidates, basePath + QStringLiteral(".db"));
+    appendMetadataCandidate(candidates, basePath + QStringLiteral(".json"));
+
+    const QString suffix = inputInfo.suffix().toLower();
+    if (suffix == QStringLiteral("ytbc")
+        || suffix == QStringLiteral("ctbc")
+        || suffix == QStringLiteral("tbcy")
+        || suffix == QStringLiteral("tbcc")) {
+        appendMetadataCandidate(candidates, basePath + QStringLiteral(".tbc.db"));
+        appendMetadataCandidate(candidates, basePath + QStringLiteral(".tbc.json"));
+    }
+
+    return candidates;
+}
+
+QString resolveDefaultMetadataFilename(const QString &inputFilename)
+{
+    const QStringList candidates = metadataCandidatesForInput(inputFilename);
+    for (const QString &candidate : candidates) {
+        if (QFileInfo::exists(candidate)) {
+            return candidate;
+        }
+    }
+    return candidates.isEmpty() ? (inputFilename + QStringLiteral(".db")) : candidates.first();
+}
+
+QString backupFilenameForMetadata(const QString &inputMetadataFilename, const QString &backupSuffix)
+{
+    const QString defaultBackupFilename = inputMetadataFilename + backupSuffix;
+    if (!QFileInfo::exists(defaultBackupFilename)) {
+        return defaultBackupFilename;
+    }
+
+    const QString timestamp = QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMdd_HHmmss"));
+    QString backupFilename = inputMetadataFilename + QStringLiteral(".") + timestamp + backupSuffix;
+    qint32 collisionCounter = 1;
+    while (QFileInfo::exists(backupFilename)) {
+        backupFilename = inputMetadataFilename + QStringLiteral(".") + timestamp
+                         + QStringLiteral("_") + QString::number(collisionCounter) + backupSuffix;
+        collisionCounter++;
+    }
+    return backupFilename;
+}
+}
 
 int main(int argc, char *argv[])
 {
@@ -122,9 +187,11 @@ int main(int argc, char *argv[])
     }
 
     // Work out the metadata filenames
-    QString inputMetadataFilename = inputFilename + ".db";
+    QString inputMetadataFilename;
     if (parser.isSet(inputMetadataOption)) {
         inputMetadataFilename = parser.value(inputMetadataOption);
+    } else {
+        inputMetadataFilename = resolveDefaultMetadataFilename(inputFilename);
     }
     QString outputMetadataFilename = inputMetadataFilename;
     if (parser.isSet(outputMetadataOption)) {
@@ -141,9 +208,10 @@ int main(int argc, char *argv[])
 
     // If we're overwriting the input metadata file, back it up first
     if (inputMetadataFilename == outputMetadataFilename && !noBackup) {
-        qInfo().nospace().noquote() << "Backing up metadata to " << inputMetadataFilename << ".vbup";
-        if (!QFile::copy(inputMetadataFilename, inputMetadataFilename + ".vbup")) {
-            qCritical() << "Unable to back-up input metadata file - back-up already exists?";
+        const QString backupFilename = backupFilenameForMetadata(inputMetadataFilename, QStringLiteral(".vbup"));
+        qInfo().nospace().noquote() << "Backing up metadata to " << backupFilename;
+        if (!QFile::copy(inputMetadataFilename, backupFilename)) {
+            qCritical() << "Unable to back-up input metadata file";
             return 1;
         }
     }

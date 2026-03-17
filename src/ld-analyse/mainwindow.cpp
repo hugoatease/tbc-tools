@@ -24,6 +24,10 @@
 #include <QPen>
 #include <QPixmap>
 #include <QProcess>
+#include <QDialog>
+#include <QProgressBar>
+#include <QElapsedTimer>
+#include <QEventLoop>
 #include <QRegularExpression>
 #include <QSignalBlocker>
 #include <QStyle>
@@ -43,6 +47,7 @@
 #include <QTextEdit>
 #include <QAbstractSpinBox>
 #include <QKeySequence>
+#include <QVBoxLayout>
 
 #include "metadataconverterutil.h"
 #include "../ld-process-vits/processingpool.h"
@@ -217,6 +222,75 @@ QString resolveSourceFilenameForMetadata(const QString &metadataFilename)
 
     return QString();
 }
+QString resolveMetadataFilenameForSource(const QString &sourceFilename,
+                                         const QString &preferredMetadataFilename = QString())
+{
+    if (!preferredMetadataFilename.isEmpty() && QFileInfo::exists(preferredMetadataFilename)) {
+        return preferredMetadataFilename;
+    }
+
+    const QFileInfo sourceInfo(sourceFilename);
+    if (!sourceInfo.exists()) {
+        return QString();
+    }
+
+    QStringList metadataCandidates;
+    const auto appendMetadataCandidate = [&metadataCandidates](const QString &candidate) {
+        appendUniqueCandidate(metadataCandidates, candidate);
+    };
+
+    const auto appendCandidatesForFile = [&appendMetadataCandidate](const QFileInfo &info) {
+        appendMetadataCandidate(info.filePath() + QStringLiteral(".db"));
+        appendMetadataCandidate(info.filePath() + QStringLiteral(".json"));
+
+        const QString basePath = QDir(info.absolutePath()).filePath(info.completeBaseName());
+        appendMetadataCandidate(basePath + QStringLiteral(".db"));
+        appendMetadataCandidate(basePath + QStringLiteral(".json"));
+
+        const QString suffix = info.suffix().toLower();
+        if (suffix == QStringLiteral("ytbc")
+            || suffix == QStringLiteral("ctbc")
+            || suffix == QStringLiteral("tbcy")
+            || suffix == QStringLiteral("tbcc")) {
+            appendMetadataCandidate(QDir(info.absolutePath())
+                                        .filePath(info.completeBaseName() + QStringLiteral(".tbc.db")));
+            appendMetadataCandidate(QDir(info.absolutePath())
+                                        .filePath(info.completeBaseName() + QStringLiteral(".tbc.json")));
+        }
+    };
+
+    appendCandidatesForFile(sourceInfo);
+
+    const QString sourceLowerFileName = sourceInfo.fileName().toLower();
+    QString lumaSourceCandidate;
+    if (sourceLowerFileName.endsWith(QStringLiteral("_chroma.tbc"))) {
+        lumaSourceCandidate = QDir(sourceInfo.absolutePath())
+                                  .filePath(sourceInfo.fileName().left(sourceInfo.fileName().size()
+                                          - QStringLiteral("_chroma.tbc").size()) + QStringLiteral(".tbc"));
+    } else if (sourceLowerFileName.startsWith(QStringLiteral("chroma_"))
+               && sourceLowerFileName.endsWith(QStringLiteral(".tbc"))) {
+        lumaSourceCandidate = QDir(sourceInfo.absolutePath())
+                                  .filePath(sourceInfo.fileName().mid(QStringLiteral("chroma_").size()));
+    } else if (sourceLowerFileName.endsWith(QStringLiteral(".ctbc"))) {
+        lumaSourceCandidate = QDir(sourceInfo.absolutePath())
+                                  .filePath(sourceInfo.completeBaseName() + QStringLiteral(".ytbc"));
+    } else if (sourceLowerFileName.endsWith(QStringLiteral(".tbcc"))) {
+        lumaSourceCandidate = QDir(sourceInfo.absolutePath())
+                                  .filePath(sourceInfo.completeBaseName() + QStringLiteral(".tbcy"));
+    }
+
+    if (!lumaSourceCandidate.isEmpty()) {
+        appendCandidatesForFile(QFileInfo(lumaSourceCandidate));
+    }
+
+    for (const QString &candidate : metadataCandidates) {
+        if (QFileInfo::exists(candidate)) {
+            return candidate;
+        }
+    }
+
+    return QString();
+}
 
 double frameRateForSystem(VideoSystem system)
 {
@@ -244,25 +318,93 @@ int nominalFrameRateForSystem(VideoSystem system)
 
 QString resolveExternalExecutable(const QStringList &toolNames)
 {
-    for (const QString &name : toolNames) {
+    if (toolNames.isEmpty()) {
+        return QString();
+    }
+    const auto isRunnableFile = [](const QString &candidatePath) {
+        const QFileInfo candidateInfo(candidatePath);
+#if defined(Q_OS_WIN)
+        return candidateInfo.exists() && candidateInfo.isFile();
+#else
+        return candidateInfo.exists() && candidateInfo.isFile() && candidateInfo.isExecutable();
+#endif
+    };
+
+    const QStringList candidateToolNames = [&toolNames]() {
+        QStringList names;
+        for (const QString &toolName : toolNames) {
+            appendUniqueCandidate(names, toolName);
+#if defined(Q_OS_WIN)
+            if (!toolName.endsWith(QStringLiteral(".exe"), Qt::CaseInsensitive)) {
+                appendUniqueCandidate(names, toolName + QStringLiteral(".exe"));
+            }
+#endif
+        }
+        return names;
+    }();
+
+    for (const QString &name : candidateToolNames) {
         const QString toolPath = QStandardPaths::findExecutable(name);
-        if (!toolPath.isEmpty()) {
+        if (!toolPath.isEmpty() && isRunnableFile(toolPath)) {
             return toolPath;
         }
     }
+    QStringList searchRoots;
+    const auto appendRoot = [&searchRoots](const QString &rootPath) {
+        appendUniqueCandidate(searchRoots, QDir::cleanPath(rootPath));
+    };
 
     const QString appDir = QCoreApplication::applicationDirPath();
-    const QStringList candidateDirs = {
+    appendRoot(appDir);
+    const QStringList relativeRoots = {
         QStringLiteral("."),
         QStringLiteral(".."),
         QStringLiteral("../bin"),
-        QStringLiteral("../../bin")
+        QStringLiteral("../../bin"),
+        QStringLiteral("../../../"),
+        QStringLiteral("../../../bin"),
+        QStringLiteral("../../../../bin"),
+        QStringLiteral("../Resources"),
+        QStringLiteral("../Resources/bin"),
+        QStringLiteral("../../Resources/bin"),
+        QStringLiteral("../../../Resources/bin"),
+        QStringLiteral("../libexec"),
+        QStringLiteral("../../libexec"),
+        QStringLiteral("../../../libexec")
     };
+    for (const QString &root : relativeRoots) {
+        appendRoot(QDir(appDir).filePath(root));
+    }
 
-    for (const QString &dir : candidateDirs) {
-        for (const QString &name : toolNames) {
-            const QString localCandidate = QDir(appDir).filePath(dir + QLatin1Char('/') + name);
-            if (QFileInfo::exists(localCandidate)) {
+    const QString currentDir = QDir::currentPath();
+    appendRoot(currentDir);
+    appendRoot(QDir(currentDir).filePath(QStringLiteral("bin")));
+    appendRoot(QDir(currentDir).filePath(QStringLiteral("build/bin")));
+    appendRoot(QDir(currentDir).filePath(QStringLiteral("../build/bin")));
+
+#if defined(Q_OS_WIN)
+    appendRoot(QDir(appDir).filePath(QStringLiteral("tools")));
+    appendRoot(QDir(appDir).filePath(QStringLiteral("../tools")));
+#endif
+
+    if (qEnvironmentVariableIsSet("APPDIR")) {
+        const QString appImageRoot = qEnvironmentVariable("APPDIR");
+        appendRoot(QDir(appImageRoot).filePath(QStringLiteral("usr/bin")));
+        appendRoot(QDir(appImageRoot).filePath(QStringLiteral("usr/libexec")));
+    }
+
+    if (qEnvironmentVariableIsSet("APPIMAGE")) {
+        const QString appImageFile = qEnvironmentVariable("APPIMAGE");
+        const QString appImageDir = QFileInfo(appImageFile).absolutePath();
+        appendRoot(appImageDir);
+        appendRoot(QDir(appImageDir).filePath(QStringLiteral("bin")));
+    }
+
+    for (const QString &dir : searchRoots) {
+        const QDir searchDir(dir);
+        for (const QString &name : candidateToolNames) {
+            const QString localCandidate = searchDir.filePath(name);
+            if (isRunnableFile(localCandidate)) {
                 return localCandidate;
             }
         }
@@ -306,31 +448,60 @@ QString firstSupportedDroppedFile(const QMimeData *mimeData)
     return QString();
 }
 
-bool runExternalTool(const QString &program, const QStringList &arguments, QString *errorMessage)
+enum class ExternalToolStage {
+    Starting,
+    LoadingMetadata,
+    AnalysingMetadata,
+    WritingMetadata,
+    Finishing
+};
+
+QString externalToolStageLabel(const QString &toolDisplayName, ExternalToolStage stage)
 {
-    QProcess process;
-    process.start(program, arguments);
-    if (!process.waitForFinished(-1)) {
-        if (errorMessage) {
-            *errorMessage = QObject::tr("The tool did not finish execution.");
-        }
-        return false;
+    switch (stage) {
+    case ExternalToolStage::Starting:
+        return QObject::tr("%1: Preparing...").arg(toolDisplayName);
+    case ExternalToolStage::LoadingMetadata:
+        return QObject::tr("%1: Loading metadata...").arg(toolDisplayName);
+    case ExternalToolStage::AnalysingMetadata:
+        return QObject::tr("%1: Analysing metadata...").arg(toolDisplayName);
+    case ExternalToolStage::WritingMetadata:
+        return QObject::tr("%1: Writing metadata...").arg(toolDisplayName);
+    case ExternalToolStage::Finishing:
+    default:
+        return QObject::tr("%1: Finalising...").arg(toolDisplayName);
+    }
+}
+
+QString externalToolProgressSummary(qint32 processedFields, qint32 totalFields)
+{
+    if (totalFields <= 0) {
+        return QObject::tr("Fields -----/----- (----- to go) | Frames -----/----- (----- to go)");
     }
 
-    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
-        const QString stdErr = QString::fromLocal8Bit(process.readAllStandardError()).trimmed();
-        const QString stdOut = QString::fromLocal8Bit(process.readAllStandardOutput()).trimmed();
-        if (errorMessage) {
-            *errorMessage = stdErr.isEmpty() ? stdOut : stdErr;
-            if (errorMessage->isEmpty()) {
-                *errorMessage = QObject::tr("The tool failed with exit code %1.")
-                                    .arg(process.exitCode());
-            }
-        }
-        return false;
+    const qint32 clampedProcessedFields = qBound<qint32>(0, processedFields, totalFields);
+    const qint32 remainingFields = totalFields - clampedProcessedFields;
+    const qint32 totalFrames = (totalFields + 1) / 2;
+    const qint32 processedFrames = (clampedProcessedFields + 1) / 2;
+    const qint32 remainingFrames = qMax<qint32>(0, totalFrames - processedFrames);
+
+    return QObject::tr("Fields %1/%2 (%3 to go) | Frames %4/%5 (%6 to go)")
+        .arg(clampedProcessedFields, 5, 10, QChar('0'))
+        .arg(totalFields, 5, 10, QChar('0'))
+        .arg(remainingFields, 5, 10, QChar('0'))
+        .arg(processedFrames, 5, 10, QChar('0'))
+        .arg(totalFrames, 5, 10, QChar('0'))
+        .arg(remainingFrames, 5, 10, QChar('0'));
+}
+
+int externalToolProgressPercent(qint32 processedFields, qint32 totalFields)
+{
+    if (totalFields <= 0) {
+        return 0;
     }
 
-    return true;
+    const qint32 clampedProcessedFields = qBound<qint32>(0, processedFields, totalFields);
+    return static_cast<int>((static_cast<double>(clampedProcessedFields) / static_cast<double>(totalFields)) * 100.0);
 }
 
 QString normalizedPathForCompare(const QString &path)
@@ -1495,11 +1666,19 @@ void MainWindow::hideImage()
 // Misc private methods -----------------------------------------------------------------------------------------------
 
 // Load a TBC file based on the passed file name
-void MainWindow::loadTbcFile(QString inputFileName, bool forceMetadataOnly)
+void MainWindow::loadTbcFile(QString inputFileName, bool forceMetadataOnly, bool preserveStatusDuringReload)
 {
     setPlaybackRunning(false);
-    // Update the GUI
-    updateGuiUnloaded();
+    if (preserveStatusDuringReload) {
+        setGuiEnabled(false);
+        sourceVideoStatus.setText(tr("Reloading metadata and analysis..."));
+        fieldNumberStatus.setText(tr(" Frames: .../... Fields: .../..."));
+        vbiStatus.hide();
+        timeCodeStatus.hide();
+    } else {
+        // Update the GUI
+        updateGuiUnloaded();
+    }
 
     // Close current source video (if loaded)
     if (tbcSource.getIsSourceLoaded()) {
@@ -1993,6 +2172,354 @@ void MainWindow::sanitizeCurrentPosition()
     }
 }
 
+bool MainWindow::runExternalToolWithProgress(const QString &program, const QStringList &arguments,
+                                             const QString &toolDisplayName, QString *errorMessage)
+{
+    QProcess process;
+    process.setProcessChannelMode(QProcess::MergedChannels);
+    process.start(program, arguments);
+    QDialog progressDialog(this);
+    progressDialog.setWindowTitle(toolDisplayName);
+    progressDialog.setWindowModality(Qt::ApplicationModal);
+    progressDialog.setWindowFlags(Qt::Dialog | Qt::WindowTitleHint | Qt::CustomizeWindowHint);
+    progressDialog.setMinimumWidth(540);
+
+    auto *dialogLayout = new QVBoxLayout(&progressDialog);
+    dialogLayout->setContentsMargins(14, 12, 14, 12);
+    dialogLayout->setSpacing(8);
+
+    auto *stageLabel = new QLabel(&progressDialog);
+    stageLabel->setWordWrap(true);
+    dialogLayout->addWidget(stageLabel);
+
+    auto *countsLabel = new QLabel(&progressDialog);
+    countsLabel->setWordWrap(true);
+    QFont countsFont = countsLabel->font();
+    countsFont.setStyleHint(QFont::TypeWriter);
+    countsLabel->setFont(countsFont);
+    dialogLayout->addWidget(countsLabel);
+
+    auto *percentLabel = new QLabel(&progressDialog);
+    percentLabel->setWordWrap(true);
+    dialogLayout->addWidget(percentLabel);
+
+    auto *progressBar = new QProgressBar(&progressDialog);
+    progressBar->setRange(0, 0);
+    progressBar->setTextVisible(true);
+    progressBar->setFormat(tr("Working..."));
+    dialogLayout->addWidget(progressBar);
+
+    ExternalToolStage stage = ExternalToolStage::Starting;
+    qint32 totalFields = 0;
+    qint32 processedFields = 0;
+    QString lastOutputLine;
+
+    const QRegularExpression totalFieldsExpression(
+        QStringLiteral("Using\\s+\\d+\\s+threads\\s+to\\s+process\\s+(\\d+)\\s+fields"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpression progressFieldsExpression(
+        QStringLiteral("Processing\\s+fields\\s+(\\d+)\\s*/\\s*(\\d+)"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpression legacyFieldExpression(
+        QStringLiteral("Processing\\s+field\\s+(\\d+)"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpression completeFieldsExpression(
+        QStringLiteral("Processing\\s+complete\\s*-\\s*(\\d+)\\s*fields"),
+        QRegularExpression::CaseInsensitiveOption);
+
+    auto updateProgressDialog = [&]() {
+        const int percent = externalToolProgressPercent(processedFields, totalFields);
+        if (totalFields > 0) {
+            progressBar->setRange(0, 100);
+            progressBar->setValue(percent);
+            progressBar->setFormat(QStringLiteral("%p%"));
+        } else {
+            progressBar->setRange(0, 0);
+            progressBar->setFormat(tr("Working..."));
+        }
+
+        const QString progressLine = (totalFields > 0)
+            ? tr("Progress: %1%").arg(percent)
+            : tr("Progress: --");
+        stageLabel->setText(externalToolStageLabel(toolDisplayName, stage));
+        countsLabel->setText(externalToolProgressSummary(processedFields, totalFields));
+        percentLabel->setText(progressLine);
+    };
+
+    auto processOutputLine = [&](const QString &line) {
+        const QString trimmedLine = line.trimmed();
+        if (trimmedLine.isEmpty()) {
+            return;
+        }
+        lastOutputLine = trimmedLine;
+
+        if (trimmedLine.contains(QStringLiteral("Reading metadata from"), Qt::CaseInsensitive)) {
+            stage = ExternalToolStage::LoadingMetadata;
+        } else if (trimmedLine.contains(QStringLiteral("Beginning"), Qt::CaseInsensitive)
+                   && trimmedLine.contains(QStringLiteral("processing"), Qt::CaseInsensitive)) {
+            stage = ExternalToolStage::AnalysingMetadata;
+        } else if (trimmedLine.contains(QStringLiteral("Writing metadata file"), Qt::CaseInsensitive)) {
+            stage = ExternalToolStage::WritingMetadata;
+            if (totalFields > 0) {
+                processedFields = totalFields;
+            }
+        }
+
+        const QRegularExpressionMatch totalFieldsMatch = totalFieldsExpression.match(trimmedLine);
+        if (totalFieldsMatch.hasMatch()) {
+            bool ok = false;
+            const qint32 parsedTotal = totalFieldsMatch.captured(1).toInt(&ok);
+            if (ok && parsedTotal > 0) {
+                totalFields = parsedTotal;
+                processedFields = qBound<qint32>(0, processedFields, totalFields);
+                stage = ExternalToolStage::AnalysingMetadata;
+            }
+        }
+
+        const QRegularExpressionMatch progressFieldsMatch = progressFieldsExpression.match(trimmedLine);
+        if (progressFieldsMatch.hasMatch()) {
+            bool processedOk = false;
+            bool totalOk = false;
+            const qint32 parsedProcessed = progressFieldsMatch.captured(1).toInt(&processedOk);
+            const qint32 parsedTotal = progressFieldsMatch.captured(2).toInt(&totalOk);
+            if (processedOk && totalOk && parsedTotal > 0) {
+                totalFields = parsedTotal;
+                processedFields = qBound<qint32>(0, parsedProcessed, totalFields);
+                stage = ExternalToolStage::AnalysingMetadata;
+            }
+        } else {
+            const QRegularExpressionMatch legacyFieldMatch = legacyFieldExpression.match(trimmedLine);
+            if (legacyFieldMatch.hasMatch()) {
+                bool processedOk = false;
+                const qint32 parsedProcessed = legacyFieldMatch.captured(1).toInt(&processedOk);
+                if (processedOk) {
+                    if (totalFields > 0) {
+                        processedFields = qBound<qint32>(0, parsedProcessed, totalFields);
+                    } else {
+                        processedFields = qMax(processedFields, parsedProcessed);
+                    }
+                    stage = ExternalToolStage::AnalysingMetadata;
+                }
+            }
+        }
+
+        const QRegularExpressionMatch completeFieldsMatch = completeFieldsExpression.match(trimmedLine);
+        if (completeFieldsMatch.hasMatch()) {
+            bool completeOk = false;
+            const qint32 parsedTotal = completeFieldsMatch.captured(1).toInt(&completeOk);
+            if (completeOk && parsedTotal > 0) {
+                totalFields = parsedTotal;
+                processedFields = totalFields;
+                stage = ExternalToolStage::Finishing;
+            }
+        }
+
+        updateProgressDialog();
+    };
+
+    auto processOutputChunk = [&](const QByteArray &chunk, QByteArray &buffer) {
+        buffer.append(chunk);
+        qsizetype newLineIndex = -1;
+        while ((newLineIndex = buffer.indexOf('\n')) != -1) {
+            QByteArray lineBytes = buffer.left(newLineIndex);
+            buffer.remove(0, newLineIndex + 1);
+            if (!lineBytes.isEmpty() && lineBytes.endsWith('\r')) {
+                lineBytes.chop(1);
+            }
+            processOutputLine(QString::fromLocal8Bit(lineBytes));
+        }
+    };
+
+    updateProgressDialog();
+    progressDialog.show();
+    progressDialog.raise();
+    progressDialog.activateWindow();
+    QElapsedTimer progressVisibleTimer;
+    progressVisibleTimer.start();
+    QCoreApplication::processEvents();
+
+    if (!process.waitForStarted(5000)) {
+        progressDialog.close();
+        if (errorMessage) {
+            *errorMessage = tr("Unable to start %1.").arg(toolDisplayName.toLower());
+        }
+        return false;
+    }
+
+    QByteArray outputBuffer;
+    while (process.state() != QProcess::NotRunning) {
+        process.waitForReadyRead(100);
+        const QByteArray outputChunk = process.readAllStandardOutput();
+        if (!outputChunk.isEmpty()) {
+            processOutputChunk(outputChunk, outputBuffer);
+        }
+        QCoreApplication::processEvents();
+    }
+
+    const QByteArray trailingChunk = process.readAllStandardOutput();
+    if (!trailingChunk.isEmpty()) {
+        processOutputChunk(trailingChunk, outputBuffer);
+    }
+    if (!outputBuffer.trimmed().isEmpty()) {
+        processOutputLine(QString::fromLocal8Bit(outputBuffer));
+    }
+
+    stage = ExternalToolStage::Finishing;
+    if (totalFields > 0) {
+        processedFields = totalFields;
+    }
+    updateProgressDialog();
+    QCoreApplication::processEvents();
+    constexpr qint64 minimumVisibleMilliseconds = 700;
+    const qint64 visibleMilliseconds = progressVisibleTimer.elapsed();
+    if (visibleMilliseconds < minimumVisibleMilliseconds) {
+        QEventLoop delayLoop;
+        QTimer::singleShot(static_cast<int>(minimumVisibleMilliseconds - visibleMilliseconds),
+                           &delayLoop, &QEventLoop::quit);
+        delayLoop.exec();
+    }
+    progressDialog.close();
+
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        if (errorMessage) {
+            *errorMessage = !lastOutputLine.isEmpty()
+                ? lastOutputLine
+                : tr("%1 failed with exit code %2.").arg(toolDisplayName).arg(process.exitCode());
+        }
+        return false;
+    }
+
+    return true;
+}
+
+MainWindow::UiStateSnapshot MainWindow::captureUiStateSnapshot() const
+{
+    UiStateSnapshot snapshot;
+    if (!tbcSource.getIsSourceLoaded()) {
+        return snapshot;
+    }
+
+    snapshot.valid = true;
+    snapshot.frameNumber = currentFrameNumber;
+    snapshot.fieldNumber = currentFieldNumber;
+    snapshot.viewMode = tbcSource.getViewMode();
+    snapshot.stretchField = tbcSource.getStretchField();
+    snapshot.reverseFieldOrder = tbcSource.getFieldOrder();
+    snapshot.highlightDropouts = tbcSource.getHighlightDropouts();
+    snapshot.chromaEnabled = tbcSource.getChromaDecoder();
+    snapshot.chromaDecodeMode = tbcSource.getChromaDecodeMode();
+    snapshot.sourceMode = tbcSource.getSourceMode();
+    snapshot.aspectRatioEnabled = displayAspectRatio;
+    snapshot.imageScaleFactor = scaleFactor;
+    snapshot.activeMainTabIndex = (ui && ui->mainTabWidget) ? ui->mainTabWidget->currentIndex() : 0;
+
+    snapshot.showVbiDialog = vbiDialog && vbiDialog->isVisible();
+    snapshot.showDropoutDialog = dropoutAnalysisDialog && dropoutAnalysisDialog->isVisible();
+    snapshot.showVisibleDropoutDialog = visibleDropoutAnalysisDialog && visibleDropoutAnalysisDialog->isVisible();
+    snapshot.showBlackSnrDialog = blackSnrAnalysisDialog && blackSnrAnalysisDialog->isVisible();
+    snapshot.showWhiteSnrDialog = whiteSnrAnalysisDialog && whiteSnrAnalysisDialog->isVisible();
+    snapshot.showVideoParametersDialog = videoParametersDialog && videoParametersDialog->isVisible();
+    snapshot.showChromaConfigDialog = chromaDecoderConfigDialog && chromaDecoderConfigDialog->isVisible();
+    return snapshot;
+}
+
+void MainWindow::applyUiStateSnapshot(const UiStateSnapshot &snapshot)
+{
+    if (!snapshot.valid || !tbcSource.getIsSourceLoaded()) {
+        return;
+    }
+
+    displayAspectRatio = snapshot.aspectRatioEnabled;
+    scaleFactor = snapshot.imageScaleFactor;
+    tbcSource.setViewMode(snapshot.viewMode);
+    tbcSource.setStretchField(snapshot.stretchField);
+    tbcSource.setFieldOrder(snapshot.reverseFieldOrder);
+    tbcSource.setHighlightDropouts(snapshot.highlightDropouts);
+    tbcSource.setChromaDecodeMode(snapshot.chromaDecodeMode);
+    tbcSource.setChromaDecoder(snapshot.chromaEnabled);
+    if (tbcSource.getSourceMode() != TbcSource::ONE_SOURCE) {
+        tbcSource.setSourceMode(snapshot.sourceMode);
+    }
+
+    const qint32 totalFrames = qMax<qint32>(1, tbcSource.getNumberOfFrames());
+    const qint32 totalFields = qMax<qint32>(1, tbcSource.getNumberOfFields());
+    if (snapshot.viewMode == TbcSource::ViewMode::FIELD_VIEW) {
+        const qint32 targetField = qBound<qint32>(1, snapshot.fieldNumber, totalFields);
+        if (targetField != currentFieldNumber) {
+            setCurrentField(targetField);
+        } else {
+            currentFieldNumber = targetField;
+            currentFrameNumber = static_cast<qint32>(std::ceil(static_cast<double>(targetField) / 2.0));
+            sanitizeCurrentPosition();
+        }
+    } else {
+        const qint32 targetFrame = qBound<qint32>(1, snapshot.frameNumber, totalFrames);
+        if (targetFrame != currentFrameNumber) {
+            setCurrentFrame(targetFrame);
+        } else {
+            currentFrameNumber = targetFrame;
+            currentFieldNumber = (targetFrame * 2) - 1;
+            sanitizeCurrentPosition();
+        }
+    }
+
+    setViewValues();
+    updateBottomStatusReadout();
+    updateAspectPushButton();
+    updateVideoPushButton();
+    updateSourcesPushButton();
+    updateImage();
+
+    if (ui && ui->mainTabWidget
+        && snapshot.activeMainTabIndex >= 0
+        && snapshot.activeMainTabIndex < ui->mainTabWidget->count()) {
+        ui->mainTabWidget->setCurrentIndex(snapshot.activeMainTabIndex);
+    }
+
+    if (snapshot.showVbiDialog && vbiDialog) {
+        vbiDialog->updateVbi(tbcSource.getFrameVbi(), tbcSource.getIsFrameVbiValid());
+        vbiDialog->updateVideoId(tbcSource.getFrameVideoId(), tbcSource.getIsFrameVideoIdValid());
+        vbiDialog->show();
+    }
+    if (snapshot.showDropoutDialog && dropoutAnalysisDialog) {
+        dropoutAnalysisDialog->show();
+    }
+    if (snapshot.showVisibleDropoutDialog && visibleDropoutAnalysisDialog) {
+        visibleDropoutAnalysisDialog->show();
+    }
+    if (snapshot.showBlackSnrDialog && blackSnrAnalysisDialog) {
+        blackSnrAnalysisDialog->show();
+    }
+    if (snapshot.showWhiteSnrDialog && whiteSnrAnalysisDialog) {
+        whiteSnrAnalysisDialog->show();
+    }
+    if (snapshot.showVideoParametersDialog && videoParametersDialog) {
+        videoParametersDialog->show();
+    }
+    if (snapshot.showChromaConfigDialog && chromaDecoderConfigDialog) {
+        chromaDecoderConfigDialog->show();
+    }
+}
+
+void MainWindow::queueAnalysisRefreshPreservingUserState(const QString &processedInputFile)
+{
+    if (!tbcSource.getIsSourceLoaded()) {
+        return;
+    }
+    if (!sameFilePath(processedInputFile, tbcSource.getCurrentSourceFilename())) {
+        return;
+    }
+
+    pendingUiStateSnapshot = captureUiStateSnapshot();
+    restoreUiStateAfterReload = pendingUiStateSnapshot.valid;
+    if (statusBar()) {
+        statusBar()->clearMessage();
+    }
+
+    const QString reloadTarget = lastFilename.isEmpty() ? processedInputFile : lastFilename;
+    loadTbcFile(reloadTarget, false, true);
+}
+
 // Menu bar signal handlers -------------------------------------------------------------------------------------------
 
 void MainWindow::on_actionExit_triggered()
@@ -2131,11 +2658,25 @@ void MainWindow::on_actionProcess_VBI_triggered()
     if (tbcSource.getIsSourceLoaded()) {
         defaultInput = tbcSource.getCurrentSourceFilename();
     }
-    const QString startPath = defaultInput.isEmpty() ? configuration.getSourceDirectory() : defaultInput;
-    const QString inputFileName = QFileDialog::getOpenFileName(this,
-                                                               tr("Select TBC file for VBI processing"),
-                                                               startPath,
-                                                               tr("TBC files (*.tbc *.ytbc *.ctbc *.tbcy *.tbcc);;All Files (*)"));
+    QString inputFileName;
+    if (tbcSource.getIsSourceLoaded() && !tbcSource.getIsMetadataOnly()) {
+        const QString loadedSourceFilename = tbcSource.getCurrentSourceFilename();
+        if (!loadedSourceFilename.isEmpty() && QFileInfo::exists(loadedSourceFilename)) {
+            inputFileName = loadedSourceFilename;
+        }
+    }
+
+    if (inputFileName.isEmpty()) {
+        const QString startPath = defaultInput.isEmpty() ? configuration.getSourceDirectory() : defaultInput;
+#if defined(Q_OS_MACOS)
+        inputFileName = chooseFileViaAppleScript(startPath);
+#else
+        inputFileName = QFileDialog::getOpenFileName(this,
+                                                     tr("Select TBC file for VBI processing"),
+                                                     startPath,
+                                                     tr("TBC files (*.tbc *.ytbc *.ctbc *.tbcy *.tbcc);;All Files (*)"));
+#endif
+    }
     if (inputFileName.isEmpty()) {
         return;
     }
@@ -2147,8 +2688,25 @@ void MainWindow::on_actionProcess_VBI_triggered()
         return;
     }
 
+    QString preferredMetadataFilename;
+    if (tbcSource.getIsSourceLoaded()
+        && sameFilePath(inputFileName, tbcSource.getCurrentSourceFilename())) {
+        preferredMetadataFilename = tbcSource.getCurrentMetadataFilename();
+    }
+    const QString metadataFilename = resolveMetadataFilenameForSource(inputFileName, preferredMetadataFilename);
+    if (metadataFilename.isEmpty()) {
+        QMessageBox::warning(this, tr("Metadata not found"),
+                             tr("Could not find metadata for:\n%1\n\nExpected .db or .json metadata file.")
+                                 .arg(inputFileName));
+        return;
+    }
+
+    const QStringList toolArguments = {
+        QStringLiteral("--input-metadata"), metadataFilename, inputFileName
+    };
+
     QString errorMessage;
-    if (!runExternalTool(toolPath, {inputFileName}, &errorMessage)) {
+    if (!runExternalToolWithProgress(toolPath, toolArguments, tr("VBI processing"), &errorMessage)) {
         QMessageBox::warning(this, tr("Process failed"),
                              errorMessage.isEmpty()
                                  ? tr("ld-process-vbi failed.")
@@ -2156,9 +2714,12 @@ void MainWindow::on_actionProcess_VBI_triggered()
         return;
     }
 
-    statusBar()->showMessage(tr("VBI processing completed for %1").arg(inputFileName), 4000);
-    if (tbcSource.getIsSourceLoaded() && sameFilePath(inputFileName, tbcSource.getCurrentSourceFilename())) {
-        loadTbcFile(lastFilename);
+    const bool reloadingCurrentSource = tbcSource.getIsSourceLoaded()
+                                        && sameFilePath(inputFileName, tbcSource.getCurrentSourceFilename());
+    if (reloadingCurrentSource) {
+        queueAnalysisRefreshPreservingUserState(inputFileName);
+    } else {
+        statusBar()->showMessage(tr("VBI processing completed for %1").arg(inputFileName), 4000);
     }
 }
 
@@ -2168,11 +2729,25 @@ void MainWindow::on_actionProcess_VITS_triggered()
     if (tbcSource.getIsSourceLoaded()) {
         defaultInput = tbcSource.getCurrentSourceFilename();
     }
-    const QString startPath = defaultInput.isEmpty() ? configuration.getSourceDirectory() : defaultInput;
-    const QString inputFileName = QFileDialog::getOpenFileName(this,
-                                                               tr("Select TBC file for VITS processing"),
-                                                               startPath,
-                                                               tr("TBC files (*.tbc *.ytbc *.ctbc *.tbcy *.tbcc);;All Files (*)"));
+    QString inputFileName;
+    if (tbcSource.getIsSourceLoaded() && !tbcSource.getIsMetadataOnly()) {
+        const QString loadedSourceFilename = tbcSource.getCurrentSourceFilename();
+        if (!loadedSourceFilename.isEmpty() && QFileInfo::exists(loadedSourceFilename)) {
+            inputFileName = loadedSourceFilename;
+        }
+    }
+
+    if (inputFileName.isEmpty()) {
+        const QString startPath = defaultInput.isEmpty() ? configuration.getSourceDirectory() : defaultInput;
+#if defined(Q_OS_MACOS)
+        inputFileName = chooseFileViaAppleScript(startPath);
+#else
+        inputFileName = QFileDialog::getOpenFileName(this,
+                                                     tr("Select TBC file for VITS processing"),
+                                                     startPath,
+                                                     tr("TBC files (*.tbc *.ytbc *.ctbc *.tbcy *.tbcc);;All Files (*)"));
+#endif
+    }
     if (inputFileName.isEmpty()) {
         return;
     }
@@ -2184,8 +2759,25 @@ void MainWindow::on_actionProcess_VITS_triggered()
         return;
     }
 
+    QString preferredMetadataFilename;
+    if (tbcSource.getIsSourceLoaded()
+        && sameFilePath(inputFileName, tbcSource.getCurrentSourceFilename())) {
+        preferredMetadataFilename = tbcSource.getCurrentMetadataFilename();
+    }
+    const QString metadataFilename = resolveMetadataFilenameForSource(inputFileName, preferredMetadataFilename);
+    if (metadataFilename.isEmpty()) {
+        QMessageBox::warning(this, tr("Metadata not found"),
+                             tr("Could not find metadata for:\n%1\n\nExpected .db or .json metadata file.")
+                                 .arg(inputFileName));
+        return;
+    }
+
+    const QStringList toolArguments = {
+        QStringLiteral("--input-metadata"), metadataFilename, inputFileName
+    };
+
     QString errorMessage;
-    if (!runExternalTool(toolPath, {inputFileName}, &errorMessage)) {
+    if (!runExternalToolWithProgress(toolPath, toolArguments, tr("VITS processing"), &errorMessage)) {
         QMessageBox::warning(this, tr("Process failed"),
                              errorMessage.isEmpty()
                                  ? tr("ld-process-vits failed.")
@@ -2193,9 +2785,12 @@ void MainWindow::on_actionProcess_VITS_triggered()
         return;
     }
 
-    statusBar()->showMessage(tr("VITS processing completed for %1").arg(inputFileName), 4000);
-    if (tbcSource.getIsSourceLoaded() && sameFilePath(inputFileName, tbcSource.getCurrentSourceFilename())) {
-        loadTbcFile(lastFilename);
+    const bool reloadingCurrentSource = tbcSource.getIsSourceLoaded()
+                                        && sameFilePath(inputFileName, tbcSource.getCurrentSourceFilename());
+    if (reloadingCurrentSource) {
+        queueAnalysisRefreshPreservingUserState(inputFileName);
+    } else {
+        statusBar()->showMessage(tr("VITS processing completed for %1").arg(inputFileName), 4000);
     }
 }
 
@@ -3528,7 +4123,11 @@ void MainWindow::on_finishedLoading(bool success)
         // Update the GUI
         resetGui();
         updateGuiLoaded();
-        if (ui && ui->mainTabWidget && ui->viewerTab) {
+        if (restoreUiStateAfterReload) {
+            applyUiStateSnapshot(pendingUiStateSnapshot);
+            pendingUiStateSnapshot = UiStateSnapshot();
+            restoreUiStateAfterReload = false;
+        } else if (ui && ui->mainTabWidget && ui->viewerTab) {
             ui->mainTabWidget->setCurrentWidget(ui->viewerTab);
         }
         if (exportDialog) {
@@ -3546,6 +4145,8 @@ void MainWindow::on_finishedLoading(bool success)
     } else {
         // Load failed
         updateGuiUnloaded();
+        pendingUiStateSnapshot = UiStateSnapshot();
+        restoreUiStateAfterReload = false;
 
         // Show the error to the user
         QMessageBox messageBox;
