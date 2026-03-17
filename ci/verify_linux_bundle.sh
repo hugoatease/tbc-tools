@@ -48,6 +48,7 @@ case "$MODE" in
 
     require_path "$ROOT/usr/bin/ld-analyse"
     require_path "$ROOT/usr/bin/ld-process-vbi"
+    require_path "$ROOT/usr/bin/qt.conf"
     for rel in "${COMMON_RELATIVE_PATHS[@]}"; do
       require_path "$ROOT/$rel"
     done
@@ -64,6 +65,7 @@ case "$MODE" in
 
     require_path "$TARGET/bin/ld-analyse"
     require_path "$TARGET/bin/ld-process-vbi"
+    require_path "$TARGET/bin/qt.conf"
     require_path "$TARGET/bin/ffmpeg"
     require_path "$TARGET/bin/ffprobe"
     require_path "$TARGET/lib/libQt6Core.so.6"

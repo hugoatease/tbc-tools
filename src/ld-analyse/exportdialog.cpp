@@ -1315,6 +1315,18 @@ ExportDialog::ExportDialog(QWidget *parent) :
                                       : tr("tbc-video-export");
         appendLog(tr("%1 started (PID %2).").arg(stageName).arg(exportProcess->processId()));
     });
+    parallelProxyProcess = new QProcess(this);
+    connect(parallelProxyProcess, &QProcess::finished,
+            this, &ExportDialog::handleParallelProxyProcessFinished);
+    connect(parallelProxyProcess, &QProcess::errorOccurred,
+            this, &ExportDialog::handleParallelProxyProcessError);
+    connect(parallelProxyProcess, &QProcess::readyReadStandardOutput,
+            this, &ExportDialog::handleParallelProxyProcessStdout);
+    connect(parallelProxyProcess, &QProcess::readyReadStandardError,
+            this, &ExportDialog::handleParallelProxyProcessStderr);
+    connect(parallelProxyProcess, &QProcess::started, this, [this]() {
+        appendLog(tr("Parallel proxy export started (PID %1).").arg(parallelProxyProcess->processId()));
+    });
     updateProfileDependentControls();
 
     appendStatus(tr("Ready."));
@@ -2207,6 +2219,32 @@ void ExportDialog::on_exportButton_clicked()
         return;
     }
 
+    QStringList parallelProxyArguments;
+    if (generateProxyRequested) {
+        QString proxyArgsError;
+        const QString proxyProfile = proxyExportProfileName(selectedProxyCodec);
+        const QString proxyOutputBase = sanitizeOutputBaseName(plannedProxyOutputPath);
+        parallelProxyArguments = buildArguments(&proxyArgsError,
+                                                metadataSnapshotPath,
+                                                overwriteExisting,
+                                                configOverridePath,
+                                                exportAudioTracks,
+                                                startFrameOneBased,
+                                                rangeLength,
+                                                proxyProfile,
+                                                proxyOutputBase);
+        if (parallelProxyArguments.isEmpty()) {
+            cleanupTemporaryMetadataSnapshot();
+            const QString errorToShow = proxyArgsError.isEmpty()
+                                            ? tr("Could not prepare parallel proxy export arguments.")
+                                            : proxyArgsError;
+            appendStatus(errorToShow);
+            appendLog(errorToShow);
+            QMessageBox::warning(this, tr("Error"), errorToShow);
+            return;
+        }
+    }
+
     const QString exportPath = resolveVideoExportPath();
     if (exportPath.isEmpty()) {
         cleanupTemporaryMetadataSnapshot();
@@ -2217,6 +2255,9 @@ void ExportDialog::on_exportButton_clicked()
     }
     const QString commandLine = formatCommand(exportPath, arguments);
     appendLog(tr("Command: %1").arg(commandLine));
+    if (generateProxyRequested && !parallelProxyArguments.isEmpty()) {
+        appendLog(tr("Parallel proxy command: %1").arg(formatCommand(exportPath, parallelProxyArguments)));
+    }
     activeRunStage = RunStage::MainExport;
     generateProxyForCurrentRun = generateProxyRequested;
     overwriteExistingForCurrentRun = overwriteExisting;
@@ -2230,19 +2271,27 @@ void ExportDialog::on_exportButton_clicked()
     processStderr.clear();
     pendingStdoutBuffer.clear();
     pendingStderrBuffer.clear();
+    parallelProxyStdout.clear();
+    parallelProxyStderr.clear();
+    pendingParallelProxyStdoutBuffer.clear();
+    pendingParallelProxyStderrBuffer.clear();
+    parallelProxyRunning = false;
+    parallelProxyFinished = false;
+    parallelProxySucceeded = false;
+    mainExportFinished = false;
+    mainExportSucceeded = false;
     setBusy(true);
     exportProcess->setWorkingDirectory(QFileInfo(currentInputFile).absolutePath());
+    QProcessEnvironment launchEnvironment = QProcessEnvironment::systemEnvironment();
     {
-        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
         const QStringList prependDirs = defaultExecutableSearchDirs(currentInputFile);
-
-        QStringList pathEntries = env.value(QStringLiteral("PATH"))
+        QStringList pathEntries = launchEnvironment.value(QStringLiteral("PATH"))
                                       .split(QDir::listSeparator(), Qt::SkipEmptyParts);
         prependUniquePathEntries(&pathEntries, prependDirs);
         if (!pathEntries.isEmpty()) {
-            env.insert(QStringLiteral("PATH"), pathEntries.join(QDir::listSeparator()));
+            launchEnvironment.insert(QStringLiteral("PATH"), pathEntries.join(QDir::listSeparator()));
         }
-        exportProcess->setProcessEnvironment(env);
+        exportProcess->setProcessEnvironment(launchEnvironment);
     }
     QString programToRun = exportPath;
     QStringList argsToRun = arguments;
@@ -2276,10 +2325,26 @@ void ExportDialog::on_exportButton_clicked()
 
     appendStatus(tr("Export running..."));
     appendLog(tr("Export running..."));
+
+    if (generateProxyRequested && !parallelProxyArguments.isEmpty()) {
+        parallelProxyProcess->setWorkingDirectory(QFileInfo(currentInputFile).absolutePath());
+        parallelProxyProcess->setProcessEnvironment(launchEnvironment);
+        parallelProxyProcess->start(exportPath, parallelProxyArguments);
+        if (parallelProxyProcess->waitForStarted(5000)) {
+            parallelProxyRunning = true;
+            generateProxyForCurrentRun = false;
+            appendLog(tr("Parallel proxy export running using profile '%1'.")
+                          .arg(proxyExportProfileName(selectedProxyCodec)));
+        } else {
+            appendLog(tr("Parallel proxy export failed to start; falling back to post-export proxy transcoding."));
+        }
+    }
 }
 void ExportDialog::on_cancelButton_clicked()
 {
-    if (!exportProcess || exportProcess->state() == QProcess::NotRunning) {
+    const bool mainRunning = exportProcess && exportProcess->state() != QProcess::NotRunning;
+    const bool proxyRunning = parallelProxyProcess && parallelProxyProcess->state() != QProcess::NotRunning;
+    if (!mainRunning && !proxyRunning) {
         appendStatus(tr("No export running."));
         appendLog(tr("No export running."));
         return;
@@ -2297,26 +2362,44 @@ void ExportDialog::on_cancelButton_clicked()
     appendLog(tr("Cancel requested."));
 
 #if defined(Q_OS_UNIX)
-    const qint64 pid = exportProcess->processId();
-    if (pid > 0) {
-        if (::kill(static_cast<pid_t>(pid), SIGINT) == 0) {
-            appendLog(tr("Sent SIGINT to %1.").arg(processLabel));
-        } else {
-            appendLog(tr("Failed to send SIGINT to %1.").arg(processLabel));
+    const auto sendSigInt = [this](QProcess *process, const QString &label) {
+        if (!process || process->state() == QProcess::NotRunning) {
+            return;
         }
-    } else {
-        appendLog(tr("Process ID unavailable; unable to send SIGINT."));
-    }
+        const qint64 pid = process->processId();
+        if (pid > 0) {
+            if (::kill(static_cast<pid_t>(pid), SIGINT) == 0) {
+                appendLog(tr("Sent SIGINT to %1.").arg(label));
+            } else {
+                appendLog(tr("Failed to send SIGINT to %1.").arg(label));
+            }
+        } else {
+            appendLog(tr("Process ID unavailable; unable to send SIGINT for %1.").arg(label));
+        }
+    };
+    sendSigInt(exportProcess, processLabel);
+    sendSigInt(parallelProxyProcess, tr("parallel proxy export"));
     QTimer::singleShot(3000, this, [this]() {
         if (exportProcess && exportProcess->state() != QProcess::NotRunning) {
             appendLog(tr("Process still running after SIGINT; sending kill()."));
             exportProcess->kill();
         }
+        if (parallelProxyProcess && parallelProxyProcess->state() != QProcess::NotRunning) {
+            appendLog(tr("Parallel proxy process still running after SIGINT; sending kill()."));
+            parallelProxyProcess->kill();
+        }
     });
 #else
-    const qint64 pid = exportProcess->processId();
-    bool taskkillStarted = false;
-    if (pid > 0) {
+    const auto taskkillProcessTree = [this](QProcess *process, const QString &label) {
+        if (!process || process->state() == QProcess::NotRunning) {
+            return;
+        }
+        const qint64 pid = process->processId();
+        if (pid <= 0) {
+            appendLog(tr("Process ID unavailable; cannot run taskkill by PID for %1.").arg(label));
+            process->terminate();
+            return;
+        }
         const QString taskkillPath = QStandardPaths::findExecutable(QStringLiteral("taskkill"));
         const QString taskkillProgram = taskkillPath.isEmpty() ? QStringLiteral("taskkill") : taskkillPath;
         const QStringList taskkillArgs = {
@@ -2325,23 +2408,27 @@ void ExportDialog::on_cancelButton_clicked()
             QStringLiteral("/T"),
             QStringLiteral("/F")
         };
-        taskkillStarted = QProcess::startDetached(taskkillProgram, taskkillArgs);
+        const bool taskkillStarted = QProcess::startDetached(taskkillProgram, taskkillArgs);
         if (taskkillStarted) {
-            appendLog(tr("Invoked taskkill /PID %1 /T /F for %2 process tree.").arg(pid).arg(processLabel));
+            appendLog(tr("Invoked taskkill /PID %1 /T /F for %2 process tree.").arg(pid).arg(label));
         } else {
-            appendLog(tr("Failed to launch taskkill for %1 process tree.").arg(processLabel));
+            appendLog(tr("Failed to launch taskkill for %1 process tree.").arg(label));
         }
-    } else {
-        appendLog(tr("Process ID unavailable; cannot run taskkill by PID."));
-    }
-    exportProcess->terminate();
-    appendLog(taskkillStarted
-                  ? tr("Sent terminate request to export process (taskkill already requested).")
-                  : tr("Sent terminate request to export process (fallback path)."));
+        process->terminate();
+        appendLog(taskkillStarted
+                      ? tr("Sent terminate request to %1 (taskkill already requested).").arg(label)
+                      : tr("Sent terminate request to %1 (fallback path).").arg(label));
+    };
+    taskkillProcessTree(exportProcess, processLabel);
+    taskkillProcessTree(parallelProxyProcess, tr("parallel proxy export"));
     QTimer::singleShot(1500, this, [this]() {
         if (exportProcess && exportProcess->state() != QProcess::NotRunning) {
             appendLog(tr("Process still running after terminate; sending kill()."));
             exportProcess->kill();
+        }
+        if (parallelProxyProcess && parallelProxyProcess->state() != QProcess::NotRunning) {
+            appendLog(tr("Parallel proxy process still running after terminate; sending kill()."));
+            parallelProxyProcess->kill();
         }
     });
 #endif
@@ -2351,7 +2438,6 @@ void ExportDialog::on_cancelButton_clicked()
 void ExportDialog::handleProcessFinished(int exitCode, QProcess::ExitStatus exitStatus)
 {
     flushPendingProcessOutput();
-    cleanupTemporaryMetadataSnapshot();
     const RunStage finishedStage = activeRunStage;
     const bool wasCancelRequested = cancelRequested;
     cancelRequested = false;
@@ -2365,6 +2451,10 @@ void ExportDialog::handleProcessFinished(int exitCode, QProcess::ExitStatus exit
 
     const bool success = exitStatus == QProcess::NormalExit && exitCode == 0 && !reportedFailure;
     const QString errorText = processStderr.isEmpty() ? processStdout : processStderr;
+    if (finishedStage != RunStage::ProxyExport) {
+        mainExportFinished = true;
+        mainExportSucceeded = success;
+    }
 
     if (finishedStage == RunStage::ProxyExport) {
         setBusy(false);
@@ -2390,6 +2480,26 @@ void ExportDialog::handleProcessFinished(int exitCode, QProcess::ExitStatus exit
     }
 
     if (success) {
+        if (parallelProxyRunning) {
+            appendStatus(tr("Main export complete. Waiting for proxy export..."));
+            appendLog(tr("Main export completed; waiting for parallel proxy export to finish."));
+            return;
+        }
+        if (parallelProxyFinished && !parallelProxySucceeded) {
+            const QString proxyErrorText = parallelProxyStderr.isEmpty() ? parallelProxyStdout : parallelProxyStderr;
+            setBusy(false);
+            appendStatus(tr("Export complete (proxy failed)."));
+            appendLog(tr("Parallel proxy export failed."));
+            QMessageBox::warning(this, tr("Proxy generation failed"),
+                                 proxyErrorText.isEmpty()
+                                     ? tr("Parallel proxy export reported failure.")
+                                     : proxyErrorText);
+            if (!proxyErrorText.trimmed().isEmpty()) {
+                appendLog(proxyErrorText.trimmed());
+            }
+            clearRunState();
+            return;
+        }
         if (generateProxyForCurrentRun) {
             QString proxyErrorMessage;
             if (startProxyExport(&proxyErrorMessage)) {
@@ -2416,6 +2526,11 @@ void ExportDialog::handleProcessFinished(int exitCode, QProcess::ExitStatus exit
         return;
     }
 
+    if (parallelProxyProcess && parallelProxyProcess->state() != QProcess::NotRunning) {
+        parallelProxyProcess->kill();
+    }
+    parallelProxyRunning = false;
+
     setBusy(false);
     if (wasCancelRequested) {
         appendStatus(tr("Export cancelled."));
@@ -2439,9 +2554,16 @@ void ExportDialog::handleProcessError(QProcess::ProcessError)
 {
     setBusy(false);
     flushPendingProcessOutput();
-    cleanupTemporaryMetadataSnapshot();
     const RunStage failedStage = activeRunStage;
     const QString errorText = exportProcess ? exportProcess->errorString() : QString();
+    if (failedStage != RunStage::ProxyExport
+        && parallelProxyProcess
+        && parallelProxyProcess->state() != QProcess::NotRunning) {
+        parallelProxyProcess->kill();
+    }
+    if (failedStage != RunStage::ProxyExport) {
+        parallelProxyRunning = false;
+    }
     if (cancelRequested) {
         appendLog(errorText.isEmpty()
                       ? tr("Process reported an error during cancellation.")
@@ -2538,6 +2660,95 @@ void ExportDialog::handleProcessStderr()
     const QString chunk = QString::fromLocal8Bit(exportProcess->readAllStandardError());
     processStderr += chunk;
     consumeProcessOutputChunk(chunk, &pendingStderrBuffer);
+}
+
+void ExportDialog::handleParallelProxyProcessStdout()
+{
+    const QString chunk = QString::fromLocal8Bit(parallelProxyProcess->readAllStandardOutput());
+    parallelProxyStdout += chunk;
+    consumeProcessOutputChunk(chunk, &pendingParallelProxyStdoutBuffer);
+}
+
+void ExportDialog::handleParallelProxyProcessStderr()
+{
+    const QString chunk = QString::fromLocal8Bit(parallelProxyProcess->readAllStandardError());
+    parallelProxyStderr += chunk;
+    consumeProcessOutputChunk(chunk, &pendingParallelProxyStderrBuffer);
+}
+
+void ExportDialog::handleParallelProxyProcessFinished(int exitCode, QProcess::ExitStatus exitStatus)
+{
+    consumeProcessOutputChunk(QStringLiteral("\n"), &pendingParallelProxyStdoutBuffer);
+    consumeProcessOutputChunk(QStringLiteral("\n"), &pendingParallelProxyStderrBuffer);
+    pendingParallelProxyStdoutBuffer.clear();
+    pendingParallelProxyStderrBuffer.clear();
+
+    const QString combinedOutput = parallelProxyStdout + QStringLiteral("\n") + parallelProxyStderr;
+    const bool reportedFailure =
+        combinedOutput.contains(QRegularExpression(QStringLiteral("\\bExport failed\\b"),
+                                                   QRegularExpression::CaseInsensitiveOption))
+        || combinedOutput.contains(QStringLiteral("InvalidOptsError"))
+        || combinedOutput.contains(QStringLiteral("FileIOError"))
+        || combinedOutput.contains(QStringLiteral("ProcessError"));
+
+    parallelProxyRunning = false;
+    parallelProxyFinished = true;
+    parallelProxySucceeded = (exitStatus == QProcess::NormalExit && exitCode == 0 && !reportedFailure);
+
+    if (parallelProxySucceeded) {
+        appendLog(tr("Parallel proxy export complete."));
+    } else if (cancelRequested) {
+        appendLog(tr("Parallel proxy export cancelled."));
+    } else {
+        appendLog(tr("Parallel proxy export failed."));
+    }
+
+    if (!mainExportFinished || !mainExportSucceeded) {
+        return;
+    }
+
+    setBusy(false);
+    if (parallelProxySucceeded) {
+        appendStatus(tr("Export complete."));
+        appendLog(tr("Export complete."));
+        clearRunState();
+        return;
+    }
+
+    const QString errorText = parallelProxyStderr.isEmpty() ? parallelProxyStdout : parallelProxyStderr;
+    appendStatus(tr("Export complete (proxy failed)."));
+    appendLog(tr("Parallel proxy export failed after main export completion."));
+    QMessageBox::warning(this, tr("Proxy generation failed"),
+                         errorText.isEmpty()
+                             ? tr("Parallel proxy export reported failure.")
+                             : errorText);
+    if (!errorText.trimmed().isEmpty()) {
+        appendLog(errorText.trimmed());
+    }
+    clearRunState();
+}
+
+void ExportDialog::handleParallelProxyProcessError(QProcess::ProcessError)
+{
+    const QString errorText = parallelProxyProcess ? parallelProxyProcess->errorString() : QString();
+    parallelProxyRunning = false;
+    parallelProxyFinished = true;
+    parallelProxySucceeded = false;
+    appendLog(errorText.isEmpty()
+                  ? tr("Parallel proxy export failed to start.")
+                  : tr("Parallel proxy export error: %1").arg(errorText));
+
+    if (!mainExportFinished || !mainExportSucceeded) {
+        return;
+    }
+
+    setBusy(false);
+    appendStatus(tr("Export complete (proxy failed)."));
+    QMessageBox::warning(this, tr("Proxy generation failed"),
+                         errorText.isEmpty()
+                             ? tr("Parallel proxy export failed to start.")
+                             : errorText);
+    clearRunState();
 }
 void ExportDialog::resetProcessStats()
 {
@@ -2902,6 +3113,18 @@ QString ExportDialog::selectedExportProfileName() const
     return QStringLiteral("ffv1");
 }
 
+QString ExportDialog::proxyExportProfileName(const QString &proxyCodecId) const
+{
+    const QString normalizedCodec = normalizedProxyCodecId(proxyCodecId);
+    if (normalizedCodec == QStringLiteral("hevc")) {
+        return QStringLiteral("x265_web");
+    }
+    if (normalizedCodec == QStringLiteral("av1")) {
+        return QStringLiteral("av1_web");
+    }
+    return QStringLiteral("x264_web");
+}
+
 QString ExportDialog::sanitizeOutputBaseName(const QString &path) const
 {
     QFileInfo info(path);
@@ -3207,12 +3430,25 @@ bool ExportDialog::startProxyExport(QString *errorMessage)
 
 void ExportDialog::clearRunState()
 {
+    if (parallelProxyProcess && parallelProxyProcess->state() != QProcess::NotRunning) {
+        parallelProxyProcess->kill();
+    }
     activeRunStage = RunStage::Idle;
     generateProxyForCurrentRun = false;
     overwriteExistingForCurrentRun = false;
     outputBaseForCurrentRun.clear();
     proxyCodecForCurrentRun.clear();
     proxyOutputPathForCurrentRun.clear();
+    parallelProxyRunning = false;
+    parallelProxyFinished = false;
+    parallelProxySucceeded = false;
+    mainExportFinished = false;
+    mainExportSucceeded = false;
+    parallelProxyStdout.clear();
+    parallelProxyStderr.clear();
+    pendingParallelProxyStdoutBuffer.clear();
+    pendingParallelProxyStderrBuffer.clear();
+    cleanupTemporaryMetadataSnapshot();
 }
 bool ExportDialog::prepareTrimmedAudioTracks(int zeroBasedStartFrame,
                                              int rangeLengthFrames,
@@ -3373,7 +3609,9 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
                                          const QString &configFileOverride,
                                          const QStringList &audioTracks,
                                          int startFrameOneBasedOverride,
-                                         int lengthOverride) const
+                                         int lengthOverride,
+                                         const QString &profileOverride,
+                                         const QString &outputBaseOverride) const
 {
     QStringList args;
     if (!tbcSource) {
@@ -3390,8 +3628,10 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
         }
         return args;
     }
-
-    const QString outputBase = sanitizeOutputBaseName(ui->outputLineEdit->text().trimmed());
+    const QString configuredOutputBase = outputBaseOverride.trimmed().isEmpty()
+                                             ? ui->outputLineEdit->text().trimmed()
+                                             : outputBaseOverride.trimmed();
+    const QString outputBase = sanitizeOutputBaseName(configuredOutputBase);
     if (outputBase.isEmpty()) {
         if (errorMessage) {
             *errorMessage = tr("Please provide an output base name.");
@@ -3426,7 +3666,9 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
     args << QStringLiteral("--start") << QString::number(startFrameOneBased);
     args << QStringLiteral("--length") << QString::number(rangeLength);
 
-    const QString profile = selectedExportProfileName();
+    const QString profile = profileOverride.trimmed().isEmpty()
+                                ? selectedExportProfileName()
+                                : profileOverride.trimmed();
     if (!configFileOverride.isEmpty()) {
         args << QStringLiteral("--config-file") << configFileOverride;
     }

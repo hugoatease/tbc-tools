@@ -51,6 +51,10 @@ private slots:
     void handleProcessError(QProcess::ProcessError error);
     void handleProcessStdout();
     void handleProcessStderr();
+    void handleParallelProxyProcessFinished(int exitCode, QProcess::ExitStatus exitStatus);
+    void handleParallelProxyProcessError(QProcess::ProcessError error);
+    void handleParallelProxyProcessStdout();
+    void handleParallelProxyProcessStderr();
 
 private:
     void syncResolutionModeSelectionFromSource();
@@ -75,6 +79,7 @@ private:
     bool findExistingOutputFiles(const QString &outputBase, QStringList *existingFiles) const;
     QString selectedMainCodecId() const;
     QString selectedExportProfileName() const;
+    QString proxyExportProfileName(const QString &proxyCodecId) const;
     QString videoSystemArg(int system) const;
     QStringList collectAudioTracks() const;
     bool shouldGenerateProxyForSelection() const;
@@ -96,7 +101,9 @@ private:
                                const QString &configFileOverride = QString(),
                                const QStringList &audioTracks = QStringList(),
                                int startFrameOneBasedOverride = -1,
-                               int lengthOverride = -1) const;
+                               int lengthOverride = -1,
+                               const QString &profileOverride = QString(),
+                               const QString &outputBaseOverride = QString()) const;
     QString createTemporaryExportConfig(QString *errorMessage,
                                         const QString &profileName,
                                         const QString &audioProfileName);
@@ -115,11 +122,16 @@ private:
     Ui::ExportDialog *ui;
     TbcSource *tbcSource = nullptr;
     QProcess *exportProcess = nullptr;
+    QProcess *parallelProxyProcess = nullptr;
     QString currentInputFile;
     QString processStdout;
     QString processStderr;
     QString pendingStdoutBuffer;
     QString pendingStderrBuffer;
+    QString parallelProxyStdout;
+    QString parallelProxyStderr;
+    QString pendingParallelProxyStdoutBuffer;
+    QString pendingParallelProxyStderrBuffer;
     QString temporaryInputJsonPath;
     QString temporaryExportConfigPath;
     QStringList temporaryAudioTrackPaths;
@@ -132,6 +144,11 @@ private:
     bool outputAutoSet = true;
     bool exportAvailable = false;
     bool cancelRequested = false;
+    bool parallelProxyRunning = false;
+    bool parallelProxyFinished = false;
+    bool parallelProxySucceeded = false;
+    bool mainExportFinished = false;
+    bool mainExportSucceeded = false;
     QHash<QString, int> processRowMap;
 };
 

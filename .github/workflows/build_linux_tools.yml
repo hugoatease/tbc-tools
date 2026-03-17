@@ -173,6 +173,10 @@ jobs:
 
           copy_qt_plugin "iconengines/libqsvgicon.so"
           copy_qt_plugin "imageformats/libqsvg.so"
+          cat > AppDir/usr/bin/qt.conf <<'EOF'
+          [Paths]
+          Plugins = ../plugins
+          EOF
           pending=1
           while [ "$pending" -eq 1 ]; do
             pending=0
@@ -334,6 +338,10 @@ jobs:
           copy_qt_plugin "sqldrivers/libqsqlite.so"
           copy_qt_plugin "iconengines/libqsvgicon.so"
           copy_qt_plugin "imageformats/libqsvg.so"
+          cat > release/bin/qt.conf <<'EOF'
+          [Paths]
+          Plugins = ../plugins
+          EOF
 
           pending=1
           while [ "$pending" -eq 1 ]; do

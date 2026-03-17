@@ -16,6 +16,8 @@
 #include <QLoggingCategory>
 #include <QPixmap>
 #include <QStyleFactory>
+#include <QDir>
+#include <QFileInfo>
 
 #ifdef Q_OS_WIN
 #include <QSettings>
@@ -46,6 +48,99 @@ QIcon bundledApplicationIcon()
     }
 
     return icon;
+}
+
+QString resolvedExecutableDirectory(const char *argv0)
+{
+    if (!argv0 || argv0[0] == '\0') {
+        return QDir::currentPath();
+    }
+
+    const QString rawPath = QString::fromLocal8Bit(argv0);
+    const QFileInfo info(rawPath);
+    if (info.isAbsolute()) {
+        return info.absolutePath();
+    }
+
+    return QFileInfo(QDir::current().absoluteFilePath(rawPath)).absolutePath();
+}
+
+void prependEnvSearchPath(const char *envKey, const QStringList &paths)
+{
+    if (!envKey || paths.isEmpty()) {
+        return;
+    }
+
+    QStringList normalizedPaths;
+    for (const QString &path : paths) {
+        const QString cleanPath = QDir::cleanPath(path.trimmed());
+        if (!cleanPath.isEmpty() && !normalizedPaths.contains(cleanPath)) {
+            normalizedPaths << cleanPath;
+        }
+    }
+    if (normalizedPaths.isEmpty()) {
+        return;
+    }
+
+    QStringList envEntries =
+        QString::fromLocal8Bit(qgetenv(envKey)).split(QDir::listSeparator(), Qt::SkipEmptyParts);
+    for (int i = normalizedPaths.size() - 1; i >= 0; --i) {
+        if (!envEntries.contains(normalizedPaths.at(i))) {
+            envEntries.prepend(normalizedPaths.at(i));
+        }
+    }
+
+    qputenv(envKey, envEntries.join(QDir::listSeparator()).toLocal8Bit());
+}
+
+void configureBundledQtPluginPaths(int argc, char *argv[])
+{
+#if defined(Q_OS_LINUX)
+    const QString exeDir = resolvedExecutableDirectory((argv && argc > 0) ? argv[0] : nullptr);
+    QStringList pluginRoots;
+
+    auto appendPluginRoot = [&pluginRoots](const QString &path) {
+        if (path.isEmpty()) {
+            return;
+        }
+        const QString cleanPath = QDir::cleanPath(path);
+        if (QDir(cleanPath).exists() && !pluginRoots.contains(cleanPath)) {
+            pluginRoots << cleanPath;
+        }
+    };
+
+    appendPluginRoot(QDir(exeDir).filePath(QStringLiteral("../plugins")));
+    appendPluginRoot(QDir(exeDir).filePath(QStringLiteral("plugins")));
+
+    if (qEnvironmentVariableIsSet("APPDIR")) {
+        const QString appDirRoot = qEnvironmentVariable("APPDIR");
+        appendPluginRoot(QDir(appDirRoot).filePath(QStringLiteral("usr/plugins")));
+        appendPluginRoot(QDir(appDirRoot).filePath(QStringLiteral("usr/lib/qt6/plugins")));
+        appendPluginRoot(QDir(appDirRoot).filePath(QStringLiteral("usr/lib/plugins")));
+    }
+
+    if (pluginRoots.isEmpty()) {
+        return;
+    }
+
+    QStringList platformPluginPaths;
+    for (const QString &pluginRoot : pluginRoots) {
+        const QString platformsDir = QDir(pluginRoot).filePath(QStringLiteral("platforms"));
+        if (QDir(platformsDir).exists() && !platformPluginPaths.contains(platformsDir)) {
+            platformPluginPaths << platformsDir;
+        }
+    }
+
+    if (qEnvironmentVariable("QT_QPA_PLATFORM_PLUGIN_PATH").trimmed().isEmpty()
+        && !platformPluginPaths.isEmpty()) {
+        qputenv("QT_QPA_PLATFORM_PLUGIN_PATH", platformPluginPaths.constFirst().toLocal8Bit());
+    }
+
+    prependEnvSearchPath("QT_PLUGIN_PATH", pluginRoots);
+#else
+    Q_UNUSED(argc)
+    Q_UNUSED(argv)
+#endif
 }
 } // namespace
 
@@ -125,6 +220,7 @@ int main(int argc, char *argv[])
 {
     // Install the local debug message handler with Qt system warning filtering
     qInstallMessageHandler(filteredDebugOutputHandler);
+    configureBundledQtPluginPaths(argc, argv);
 
     QApplication a(argc, argv);
     // Use Fusion on all platforms when available for consistent widget styling.
@@ -154,7 +250,7 @@ int main(int argc, char *argv[])
     // Set up the command line parser
     QCommandLineParser parser;
     parser.setApplicationDescription(
-        "ld-analyse - TBC output analysis\n"
+        "ld-analyse - analysis & adjustmnet tool for the decode projects 4fsc TBC format\n"
         "\n"
         "(c)2018-2025 Simon Inns\n"
         "(c)2020-2022 Adam Sampson\n"

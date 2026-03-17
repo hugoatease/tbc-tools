@@ -47,7 +47,12 @@
 #include <QTextEdit>
 #include <QAbstractSpinBox>
 #include <QKeySequence>
+#include <QHBoxLayout>
+#include <QPushButton>
 #include <QVBoxLayout>
+#if defined(Q_OS_UNIX)
+#include <signal.h>
+#endif
 
 #include "metadataconverterutil.h"
 #include "../ld-process-vits/processingpool.h"
@@ -957,7 +962,10 @@ bool MainWindow::event(QEvent *event)
 
         if (!filePath.isEmpty() && isSupportedInputExtension(filePath)) {
             lastFilename = filePath;
-            loadTbcFile(filePath);
+            const QString queuedFilePath = filePath;
+            QTimer::singleShot(0, this, [this, queuedFilePath]() {
+                loadTbcFile(queuedFilePath);
+            });
             return true;
         }
     }
@@ -1004,8 +1012,11 @@ void MainWindow::dropEvent(QDropEvent *event)
     }
 
     lastFilename = droppedFile;
-    loadTbcFile(droppedFile);
     event->acceptProposedAction();
+    const QString queuedDroppedFile = droppedFile;
+    QTimer::singleShot(0, this, [this, queuedDroppedFile]() {
+        loadTbcFile(queuedDroppedFile);
+    });
 }
 
 TbcSource& MainWindow::getTbcSource()
@@ -2209,22 +2220,46 @@ bool MainWindow::runExternalToolWithProgress(const QString &program, const QStri
     progressBar->setFormat(tr("Working..."));
     dialogLayout->addWidget(progressBar);
 
+    auto *buttonRowLayout = new QHBoxLayout();
+    buttonRowLayout->addStretch(1);
+    auto *cancelButton = new QPushButton(tr("Cancel"), &progressDialog);
+    buttonRowLayout->addWidget(cancelButton);
+    dialogLayout->addLayout(buttonRowLayout);
+
     ExternalToolStage stage = ExternalToolStage::Starting;
     qint32 totalFields = 0;
     qint32 processedFields = 0;
     QString lastOutputLine;
+    bool cancelRequested = false;
+    bool terminateSent = false;
+    QElapsedTimer cancelTimer;
+
+    connect(cancelButton, &QPushButton::clicked, &progressDialog, [&]() {
+        if (cancelRequested) {
+            return;
+        }
+        cancelRequested = true;
+        cancelButton->setEnabled(false);
+        stageLabel->setText(tr("%1: Cancel requested...").arg(toolDisplayName));
+        percentLabel->setText(tr("Cancelling..."));
+        QCoreApplication::processEvents();
+    });
 
     const QRegularExpression totalFieldsExpression(
-        QStringLiteral("Using\\s+\\d+\\s+threads\\s+to\\s+process\\s+(\\d+)\\s+fields"),
+        QStringLiteral("Using\\s+\\d+\\s+threads\\s+to\\s+process\\s+([0-9,]+)\\s+fields"),
         QRegularExpression::CaseInsensitiveOption);
+    const auto parseCountText = [](QString text, bool *ok) -> qint32 {
+        text.remove(QLatin1Char(','));
+        return text.toInt(ok);
+    };
     const QRegularExpression progressFieldsExpression(
-        QStringLiteral("Processing\\s+fields\\s+(\\d+)\\s*/\\s*(\\d+)"),
+        QStringLiteral("(?:Info:\\s*)?Processing\\s+fields\\s+([0-9,]+)\\s*/\\s*([0-9,]+)"),
         QRegularExpression::CaseInsensitiveOption);
     const QRegularExpression legacyFieldExpression(
-        QStringLiteral("Processing\\s+field\\s+(\\d+)"),
+        QStringLiteral("(?:Info:\\s*)?Processing\\s+field\\s+([0-9,]+)"),
         QRegularExpression::CaseInsensitiveOption);
     const QRegularExpression completeFieldsExpression(
-        QStringLiteral("Processing\\s+complete\\s*-\\s*(\\d+)\\s*fields"),
+        QStringLiteral("(?:Info:\\s*)?Processing\\s+complete\\s*-\\s*([0-9,]+)\\s*fields"),
         QRegularExpression::CaseInsensitiveOption);
 
     auto updateProgressDialog = [&]() {
@@ -2268,7 +2303,7 @@ bool MainWindow::runExternalToolWithProgress(const QString &program, const QStri
         const QRegularExpressionMatch totalFieldsMatch = totalFieldsExpression.match(trimmedLine);
         if (totalFieldsMatch.hasMatch()) {
             bool ok = false;
-            const qint32 parsedTotal = totalFieldsMatch.captured(1).toInt(&ok);
+            const qint32 parsedTotal = parseCountText(totalFieldsMatch.captured(1), &ok);
             if (ok && parsedTotal > 0) {
                 totalFields = parsedTotal;
                 processedFields = qBound<qint32>(0, processedFields, totalFields);
@@ -2280,8 +2315,8 @@ bool MainWindow::runExternalToolWithProgress(const QString &program, const QStri
         if (progressFieldsMatch.hasMatch()) {
             bool processedOk = false;
             bool totalOk = false;
-            const qint32 parsedProcessed = progressFieldsMatch.captured(1).toInt(&processedOk);
-            const qint32 parsedTotal = progressFieldsMatch.captured(2).toInt(&totalOk);
+            const qint32 parsedProcessed = parseCountText(progressFieldsMatch.captured(1), &processedOk);
+            const qint32 parsedTotal = parseCountText(progressFieldsMatch.captured(2), &totalOk);
             if (processedOk && totalOk && parsedTotal > 0) {
                 totalFields = parsedTotal;
                 processedFields = qBound<qint32>(0, parsedProcessed, totalFields);
@@ -2291,7 +2326,7 @@ bool MainWindow::runExternalToolWithProgress(const QString &program, const QStri
             const QRegularExpressionMatch legacyFieldMatch = legacyFieldExpression.match(trimmedLine);
             if (legacyFieldMatch.hasMatch()) {
                 bool processedOk = false;
-                const qint32 parsedProcessed = legacyFieldMatch.captured(1).toInt(&processedOk);
+                const qint32 parsedProcessed = parseCountText(legacyFieldMatch.captured(1), &processedOk);
                 if (processedOk) {
                     if (totalFields > 0) {
                         processedFields = qBound<qint32>(0, parsedProcessed, totalFields);
@@ -2306,7 +2341,7 @@ bool MainWindow::runExternalToolWithProgress(const QString &program, const QStri
         const QRegularExpressionMatch completeFieldsMatch = completeFieldsExpression.match(trimmedLine);
         if (completeFieldsMatch.hasMatch()) {
             bool completeOk = false;
-            const qint32 parsedTotal = completeFieldsMatch.captured(1).toInt(&completeOk);
+            const qint32 parsedTotal = parseCountText(completeFieldsMatch.captured(1), &completeOk);
             if (completeOk && parsedTotal > 0) {
                 totalFields = parsedTotal;
                 processedFields = totalFields;
@@ -2318,7 +2353,9 @@ bool MainWindow::runExternalToolWithProgress(const QString &program, const QStri
     };
 
     auto processOutputChunk = [&](const QByteArray &chunk, QByteArray &buffer) {
-        buffer.append(chunk);
+        QByteArray normalizedChunk = chunk;
+        normalizedChunk.replace('\r', '\n');
+        buffer.append(normalizedChunk);
         qsizetype newLineIndex = -1;
         while ((newLineIndex = buffer.indexOf('\n')) != -1) {
             QByteArray lineBytes = buffer.left(newLineIndex);
@@ -2348,6 +2385,24 @@ bool MainWindow::runExternalToolWithProgress(const QString &program, const QStri
 
     QByteArray outputBuffer;
     while (process.state() != QProcess::NotRunning) {
+        if (cancelRequested) {
+            if (!terminateSent) {
+#if defined(Q_OS_UNIX)
+                const qint64 processId = process.processId();
+                if (processId > 0) {
+                    ::kill(static_cast<pid_t>(processId), SIGINT);
+                } else {
+                    process.terminate();
+                }
+#else
+                process.terminate();
+#endif
+                terminateSent = true;
+                cancelTimer.start();
+            } else if (cancelTimer.isValid() && cancelTimer.elapsed() > 2000) {
+                process.kill();
+            }
+        }
         process.waitForReadyRead(100);
         const QByteArray outputChunk = process.readAllStandardOutput();
         if (!outputChunk.isEmpty()) {
@@ -2379,6 +2434,13 @@ bool MainWindow::runExternalToolWithProgress(const QString &program, const QStri
         delayLoop.exec();
     }
     progressDialog.close();
+
+    if (cancelRequested) {
+        if (errorMessage) {
+            *errorMessage = tr("%1 cancelled by user.").arg(toolDisplayName);
+        }
+        return false;
+    }
 
     if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
         if (errorMessage) {
@@ -2707,6 +2769,10 @@ void MainWindow::on_actionProcess_VBI_triggered()
 
     QString errorMessage;
     if (!runExternalToolWithProgress(toolPath, toolArguments, tr("VBI processing"), &errorMessage)) {
+        if (errorMessage.contains(tr("cancelled"), Qt::CaseInsensitive)) {
+            statusBar()->showMessage(tr("VBI processing cancelled for %1").arg(inputFileName), 4000);
+            return;
+        }
         QMessageBox::warning(this, tr("Process failed"),
                              errorMessage.isEmpty()
                                  ? tr("ld-process-vbi failed.")
@@ -2778,6 +2844,10 @@ void MainWindow::on_actionProcess_VITS_triggered()
 
     QString errorMessage;
     if (!runExternalToolWithProgress(toolPath, toolArguments, tr("VITS processing"), &errorMessage)) {
+        if (errorMessage.contains(tr("cancelled"), Qt::CaseInsensitive)) {
+            statusBar()->showMessage(tr("VITS processing cancelled for %1").arg(inputFileName), 4000);
+            return;
+        }
         QMessageBox::warning(this, tr("Process failed"),
                              errorMessage.isEmpty()
                                  ? tr("ld-process-vits failed.")
