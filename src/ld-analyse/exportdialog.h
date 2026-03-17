@@ -73,6 +73,8 @@ private:
     QString defaultOutputBaseName(const QString &inputFile) const;
     QString sanitizeOutputBaseName(const QString &path) const;
     bool findExistingOutputFiles(const QString &outputBase, QStringList *existingFiles) const;
+    QString selectedMainCodecId() const;
+    QString selectedExportProfileName() const;
     QString videoSystemArg(int system) const;
     QStringList collectAudioTracks() const;
     bool shouldGenerateProxyForSelection() const;

@@ -259,6 +259,74 @@
          </property>
         </widget>
        </item>
+       <item>
+        <widget class="QLabel" name="proresVariantLabel">
+         <property name="text">
+          <string>ProRes</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QComboBox" name="proresVariantComboBox">
+         <property name="minimumSize">
+          <size>
+           <width>120</width>
+           <height>0</height>
+          </size>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="webCodecLabel">
+         <property name="text">
+          <string>Web codec</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QComboBox" name="webCodecComboBox">
+         <property name="minimumSize">
+          <size>
+           <width>120</width>
+           <height>0</height>
+          </size>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="avcRangeLabel">
+         <property name="text">
+          <string>AVC range</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QComboBox" name="avcRangeComboBox">
+         <property name="minimumSize">
+          <size>
+           <width>126</width>
+           <height>0</height>
+          </size>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="hevcRangeLabel">
+         <property name="text">
+          <string>HEVC range</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QComboBox" name="hevcRangeComboBox">
+         <property name="minimumSize">
+          <size>
+           <width>126</width>
+           <height>0</height>
+          </size>
+         </property>
+        </widget>
+       </item>
       </layout>
      </item>
      <item row="4" column="0">

@@ -1030,8 +1030,43 @@ ExportDialog::ExportDialog(QWidget *parent) :
         ui->audioProfileComboBox->addItem(tr("FLAC 24-bit"), QStringLiteral("flac_24"));
         ui->audioProfileComboBox->addItem(tr("PCM 16-bit"), QStringLiteral("pcm_16"));
         ui->audioProfileComboBox->addItem(tr("PCM 24-bit"), QStringLiteral("pcm_24"));
+        ui->audioProfileComboBox->addItem(tr("AAC 16-bit"), QStringLiteral("aac_16"));
+        ui->audioProfileComboBox->addItem(tr("AAC 24-bit"), QStringLiteral("aac_24"));
+        ui->audioProfileComboBox->addItem(tr("Opus 16-bit"), QStringLiteral("opus_16"));
+        ui->audioProfileComboBox->addItem(tr("Opus 24-bit"), QStringLiteral("opus_24"));
         const int pcm24Index = ui->audioProfileComboBox->findData(QStringLiteral("pcm_24"));
         ui->audioProfileComboBox->setCurrentIndex(pcm24Index >= 0 ? pcm24Index : 0);
+    }
+    if (ui->proresVariantComboBox) {
+        ui->proresVariantComboBox->clear();
+        ui->proresVariantComboBox->addItem(tr("422 HQ"), QStringLiteral("hq"));
+        ui->proresVariantComboBox->addItem(tr("4444 XQ"), QStringLiteral("4444xq"));
+        const int defaultIndex = ui->proresVariantComboBox->findData(QStringLiteral("hq"));
+        ui->proresVariantComboBox->setCurrentIndex(defaultIndex >= 0 ? defaultIndex : 0);
+    }
+    if (ui->webCodecComboBox) {
+        ui->webCodecComboBox->clear();
+        ui->webCodecComboBox->addItem(tr("AVC/H.264"), QStringLiteral("h264"));
+        ui->webCodecComboBox->addItem(tr("HEVC/H.265"), QStringLiteral("hevc"));
+        ui->webCodecComboBox->addItem(tr("AV1"), QStringLiteral("av1"));
+        const int defaultIndex = ui->webCodecComboBox->findData(QStringLiteral("h264"));
+        ui->webCodecComboBox->setCurrentIndex(defaultIndex >= 0 ? defaultIndex : 0);
+    }
+    if (ui->avcRangeComboBox) {
+        ui->avcRangeComboBox->clear();
+        ui->avcRangeComboBox->addItem(tr("High quality"), QStringLiteral("standard"));
+        ui->avcRangeComboBox->addItem(tr("Web"), QStringLiteral("web"));
+        ui->avcRangeComboBox->addItem(tr("Lossless"), QStringLiteral("lossless"));
+        const int defaultIndex = ui->avcRangeComboBox->findData(QStringLiteral("standard"));
+        ui->avcRangeComboBox->setCurrentIndex(defaultIndex >= 0 ? defaultIndex : 0);
+    }
+    if (ui->hevcRangeComboBox) {
+        ui->hevcRangeComboBox->clear();
+        ui->hevcRangeComboBox->addItem(tr("High quality"), QStringLiteral("standard"));
+        ui->hevcRangeComboBox->addItem(tr("Web"), QStringLiteral("web"));
+        ui->hevcRangeComboBox->addItem(tr("Lossless"), QStringLiteral("lossless"));
+        const int defaultIndex = ui->hevcRangeComboBox->findData(QStringLiteral("standard"));
+        ui->hevcRangeComboBox->setCurrentIndex(defaultIndex >= 0 ? defaultIndex : 0);
     }
     if (ui->dropoutModeComboBox) {
         ui->dropoutModeComboBox->clear();
@@ -1250,6 +1285,22 @@ ExportDialog::ExportDialog(QWidget *parent) :
     });
     if (ui->profileComboBox) {
         connect(ui->profileComboBox, &QComboBox::currentTextChanged, this,
+                [this](const QString &) { updateProfileDependentControls(); });
+    }
+    if (ui->proresVariantComboBox) {
+        connect(ui->proresVariantComboBox, &QComboBox::currentTextChanged, this,
+                [this](const QString &) { updateProfileDependentControls(); });
+    }
+    if (ui->webCodecComboBox) {
+        connect(ui->webCodecComboBox, &QComboBox::currentTextChanged, this,
+                [this](const QString &) { updateProfileDependentControls(); });
+    }
+    if (ui->avcRangeComboBox) {
+        connect(ui->avcRangeComboBox, &QComboBox::currentTextChanged, this,
+                [this](const QString &) { updateProfileDependentControls(); });
+    }
+    if (ui->hevcRangeComboBox) {
+        connect(ui->hevcRangeComboBox, &QComboBox::currentTextChanged, this,
                 [this](const QString &) { updateProfileDependentControls(); });
     }
 
@@ -1695,9 +1746,6 @@ void ExportDialog::updateFromSource()
 
 void ExportDialog::refreshProfiles()
 {
-    QString defaultProfile;
-    QString errorMessage;
-    QString profileOutput;
 
     const QString exportPath = resolveVideoExportPath();
     if (exportPath.isEmpty()) {
@@ -1706,62 +1754,70 @@ void ExportDialog::refreshProfiles()
         updateProfileDependentControls();
         return;
     }
+    QStringList availableProfiles;
 
     QProcess listProcess;
     listProcess.setProcessChannelMode(QProcess::MergedChannels);
     listProcess.start(exportPath, QStringList() << QStringLiteral("--list-profiles"));
     if (!listProcess.waitForStarted(3000)) {
-        appendStatus(tr("Failed to start profile listing."));
-        appendLog(tr("Failed to start profile listing."));
-        updateProfileDependentControls();
-        return;
-    }
-    if (!listProcess.waitForFinished(10000)) {
+        appendLog(tr("Failed to start profile listing; using built-in condensed profile options."));
+    } else if (!listProcess.waitForFinished(10000)) {
         listProcess.kill();
-        appendStatus(tr("Profile list timed out."));
-        appendLog(tr("Profile list timed out."));
-        updateProfileDependentControls();
-        return;
-    }
-    profileOutput = QString::fromLocal8Bit(listProcess.readAllStandardOutput());
-
-    if (listProcess.exitStatus() != QProcess::NormalExit || listProcess.exitCode() != 0) {
-        errorMessage = profileOutput.trimmed();
-        if (errorMessage.isEmpty()) {
-            errorMessage = tr("Failed to list profiles.");
-        }
-        appendStatus(errorMessage);
-        appendLog(errorMessage);
-        updateProfileDependentControls();
-        return;
-    }
-    const QString currentText = ui->profileComboBox->currentText().trimmed();
-    const QStringList profiles = parseProfiles(profileOutput, &defaultProfile);
-
-    if (profiles.isEmpty()) {
-        appendStatus(tr("No profiles found."));
-        appendLog(tr("No profiles found."));
-        updateProfileDependentControls();
-        return;
-    }
-
-    ui->profileComboBox->clear();
-    ui->profileComboBox->addItems(profiles);
-
-    if (!currentText.isEmpty() && profiles.contains(currentText)) {
-        ui->profileComboBox->setCurrentText(currentText);
-    } else if (!defaultProfile.isEmpty() && profiles.contains(defaultProfile)) {
-        ui->profileComboBox->setCurrentText(defaultProfile);
+        appendLog(tr("Profile list timed out; using built-in condensed profile options."));
     } else {
-        ui->profileComboBox->setCurrentIndex(0);
+        const QString profileOutput = QString::fromLocal8Bit(listProcess.readAllStandardOutput());
+        if (listProcess.exitStatus() == QProcess::NormalExit && listProcess.exitCode() == 0) {
+            QString ignoredDefault;
+            availableProfiles = parseProfiles(profileOutput, &ignoredDefault);
+        } else {
+            const QString errorMessage = profileOutput.trimmed().isEmpty()
+                                             ? tr("Failed to list profiles.")
+                                             : profileOutput.trimmed();
+            appendLog(tr("%1 Using built-in condensed profile options.").arg(errorMessage));
+        }
+    }
+
+    const QString previousMainCodec = selectedMainCodecId();
+    if (ui->profileComboBox) {
+        const QSignalBlocker blocker(ui->profileComboBox);
+        ui->profileComboBox->clear();
+        ui->profileComboBox->addItem(tr("FFV1"), QStringLiteral("ffv1"));
+        ui->profileComboBox->addItem(tr("D10 MPEG-2"), QStringLiteral("d10"));
+        ui->profileComboBox->addItem(tr("ProRes"), QStringLiteral("prores"));
+        ui->profileComboBox->addItem(tr("AVC/H.264"), QStringLiteral("avc"));
+        ui->profileComboBox->addItem(tr("HEVC/H.265"), QStringLiteral("hevc"));
+        ui->profileComboBox->addItem(tr("Web"), QStringLiteral("web"));
+
+        int targetIndex = ui->profileComboBox->findData(previousMainCodec);
+        if (targetIndex < 0) {
+            targetIndex = ui->profileComboBox->findData(QStringLiteral("ffv1"));
+        }
+        if (targetIndex < 0 && ui->profileComboBox->count() > 0) {
+            targetIndex = 0;
+        }
+        if (targetIndex >= 0) {
+            ui->profileComboBox->setCurrentIndex(targetIndex);
+        }
+    }
+
+    if (!availableProfiles.isEmpty()) {
+        const QString resolvedProfile = selectedExportProfileName();
+        if (!listContainsCaseInsensitive(availableProfiles, resolvedProfile)) {
+            appendLog(tr("Selected condensed profile maps to '%1', which was not found in tbc-video-export profile list.")
+                          .arg(resolvedProfile));
+        }
     }
     updateProfileDependentControls();
 }
 
 void ExportDialog::updateProfileDependentControls()
 {
-    const bool ffv1Selected = ui && ui->profileComboBox
-                              && isFfv1ProfileName(ui->profileComboBox->currentText());
+    const QString mainCodecId = selectedMainCodecId();
+    const bool ffv1Selected = mainCodecId == QStringLiteral("ffv1");
+    const bool proresSelected = mainCodecId == QStringLiteral("prores");
+    const bool webSelected = mainCodecId == QStringLiteral("web");
+    const bool avcSelected = mainCodecId == QStringLiteral("avc");
+    const bool hevcSelected = mainCodecId == QStringLiteral("hevc");
     const bool canEdit = exportAvailable
                          && exportProcess
                          && exportProcess->state() == QProcess::NotRunning;
@@ -1775,6 +1831,38 @@ void ExportDialog::updateProfileDependentControls()
     if (ui->ffv1SlicesSpinBox) {
         ui->ffv1SlicesSpinBox->setVisible(ffv1Selected);
         ui->ffv1SlicesSpinBox->setEnabled(canEdit && ffv1Selected);
+    }
+    if (ui->proresVariantLabel) {
+        ui->proresVariantLabel->setVisible(proresSelected);
+        ui->proresVariantLabel->setEnabled(canEdit && proresSelected);
+    }
+    if (ui->proresVariantComboBox) {
+        ui->proresVariantComboBox->setVisible(proresSelected);
+        ui->proresVariantComboBox->setEnabled(canEdit && proresSelected);
+    }
+    if (ui->webCodecLabel) {
+        ui->webCodecLabel->setVisible(webSelected);
+        ui->webCodecLabel->setEnabled(canEdit && webSelected);
+    }
+    if (ui->webCodecComboBox) {
+        ui->webCodecComboBox->setVisible(webSelected);
+        ui->webCodecComboBox->setEnabled(canEdit && webSelected);
+    }
+    if (ui->avcRangeLabel) {
+        ui->avcRangeLabel->setVisible(avcSelected);
+        ui->avcRangeLabel->setEnabled(canEdit && avcSelected);
+    }
+    if (ui->avcRangeComboBox) {
+        ui->avcRangeComboBox->setVisible(avcSelected);
+        ui->avcRangeComboBox->setEnabled(canEdit && avcSelected);
+    }
+    if (ui->hevcRangeLabel) {
+        ui->hevcRangeLabel->setVisible(hevcSelected);
+        ui->hevcRangeLabel->setEnabled(canEdit && hevcSelected);
+    }
+    if (ui->hevcRangeComboBox) {
+        ui->hevcRangeComboBox->setVisible(hevcSelected);
+        ui->hevcRangeComboBox->setEnabled(canEdit && hevcSelected);
     }
     if (ui->generateProxyCheckBox) {
         ui->generateProxyCheckBox->setVisible(true);
@@ -1901,7 +1989,13 @@ void ExportDialog::on_exportButton_clicked()
     cancelRequested = false;
     appendStatus(tr("Starting export..."));
     appendLog(tr("Starting export..."));
-    const QString selectedProfile = ui->profileComboBox ? ui->profileComboBox->currentText().trimmed() : QString();
+    const QString selectedProfile = selectedExportProfileName();
+    if (selectedProfile.isEmpty()) {
+        appendStatus(tr("No export profile selected."));
+        appendLog(tr("No export profile selected."));
+        QMessageBox::warning(this, tr("Error"), tr("Please select a valid export profile."));
+        return;
+    }
     QString snapshotErrorMessage;
     const QString metadataSnapshotPath = createTemporaryMetadataSnapshot(&snapshotErrorMessage);
     if (metadataSnapshotPath.isEmpty()) {
@@ -2743,6 +2837,71 @@ bool ExportDialog::findExistingOutputFiles(const QString &outputBase, QStringLis
     return !foundFiles.isEmpty();
 }
 
+QString ExportDialog::selectedMainCodecId() const
+{
+    if (!ui || !ui->profileComboBox) {
+        return QStringLiteral("ffv1");
+    }
+    const QString selectedId = ui->profileComboBox->currentData().toString().trimmed().toLower();
+    return selectedId.isEmpty() ? QStringLiteral("ffv1") : selectedId;
+}
+
+QString ExportDialog::selectedExportProfileName() const
+{
+    const QString mainCodecId = selectedMainCodecId();
+    if (mainCodecId == QStringLiteral("ffv1")) {
+        return QStringLiteral("ffv1");
+    }
+    if (mainCodecId == QStringLiteral("d10")) {
+        return QStringLiteral("d10");
+    }
+    if (mainCodecId == QStringLiteral("prores")) {
+        const QString proresVariant = ui && ui->proresVariantComboBox
+                                          ? ui->proresVariantComboBox->currentData().toString().trimmed().toLower()
+                                          : QStringLiteral("hq");
+        return proresVariant == QStringLiteral("4444xq")
+                   ? QStringLiteral("prores_4444xq")
+                   : QStringLiteral("prores_hq");
+    }
+    if (mainCodecId == QStringLiteral("web")) {
+        const QString webCodec = ui && ui->webCodecComboBox
+                                     ? ui->webCodecComboBox->currentData().toString().trimmed().toLower()
+                                     : QStringLiteral("h264");
+        if (webCodec == QStringLiteral("hevc")) {
+            return QStringLiteral("x265_web");
+        }
+        if (webCodec == QStringLiteral("av1")) {
+            return QStringLiteral("av1_web");
+        }
+        return QStringLiteral("x264_web");
+    }
+    if (mainCodecId == QStringLiteral("avc")) {
+        const QString avcRange = ui && ui->avcRangeComboBox
+                                     ? ui->avcRangeComboBox->currentData().toString().trimmed().toLower()
+                                     : QStringLiteral("standard");
+        if (avcRange == QStringLiteral("lossless")) {
+            return QStringLiteral("x264_lossless");
+        }
+        if (avcRange == QStringLiteral("web")) {
+            return QStringLiteral("x264_web");
+        }
+        return QStringLiteral("x264");
+    }
+    if (mainCodecId == QStringLiteral("hevc")) {
+        const QString hevcRange = ui && ui->hevcRangeComboBox
+                                      ? ui->hevcRangeComboBox->currentData().toString().trimmed().toLower()
+                                      : QStringLiteral("standard");
+        if (hevcRange == QStringLiteral("lossless")) {
+            return QStringLiteral("x265_lossless");
+        }
+        if (hevcRange == QStringLiteral("web")) {
+            return QStringLiteral("x265_web");
+        }
+        return QStringLiteral("x265");
+    }
+    return QStringLiteral("ffv1");
+}
+
 QString ExportDialog::sanitizeOutputBaseName(const QString &path) const
 {
     QFileInfo info(path);
@@ -3267,7 +3426,7 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
     args << QStringLiteral("--start") << QString::number(startFrameOneBased);
     args << QStringLiteral("--length") << QString::number(rangeLength);
 
-    const QString profile = ui->profileComboBox->currentText().trimmed();
+    const QString profile = selectedExportProfileName();
     if (!configFileOverride.isEmpty()) {
         args << QStringLiteral("--config-file") << configFileOverride;
     }
@@ -3547,6 +3706,66 @@ QString ExportDialog::createTemporaryExportConfig(QString *errorMessage,
         opts.append(QStringLiteral("s32"));
         flac24Profile.insert(QStringLiteral("opts"), opts);
         upsertAudioProfile(flac24Profile);
+    }
+    {
+        QJsonObject aac16Profile;
+        aac16Profile.insert(QStringLiteral("name"), QStringLiteral("aac_16"));
+        aac16Profile.insert(QStringLiteral("description"), QStringLiteral("AAC 16-bits"));
+        aac16Profile.insert(QStringLiteral("codec"), QStringLiteral("aac"));
+        QJsonArray opts;
+        opts.append(QStringLiteral("-ar"));
+        opts.append(48000);
+        opts.append(QStringLiteral("-b:a"));
+        opts.append(QStringLiteral("256K"));
+        opts.append(QStringLiteral("-sample_fmt"));
+        opts.append(QStringLiteral("s16"));
+        aac16Profile.insert(QStringLiteral("opts"), opts);
+        upsertAudioProfile(aac16Profile);
+    }
+    {
+        QJsonObject aac24Profile;
+        aac24Profile.insert(QStringLiteral("name"), QStringLiteral("aac_24"));
+        aac24Profile.insert(QStringLiteral("description"), QStringLiteral("AAC 24-bits"));
+        aac24Profile.insert(QStringLiteral("codec"), QStringLiteral("aac"));
+        QJsonArray opts;
+        opts.append(QStringLiteral("-ar"));
+        opts.append(48000);
+        opts.append(QStringLiteral("-b:a"));
+        opts.append(QStringLiteral("320K"));
+        opts.append(QStringLiteral("-sample_fmt"));
+        opts.append(QStringLiteral("s32"));
+        aac24Profile.insert(QStringLiteral("opts"), opts);
+        upsertAudioProfile(aac24Profile);
+    }
+    {
+        QJsonObject opus16Profile;
+        opus16Profile.insert(QStringLiteral("name"), QStringLiteral("opus_16"));
+        opus16Profile.insert(QStringLiteral("description"), QStringLiteral("Opus 16-bits"));
+        opus16Profile.insert(QStringLiteral("codec"), QStringLiteral("libopus"));
+        QJsonArray opts;
+        opts.append(QStringLiteral("-ar"));
+        opts.append(48000);
+        opts.append(QStringLiteral("-b:a"));
+        opts.append(QStringLiteral("192K"));
+        opts.append(QStringLiteral("-sample_fmt"));
+        opts.append(QStringLiteral("s16"));
+        opus16Profile.insert(QStringLiteral("opts"), opts);
+        upsertAudioProfile(opus16Profile);
+    }
+    {
+        QJsonObject opus24Profile;
+        opus24Profile.insert(QStringLiteral("name"), QStringLiteral("opus_24"));
+        opus24Profile.insert(QStringLiteral("description"), QStringLiteral("Opus 24-bits"));
+        opus24Profile.insert(QStringLiteral("codec"), QStringLiteral("libopus"));
+        QJsonArray opts;
+        opts.append(QStringLiteral("-ar"));
+        opts.append(48000);
+        opts.append(QStringLiteral("-b:a"));
+        opts.append(QStringLiteral("256K"));
+        opts.append(QStringLiteral("-sample_fmt"));
+        opts.append(QStringLiteral("s32"));
+        opus24Profile.insert(QStringLiteral("opts"), opts);
+        upsertAudioProfile(opus24Profile);
     }
     root.insert(QStringLiteral("audio_profiles"), audioProfiles);
 
