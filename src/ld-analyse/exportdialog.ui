@@ -404,14 +404,58 @@
     </widget>
    </item>
    <item>
-    <widget class="QCheckBox" name="logProcessOutputCheckBox">
-     <property name="text">
-      <string>Log tool output</string>
+    <layout class="QHBoxLayout" name="outputOptionsLayout">
+     <property name="spacing">
+      <number>6</number>
      </property>
-     <property name="checked">
-      <bool>false</bool>
-     </property>
-    </widget>
+     <item>
+      <widget class="QCheckBox" name="logProcessOutputCheckBox">
+       <property name="text">
+        <string>Log tool output</string>
+       </property>
+       <property name="checked">
+        <bool>false</bool>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QCheckBox" name="generateProxyCheckBox">
+       <property name="text">
+        <string>Generate Proxy</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="proxyCodecLabel">
+       <property name="text">
+        <string>Proxy codec</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QComboBox" name="proxyCodecComboBox">
+       <property name="minimumSize">
+        <size>
+         <width>150</width>
+         <height>0</height>
+        </size>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="outputOptionsSpacer">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>40</width>
+         <height>20</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
    </item>
    <item>
     <widget class="QLabel" name="processStatsLabel">

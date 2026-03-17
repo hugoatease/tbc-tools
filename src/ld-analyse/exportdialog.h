@@ -16,6 +16,11 @@ class ExportDialog : public QWidget
     Q_OBJECT
 
 public:
+    enum class RunStage {
+        Idle,
+        MainExport,
+        ProxyExport
+    };
     struct ExportProcessStat {
         QString process;
         QString tbcType;
@@ -70,6 +75,18 @@ private:
     bool findExistingOutputFiles(const QString &outputBase, QStringList *existingFiles) const;
     QString videoSystemArg(int system) const;
     QStringList collectAudioTracks() const;
+    bool shouldGenerateProxyForSelection() const;
+    QString selectedProxyCodecId() const;
+    QString proxyOutputPath(const QString &outputBase, const QString &proxyCodecId) const;
+    QString findProxySourceVideoPath(const QString &outputBase, QString *errorMessage) const;
+    QStringList buildProxyArguments(QString *errorMessage,
+                                    const QString &ffmpegPath,
+                                    const QString &sourceVideoPath,
+                                    const QString &proxyOutputPath,
+                                    const QString &proxyCodecId,
+                                    bool overwriteExisting) const;
+    bool startProxyExport(QString *errorMessage);
+    void clearRunState();
     bool prepareTrimmedAudioTracks(int zeroBasedStartFrame, int rangeLengthFrames,
                                    QStringList *audioTracks, QString *errorMessage);
     QStringList buildArguments(QString *errorMessage, const QString &inputTbcJsonOverride = QString(),
@@ -104,6 +121,12 @@ private:
     QString temporaryInputJsonPath;
     QString temporaryExportConfigPath;
     QStringList temporaryAudioTrackPaths;
+    RunStage activeRunStage = RunStage::Idle;
+    bool generateProxyForCurrentRun = false;
+    bool overwriteExistingForCurrentRun = false;
+    QString outputBaseForCurrentRun;
+    QString proxyCodecForCurrentRun;
+    QString proxyOutputPathForCurrentRun;
     bool outputAutoSet = true;
     bool exportAvailable = false;
     bool cancelRequested = false;
