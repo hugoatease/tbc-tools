@@ -29,11 +29,57 @@
 #include <QThread>
 #include <QFile>
 #include <QFileInfo>
+#include <QDir>
 
 #include "tbc/logging.h"
 #include "lddecodemetadata.h"
 #include "sourcevideo.h"
 #include "stackingpool.h"
+namespace {
+void appendMetadataCandidate(QStringList &candidates, const QString &candidate)
+{
+    if (candidate.isEmpty()) {
+        return;
+    }
+    if (!candidates.contains(candidate)) {
+        candidates << candidate;
+    }
+}
+
+QStringList metadataCandidatesForInput(const QString &inputFilename)
+{
+    QStringList candidates;
+    appendMetadataCandidate(candidates, inputFilename + QStringLiteral(".db"));
+    appendMetadataCandidate(candidates, inputFilename + QStringLiteral(".json"));
+
+    const QFileInfo inputInfo(inputFilename);
+    const QString basePath = QDir(inputInfo.absolutePath()).filePath(inputInfo.completeBaseName());
+    appendMetadataCandidate(candidates, basePath + QStringLiteral(".db"));
+    appendMetadataCandidate(candidates, basePath + QStringLiteral(".json"));
+
+    const QString suffix = inputInfo.suffix().toLower();
+    if (suffix == QStringLiteral("ytbc")
+        || suffix == QStringLiteral("ctbc")
+        || suffix == QStringLiteral("tbcy")
+        || suffix == QStringLiteral("tbcc")) {
+        appendMetadataCandidate(candidates, basePath + QStringLiteral(".tbc.db"));
+        appendMetadataCandidate(candidates, basePath + QStringLiteral(".tbc.json"));
+    }
+
+    return candidates;
+}
+
+QString resolveDefaultMetadataFilename(const QString &inputFilename)
+{
+    const QStringList candidates = metadataCandidatesForInput(inputFilename);
+    for (const QString &candidate : candidates) {
+        if (QFileInfo::exists(candidate)) {
+            return candidate;
+        }
+    }
+    return candidates.isEmpty() ? (inputFilename + QStringLiteral(".db")) : candidates.first();
+}
+} // namespace
 
 int main(int argc, char *argv[])
 {
@@ -83,15 +129,23 @@ int main(int argc, char *argv[])
 
     // Option to specify a different metadata input file
     QCommandLineOption inputMetadataOption(QStringList() << "input-metadata",
-                                       QCoreApplication::translate("main", "Specify the input metadata file for the first input file (default input.db)"),
+                                       QCoreApplication::translate("main", "Specify the input metadata file for the first input file (default auto-detect .db/.json)"),
                                        QCoreApplication::translate("main", "filename"));
     parser.addOption(inputMetadataOption);
+    QCommandLineOption inputJsonOption(QStringList() << "input-json",
+                                       QCoreApplication::translate("main", "Specify the input metadata file for the first input file (legacy alias for --input-metadata)"),
+                                       QCoreApplication::translate("main", "filename"));
+    parser.addOption(inputJsonOption);
 
     // Option to specify a different metadata output file
     QCommandLineOption outputMetadataOption(QStringList() << "output-metadata",
                                         QCoreApplication::translate("main", "Specify the output metadata file (default output.db)"),
                                         QCoreApplication::translate("main", "filename"));
     parser.addOption(outputMetadataOption);
+    QCommandLineOption outputJsonOption(QStringList() << "output-json",
+                                        QCoreApplication::translate("main", "Specify the output metadata file (legacy alias for --output-metadata)"),
+                                        QCoreApplication::translate("main", "filename"));
+    parser.addOption(outputJsonOption);
 
     // Option to reverse the field order (-r)
     QCommandLineOption setReverseOption(QStringList() << "r" << "reverse",
@@ -264,17 +318,26 @@ int main(int argc, char *argv[])
     // Get the output TBC (should be the last argument of the command line
     outputFilename = positionalArguments.at(positionalArguments.count() - 1);
 
+    if (parser.isSet(inputMetadataOption) && parser.isSet(inputJsonOption)) {
+        qCritical("Specify only one of --input-metadata or --input-json");
+        return -1;
+    }
+    if (parser.isSet(outputMetadataOption) && parser.isSet(outputJsonOption)) {
+        qCritical("Specify only one of --output-metadata or --output-json");
+        return -1;
+    }
+
     // If the first input filename is "-" (piped input) - verify a metadata file has been specified
-    if (inputFilenames[0] == "-" && !parser.isSet(inputMetadataOption)) {
+    if (inputFilenames[0] == "-" && !parser.isSet(inputMetadataOption) && !parser.isSet(inputJsonOption)) {
         // Quit with error
-        qCritical("With piped input, you must also specify the input metadata file with --input-metadata");
+        qCritical("With piped input, you must also specify the input metadata file with --input-metadata or --input-json");
         return -1;
     }
 
     // If the output filename is "-" (piped output) - verify a metadata file has been specified
-    if (outputFilename == "-" && !parser.isSet(outputMetadataOption)) {
+    if (outputFilename == "-" && !parser.isSet(outputMetadataOption) && !parser.isSet(outputJsonOption)) {
         // Quit with error
-        qCritical("With piped output, you must also specify the output metadata file with --output-metadata");
+        qCritical("With piped output, you must also specify the output metadata file with --output-metadata or --output-json");
         return -1;
     }
 
@@ -314,6 +377,8 @@ int main(int argc, char *argv[])
     QString outputMetadataFilename = outputFilename + ".db";
     if (parser.isSet(outputMetadataOption)) {
         outputMetadataFilename = parser.value(outputMetadataOption);
+    } else if (parser.isSet(outputJsonOption)) {
+        outputMetadataFilename = parser.value(outputJsonOption);
     }
 
     // Prepare for stacking process -----------------------------------------------------------------------------------
@@ -330,8 +395,14 @@ int main(int argc, char *argv[])
 
     for (qint32 i = 0; i < totalNumberOfInputFiles; i++) {
         // Work out the metadata filename
-        QString metadataFilename = inputFilenames[i] + ".db";
-        if (parser.isSet(inputMetadataOption) && i == 0) metadataFilename = parser.value(inputMetadataOption);
+        QString metadataFilename = resolveDefaultMetadataFilename(inputFilenames[i]);
+        if (i == 0) {
+            if (parser.isSet(inputMetadataOption)) {
+                metadataFilename = parser.value(inputMetadataOption);
+            } else if (parser.isSet(inputJsonOption)) {
+                metadataFilename = parser.value(inputJsonOption);
+            }
+        }
         qInfo().nospace().noquote() << "Reading input #" << i << " metadata from " << metadataFilename;
 
         // Open it

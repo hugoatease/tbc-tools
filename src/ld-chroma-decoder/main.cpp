@@ -30,6 +30,7 @@
 #include <QtGlobal>
 #include <QCommandLineParser>
 #include <QFileInfo>
+#include <QDir>
 #include <QThread>
 #include <fstream>
 #include <memory>
@@ -94,6 +95,50 @@ static bool loadTransformThresholds(QCommandLineParser &parser, QCommandLineOpti
 
     thresholdsFile.close();
     return true;
+}
+
+static void appendMetadataCandidate(QStringList &candidates, const QString &candidate)
+{
+    if (candidate.isEmpty()) {
+        return;
+    }
+    if (!candidates.contains(candidate)) {
+        candidates << candidate;
+    }
+}
+
+static QStringList metadataCandidatesForInput(const QString &inputFilename)
+{
+    QStringList candidates;
+    appendMetadataCandidate(candidates, inputFilename + QStringLiteral(".db"));
+    appendMetadataCandidate(candidates, inputFilename + QStringLiteral(".json"));
+
+    const QFileInfo inputInfo(inputFilename);
+    const QString basePath = QDir(inputInfo.absolutePath()).filePath(inputInfo.completeBaseName());
+    appendMetadataCandidate(candidates, basePath + QStringLiteral(".db"));
+    appendMetadataCandidate(candidates, basePath + QStringLiteral(".json"));
+
+    const QString suffix = inputInfo.suffix().toLower();
+    if (suffix == QStringLiteral("ytbc")
+        || suffix == QStringLiteral("ctbc")
+        || suffix == QStringLiteral("tbcy")
+        || suffix == QStringLiteral("tbcc")) {
+        appendMetadataCandidate(candidates, basePath + QStringLiteral(".tbc.db"));
+        appendMetadataCandidate(candidates, basePath + QStringLiteral(".tbc.json"));
+    }
+
+    return candidates;
+}
+
+static QString resolveDefaultMetadataFilename(const QString &inputFilename)
+{
+    const QStringList candidates = metadataCandidatesForInput(inputFilename);
+    for (const QString &candidate : candidates) {
+        if (QFileInfo::exists(candidate)) {
+            return candidate;
+        }
+    }
+    return candidates.isEmpty() ? (inputFilename + QStringLiteral(".db")) : candidates.first();
 }
 
 int main(int argc, char *argv[])
@@ -482,15 +527,7 @@ int main(int argc, char *argv[])
     } else if (parser.isSet(inputJsonOption)) {
         inputMetadataFileName = parser.value(inputJsonOption);
     } else {
-        const QString dbCandidate = inputFileName + ".db";
-        const QString jsonCandidate = inputFileName + ".json";
-        const QFileInfo dbInfo(dbCandidate);
-        const QFileInfo jsonInfo(jsonCandidate);
-        if (jsonInfo.exists() && (!dbInfo.exists() || jsonInfo.lastModified() > dbInfo.lastModified())) {
-            inputMetadataFileName = jsonCandidate;
-        } else {
-            inputMetadataFileName = dbCandidate;
-        }
+        inputMetadataFileName = resolveDefaultMetadataFilename(inputFileName);
     }
 
     // Load the source video metadata

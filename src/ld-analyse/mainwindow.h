@@ -204,7 +204,8 @@ private:
 	bool resizeFrameWithWindow = true;
     qint32 lastScopeLine;
     qint32 lastScopeDot;
-    qint32 currentFieldNumber, currentFrameNumber;
+    qint32 currentFieldNumber = 1;
+    qint32 currentFrameNumber = 1;
     double scaleFactor;
     QPalette buttonPalette;
     QString lastFilename;

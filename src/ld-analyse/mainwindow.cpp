@@ -1466,7 +1466,11 @@ QImage MainWindow::renderedCurrentImageForExport()
 
     const qint32 adjustment = getAspectAdjustment();
     if (adjustment != 0) {
-        imageToSave = imageToSave.scaled((imageToSave.size().width() + adjustment),
+        const qint32 adjustedWidth = imageToSave.size().width() + adjustment;
+        if (adjustedWidth <= 0 || imageToSave.size().height() <= 0) {
+            return QImage();
+        }
+        imageToSave = imageToSave.scaled(adjustedWidth,
                                          imageToSave.size().height(),
                                          Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
     }
@@ -3017,43 +3021,70 @@ void MainWindow::on_actionWhite_SNR_analysis_triggered()
 void MainWindow::on_actionSave_frame_as_PNG_triggered()
 {
     tbcDebugStream() << "MainWindow::on_actionSave_frame_as_PNG_triggered(): Called";
-
-    // Create a suggestion for the filename
-    QString filenameSuggestion = configuration.getPngDirectory();
-
-    switch (tbcSource.getViewMode()) {
-        case TbcSource::ViewMode::FRAME_VIEW:
-            filenameSuggestion += tr("/frame_");
-            break;
-
-        case TbcSource::ViewMode::SPLIT_VIEW:
-            filenameSuggestion += tr("/fields_");
-            break;
-
-        case TbcSource::ViewMode::FIELD_VIEW:
-            filenameSuggestion += tr("/field_");
-            break;
+    if (!tbcSource.getIsSourceLoaded()) {
+        QMessageBox::warning(this, tr("Warning"), tr("No source file loaded."));
+        return;
+    }
+    if (tbcSource.getIsMetadataOnly()) {
+        QMessageBox::warning(this, tr("Warning"), tr("Metadata-only mode cannot export PNG images."));
+        return;
     }
 
-    if (tbcSource.getSystem() == PAL) filenameSuggestion += tr("pal_");
-    else if (tbcSource.getSystem() == PAL_M) filenameSuggestion += tr("palm_");
-    else filenameSuggestion += tr("ntsc_");
+    const QImage imageToSave = renderedCurrentImageForExport();
+    if (imageToSave.isNull()) {
+        QMessageBox::warning(this, tr("Warning"), tr("No image data is available to export as PNG."));
+        return;
+    }
 
-    if (!tbcSource.getChromaDecoder()) filenameSuggestion += tr("source_");
-    else filenameSuggestion += tr("chroma_");
+    QString outputDirectory = configuration.getPngDirectory().trimmed();
+    if (outputDirectory.isEmpty()) {
+        outputDirectory = outputRootDirectoryForCurrentSource();
+    }
+    if (outputDirectory.isEmpty()) {
+        outputDirectory = QDir::homePath();
+    }
+
+    // Create a suggestion for the filename
+    QString filenameStem;
+    switch (tbcSource.getViewMode()) {
+    case TbcSource::ViewMode::FRAME_VIEW:
+        filenameStem += tr("frame_");
+        break;
+
+    case TbcSource::ViewMode::SPLIT_VIEW:
+        filenameStem += tr("fields_");
+        break;
+
+    case TbcSource::ViewMode::FIELD_VIEW:
+        filenameStem += tr("field_");
+        break;
+    }
+
+    if (tbcSource.getSystem() == PAL) filenameStem += tr("pal_");
+    else if (tbcSource.getSystem() == PAL_M) filenameStem += tr("palm_");
+    else filenameStem += tr("ntsc_");
+
+    if (!tbcSource.getChromaDecoder()) filenameStem += tr("source_");
+    else filenameStem += tr("chroma_");
 
     if (displayAspectRatio) {
-        if (tbcSource.getIsWidescreen()) filenameSuggestion += tr("ar169_");
-        else filenameSuggestion += tr("ar43_");
+        if (tbcSource.getIsWidescreen()) filenameStem += tr("ar169_");
+        else filenameStem += tr("ar43_");
     }
 
     if (tbcSource.getViewMode() == TbcSource::ViewMode::FIELD_VIEW) {
-        filenameSuggestion += QString::number(currentFieldNumber);
+        filenameStem += QString::number(currentFieldNumber);
     } else {
-        filenameSuggestion += QString::number(currentFrameNumber);
+        filenameStem += QString::number(currentFrameNumber);
     }
 
-    filenameSuggestion += "_" + tbcSource.getCurrentSourceFilename().split("/").last() + tr(".png");
+    const QString sourceFileName = QFileInfo(tbcSource.getCurrentSourceFilename()).fileName();
+    if (!sourceFileName.isEmpty()) {
+        filenameStem += QStringLiteral("_");
+        filenameStem += sanitizedFileToken(QFileInfo(sourceFileName).completeBaseName());
+    }
+    const QString filenameSuggestion =
+        QDir(outputDirectory).filePath(filenameStem + tr(".png"));
 
     QString pngFilename = QFileDialog::getSaveFileName(this,
                 tr("Save PNG file"),
@@ -3062,11 +3093,12 @@ void MainWindow::on_actionSave_frame_as_PNG_triggered()
 
     // Was a filename specified?
     if (!pngFilename.isEmpty() && !pngFilename.isNull()) {
+        if (QFileInfo(pngFilename).suffix().isEmpty()) {
+            pngFilename += QStringLiteral(".png");
+        }
+
         // Save the current frame as a PNG
         tbcDebugStream() << "MainWindow::on_actionSave_frame_as_PNG_triggered(): Saving current frame as" << pngFilename;
-
-        // Generate QImage for the current frame
-        QImage imageToSave = renderedCurrentImageForExport();
 
         // Save the QImage as PNG
         if (!imageToSave.save(pngFilename)) {
@@ -3125,6 +3157,10 @@ void MainWindow::on_actionSave_all_modes_as_PNGs_triggered()
 {
     if (!tbcSource.getIsSourceLoaded()) {
         QMessageBox::warning(this, tr("Warning"), tr("No source file loaded."));
+        return;
+    }
+    if (tbcSource.getIsMetadataOnly()) {
+        QMessageBox::warning(this, tr("Warning"), tr("Metadata-only mode cannot export PNG images."));
         return;
     }
 

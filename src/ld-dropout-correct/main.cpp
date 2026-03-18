@@ -28,10 +28,56 @@
 #include <QtGlobal>
 #include <QCommandLineParser>
 #include <QFileInfo>
+#include <QDir>
 #include <QThread>
 
 #include "tbc/logging.h"
 #include "correctorpool.h"
+namespace {
+void appendMetadataCandidate(QStringList &candidates, const QString &candidate)
+{
+    if (candidate.isEmpty()) {
+        return;
+    }
+    if (!candidates.contains(candidate)) {
+        candidates << candidate;
+    }
+}
+
+QStringList metadataCandidatesForInput(const QString &inputFilename)
+{
+    QStringList candidates;
+    appendMetadataCandidate(candidates, inputFilename + QStringLiteral(".db"));
+    appendMetadataCandidate(candidates, inputFilename + QStringLiteral(".json"));
+
+    const QFileInfo inputInfo(inputFilename);
+    const QString basePath = QDir(inputInfo.absolutePath()).filePath(inputInfo.completeBaseName());
+    appendMetadataCandidate(candidates, basePath + QStringLiteral(".db"));
+    appendMetadataCandidate(candidates, basePath + QStringLiteral(".json"));
+
+    const QString suffix = inputInfo.suffix().toLower();
+    if (suffix == QStringLiteral("ytbc")
+        || suffix == QStringLiteral("ctbc")
+        || suffix == QStringLiteral("tbcy")
+        || suffix == QStringLiteral("tbcc")) {
+        appendMetadataCandidate(candidates, basePath + QStringLiteral(".tbc.db"));
+        appendMetadataCandidate(candidates, basePath + QStringLiteral(".tbc.json"));
+    }
+
+    return candidates;
+}
+
+QString resolveDefaultMetadataFilename(const QString &inputFilename)
+{
+    const QStringList candidates = metadataCandidatesForInput(inputFilename);
+    for (const QString &candidate : candidates) {
+        if (QFileInfo::exists(candidate)) {
+            return candidate;
+        }
+    }
+    return candidates.isEmpty() ? (inputFilename + QStringLiteral(".db")) : candidates.first();
+}
+} // namespace
 
 int main(int argc, char *argv[])
 {
@@ -65,7 +111,7 @@ int main(int argc, char *argv[])
 
     // Option to specify a different metadata input file
     QCommandLineOption inputMetadataOption(QStringList() << "input-metadata",
-                                       QCoreApplication::translate("main", "Specify the input metadata file for the first input file (default input.db)"),
+                                       QCoreApplication::translate("main", "Specify the input metadata file for the first input file (default auto-detect .db/.json)"),
                                        QCoreApplication::translate("main", "filename"));
     parser.addOption(inputMetadataOption);
     QCommandLineOption inputJsonOption(QStringList() << "input-json",
@@ -243,7 +289,7 @@ int main(int argc, char *argv[])
 
     for (qint32 i = 0; i < totalNumberOfInputFiles; i++) {
         // Work out the metadata filename
-        QString metadataFilename = inputFilenames[i] + ".db";
+        QString metadataFilename = resolveDefaultMetadataFilename(inputFilenames[i]);
         if (i == 0) {
             if (parser.isSet(inputMetadataOption)) {
                 metadataFilename = parser.value(inputMetadataOption);
