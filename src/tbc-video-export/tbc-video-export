@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+PYTHONPATH_ENTRY="${ROOT_DIR}/share/tbc-video-export/src"
+
+if [[ -n "${PYTHONPATH:-}" ]]; then
+    export PYTHONPATH="${PYTHONPATH_ENTRY}:${PYTHONPATH}"
+else
+    export PYTHONPATH="${PYTHONPATH_ENTRY}"
+fi
+
+exec python3 "${PYTHONPATH_ENTRY}/tbc_video_export/__main__.py" "$@"

@@ -1,0 +1,671 @@
+from __future__ import annotations
+
+import asyncio
+from fractions import Fraction
+from functools import cached_property
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from tbc_video_export.common import consts, exceptions
+from tbc_video_export.common.enums import (
+    ExportMode,
+    HardwareAccelType,
+    PipeType,
+    ProcessName,
+    TBCType,
+    VideoFormatType,
+)
+from tbc_video_export.common.utils import FlatList, ansi
+from tbc_video_export.process.wrapper.wrapper import Wrapper
+
+if TYPE_CHECKING:
+    from tbc_video_export.config.profile import Profile, ProfileVideo
+    from tbc_video_export.process.wrapper.pipe import Pipe
+    from tbc_video_export.process.wrapper.wrapper import WrapperConfig
+    from tbc_video_export.program_state import ProgramState
+
+
+class WrapperFFmpeg(Wrapper):
+    """Wrapper for ffmpeg that generates commands for encoding."""
+
+    def __init__(
+        self, state: ProgramState, config: WrapperConfig[tuple[Pipe], None]
+    ) -> None:
+        self._additional_vopts: FlatList = FlatList()
+        self._hwaccel_opts: FlatList = FlatList()
+        self._hwaccel_filter: str = ""
+        super().__init__(state, config)
+        self._config = config
+        self._parse_hwaccel()
+
+    def post_fn(self) -> None:  # noqa: D102
+        pass
+
+    @property
+    def command(self) -> FlatList:  # noqa: D102
+        return FlatList(
+            (
+                self.binary,
+                self._get_verbosity_opts(),
+                self._get_misc_opts(),
+                self._get_hwaccel_opts(),
+                self._get_input_opts(),
+                self._get_filter_complex_opts(),
+                self._get_map_opts(),
+                self._get_timecode_opt(),
+                self._get_framerate_opt(),
+                self._get_codec_opts(),
+                self._get_metadata_opts(),
+                self._get_output_opt(),
+            )
+        )
+
+    def _get_verbosity_opts(self) -> FlatList:
+        """Return opts for verbosity."""
+        verbosity_opts = FlatList("-hide_banner")
+
+        # enable progress reporting if we are not displaying output
+        if not self._state.opts.show_process_output:
+            verbosity_opts.append(
+                (
+                    "-loglevel",
+                    "error",
+                    "-progress",
+                    "pipe:2",
+                )
+            )
+        else:
+            verbosity_opts.append(("-loglevel", "verbose"))
+
+        return verbosity_opts
+
+    def _get_misc_opts(self) -> FlatList:
+        opts = FlatList((self._state.opts.convert_opt("overwrite", "-y"),))
+
+        thread_count = self._state.opts.threads
+
+        if (t := self._state.opts.ffmpeg_threads) is not None:
+            thread_count = t
+
+        if thread_count != 0:
+            opts.append(("-threads", thread_count))
+
+        return opts
+
+    def _parse_hwaccel(self) -> None:
+        """Parse hardware acceleration opts."""
+        match self._get_profile().video_profile.hardware_accel:
+            case HardwareAccelType.VAAPI:
+                self._hwaccel_opts.append(
+                    ("-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi")
+                )
+
+                if (hwaccel_device := self._state.opts.hwaccel_device) is not None:
+                    self._hwaccel_opts.append(("-vaapi_device", hwaccel_device))
+
+                self._hwaccel_filter = "hwupload"
+
+            case HardwareAccelType.NVENC:
+                if (hwaccel_device := self._state.opts.hwaccel_device) is not None:
+                    self._additional_vopts.append(("-gpu", hwaccel_device))
+
+            case HardwareAccelType.QUICKSYNC:
+                self._hwaccel_opts.append(
+                    (
+                        "-hwaccel",
+                        "qsv",
+                        "-hwaccel_output_format",
+                        "qsv",
+                    )
+                )
+
+                if (hwaccel_device := self._state.opts.hwaccel_device) is not None:
+                    self._hwaccel_opts.append(("-qsv_device", hwaccel_device))
+
+            case HardwareAccelType.AMF:
+                if self._state.opts.hwaccel_device is not None:
+                    raise exceptions.InvalidProfileError(
+                        "Unable to set device for AMD AMF encoding due to FFmpeg "
+                        "limitiations."
+                    )
+
+            case _:
+                pass
+
+    def _get_hwaccel_opts(self) -> FlatList:
+        return self._hwaccel_opts
+
+    def _get_thread_queue_size_opt(self) -> FlatList:
+        """Return opts for thread queue size."""
+        return FlatList(("-thread_queue_size", str(self._state.opts.thread_queue_size)))
+
+    def _get_input_opts(self) -> FlatList:
+        """Return opts for all inputs."""
+        return FlatList(
+            (
+                "-nostdin",
+                self._get_video_input_opts(),
+                self._get_audio_input_opts(),
+                self._get_metadata_input_opts(),
+            )
+        )
+
+    def _get_video_input_opts(self) -> FlatList:
+        """Return opts for video input."""
+        input_opts = FlatList()
+        video_system_data = self._state.video_system_data
+
+        if self._config.export_mode == ExportMode.LUMA_4FSC:
+            size = video_system_data.size["4fsc"]
+
+            input_opts.append(
+                (
+                    "-f",
+                    "rawvideo",
+                    "-pix_fmt",
+                    VideoFormatType.GRAY.value.get(16),
+                    "-framerate",
+                    self._get_framerate(),
+                    "-video_size",
+                    f"{size.width}x{size.height}",
+                )
+            )
+
+        inputs: list[str] = []
+
+        if self._is_two_step_merge_mode():
+            # add the luma file as an input
+            inputs.append(str(self._state.file_helper.output_video_file_luma))
+
+        # pipes
+        for i in self._config.input_pipes:
+            inputs.append(str(i.in_path))
+
+        input_opts.append(
+            (
+                self._get_thread_queue_size_opt(),
+                "-i",
+                i,
+            )
+            for i in inputs
+        )
+
+        return input_opts
+
+    def _get_audio_trim_opts(self) -> tuple[str | None, str | None]:
+        """Return -ss and -t values for trimming audio inputs to match --start/--length."""  # noqa: E501
+        if self._state.opts.start is None and self._state.opts.length is None:
+            return None, None
+
+        fps = self._state.video_system_data.fps_fraction
+        start_frame = self._state.opts.start or 0
+
+        ss = f"{float(Fraction(start_frame) / fps):.6f}" if start_frame > 0 else None
+        t = f"{float(Fraction(self._state.total_frames) / fps):.6f}"
+        return ss, t
+
+    def _get_audio_input_opts(self) -> FlatList:
+        """Return opts for audio input."""
+        input_opts = FlatList()
+        audio_ss, audio_t = self._get_audio_trim_opts()
+
+        # audio
+        for track in self._state.opts.audio_track:
+            if audio_ss is not None:
+                input_opts.append(("-ss", audio_ss))
+            if audio_t is not None:
+                input_opts.append(("-t", audio_t))
+
+            if (offset := track.offset) is not None:
+                input_opts.append(("-itsoffset", offset))
+
+            if (sample_format := track.sample_format) is not None:
+                input_opts.append(("-f", sample_format))
+
+            if (rate := track.rate) is not None:
+                input_opts.append(("-ar", rate))
+
+            if (channels := track.channels) is not None:
+                input_opts.append(("-ac", channels))
+
+            input_opts.append(("-i", track.file_name))
+
+            # if the track does not exist, we add a warning to the message log as
+            # the file may be generated by ld-process-efm and will exist by the time
+            # FFmpeg runs
+            # we should perhaps only init a wrapper when it is time to run?
+            if not Path(track.file_name).is_file():
+                self._state.export.append_message(
+                    ansi.error_color(
+                        f"FFmpeg track {track.file_name} does not currently exist."
+                    )
+                )
+
+        return input_opts
+
+    def _get_metadata_input_opts(self) -> FlatList:
+        """Return opts for metadata input."""
+        input_opts = FlatList()
+        if self._state.opts.export_metadata:
+            # subtitles
+            if self._state.opts.dry_run:
+                input_opts.append(("{-i", "[SUBTITLE_FILE]}"))
+            elif (cc_file := self._state.file_helper.cc_file).is_file():
+                input_opts.append(("-i", cc_file))
+
+            # metadata
+            if self._state.opts.dry_run:
+                input_opts.append(("{-i", "[METADATA_FILE]}"))
+            elif (ffmetadata := self._state.file_helper.ffmetadata_file).is_file():
+                input_opts.append(("-i", ffmetadata))
+
+        for ffmetadata in self._state.opts.metadata_file:
+            input_opts.append(("-i", ffmetadata))
+
+        return input_opts
+
+    def _get_filters(self) -> tuple[list[str], list[str]]:
+        """Return tuple containing video and other filters."""
+        video_filters: list[str] = []
+        other_filters: list[str] = []
+
+        _vf, _of = self._state.config.get_profile_filters(self._get_profile())
+
+        # set video filters
+        video_filters.append(f"setfield={self._get_field_order()}")
+        video_filters += _vf
+
+        if (arf := self._get_aspect_ratio_filter()) is not None:
+            video_filters.append(arf)
+
+        # override profile colorlevels if set with opt
+        if self._state.opts.force_black_level is not None:
+            video_filters.append(
+                "colorlevels="
+                f"rimin={self._state.opts.force_black_level[0]}/255:"
+                f"gimin={self._state.opts.force_black_level[1]}/255:"
+                f"bimin={self._state.opts.force_black_level[2]}/255"
+            )
+
+        if self._state.opts.append_video_filter is not None:
+            video_filters.append(self._state.opts.append_video_filter)
+
+        video_filters.append(f"format={self._get_profile_video_format()}")
+        video_filters.append(self._get_setparams_filter())
+
+        if self._state.opts.hwaccel_type is not None and self._hwaccel_filter:
+            video_filters.append(self._hwaccel_filter)
+
+        # set other filters
+        other_filters += _of
+
+        if self._state.opts.append_other_filter is not None:
+            other_filters.append(self._state.opts.append_other_filter)
+
+        return video_filters, other_filters
+
+    def _get_filter_complex_opts(self) -> FlatList:  # noqa: C901, PLR0912
+        """Return opts for filter complex."""
+        video_filters, other_filters = self._get_filters()
+        video_filters_str = ",".join(video_filters)
+        other_filters_str = f",{of}" if (of := ",".join(other_filters)) else ""
+
+        match self._config.export_mode:
+            case ExportMode.CHROMA_MERGE:
+                # merge Y/C from separate Y+C inputs
+
+                # using mergeplanes 0x001112 with pipe+pipe input works but there
+                # seems to be an issue when merging gray16le and 16-bit yuv(??) formats.
+                # safer to extract the 2x inputs (file+pipe/pipe+pipe) into y/u/v planes
+                # and merge to avoid any issues.
+
+                mergeplanes = (
+                    "0x001020"
+                    if consts.FFMPEG_USE_OLD_MERGEPLANES
+                    else "map1s=1:map2s=2"
+                )
+
+                complex_filter = (
+                    f"[0:v]extractplanes=y[y];[1:v]extractplanes=u+v[u][v];"
+                    f"[y][u][v]mergeplanes={mergeplanes}:format={consts.FFMPEG_DEFAULT_CHROMA_FORMAT},"
+                )
+
+            case ExportMode.LUMA_EXTRACTED:
+                # extract Y from a Y/C input
+                complex_filter = "[0:v]extractplanes=y,"
+
+            case ExportMode.LUMA_4FSC:
+                # interleve tbc fields
+                complex_filter = "[0:v]il=l=i:c=i,"
+
+            case _:
+                complex_filter = "[0:v]"
+
+                # luma step in two-step should only use setfield and setparams filters
+                if self._is_two_step_luma_mode():
+                    video_filters_str = ",".join(
+                        [
+                            f"setfield={self._get_field_order()}",
+                            self._get_setparams_filter(),
+                        ]
+                    )
+                    other_filters_str = ""
+
+        return FlatList(
+            (
+                "-filter_complex",
+                complex_filter
+                + video_filters_str
+                + consts.FFMPEG_VIDEO_MAP
+                + other_filters_str,
+            )
+        )
+
+    def _get_map_opts(self) -> FlatList:
+        """Return FFmpeg video map opts."""
+        # video
+        input_opts = FlatList(("-map", f"{consts.FFMPEG_VIDEO_MAP}"))
+        input_count = len(self._config.input_pipes)
+
+        # audio
+        input_opts.append(
+            ("-map", f"{i + input_count}:a")
+            for i in range(len(self._state.opts.audio_track))
+        )
+        input_count += len(self._state.opts.audio_track)
+
+        if self._state.opts.export_metadata:
+            # subtitles
+            if self._state.opts.dry_run:
+                input_opts.append(("{-map", "[SUBTITLE_INDEX]:s}"))
+            elif self._state.file_helper.cc_file.is_file():
+                input_opts.append(("-map", f"{input_count}:s"))
+                input_count += 1
+
+            # metadata
+            if self._state.opts.dry_run:
+                input_opts.append(("{-map_metadata", "[METADATA_INDEX]}"))
+            elif self._state.file_helper.ffmetadata_file.is_file():
+                input_opts.append(("-map_metadata", input_count))
+                input_count += 1
+
+        for _ in self._state.opts.metadata_file:
+            input_opts.append(("-map_metadata", input_count))
+            input_count += 1
+
+        return input_opts
+
+    def _get_timecode_opt(self) -> FlatList:
+        """Return opts for timecode."""
+        return FlatList(("-timecode", self._state.file_helper.tbc_json.timecode))
+
+    def _get_framerate(self) -> str:
+        """Return rate based on video system."""
+        return self._state.video_system_data.ffmpeg_config.fps
+
+    def _get_framerate_opt(self) -> FlatList:
+        """Return opts for rate."""
+        return FlatList(
+            (
+                "-framerate",
+                self._get_framerate(),
+            )
+        )
+
+    def _get_aspect_ratio_filter(self) -> str | None:
+        """Return filter for aspect ratios."""
+        if self._state.is_widescreen:
+            ar = self._state.video_system_data.aspect_ratio["widescreen"]
+            return f"setsar={ar.horizontal}/{ar.vertical}:max=1000"
+
+        if self._state.opts.letterbox:
+            ar = self._state.video_system_data.aspect_ratio["letterbox"]
+            return f"setdar={ar.horizontal}/{ar.vertical}"
+
+        return None  # do not return default ar
+
+    def _get_setparams_filter(self) -> str:
+        """Return filter for setparams."""
+        ffmpeg_config = self._state.video_system_data.ffmpeg_config
+        return (
+            f"setparams="
+            f"range={ffmpeg_config.color_range}:"
+            f"colorspace={ffmpeg_config.color_space}:"
+            f"color_primaries={ffmpeg_config.color_primaries}:"
+            f"color_trc={ffmpeg_config.color_trc}"
+        )
+
+    def _get_codec_opts(self) -> FlatList:
+        """Return opts containing codecs for inputs."""
+        codec_opts = FlatList(
+            (
+                "-c:v",
+                self._get_profile().video_profile.codec,
+                self._get_profile().video_profile.opts,
+                self._additional_vopts,
+            )
+        )
+
+        if (audio_profile := self._get_profile().audio_profile) is not None:
+            codec_opts.append(
+                (
+                    "-c:a",
+                    audio_profile.codec,
+                    audio_profile.opts,
+                )
+            )
+
+            if self._state.opts.export_metadata:
+                if self._state.opts.dry_run:
+                    codec_opts.append(("{-c:s", self._get_subtitle_format() + "}"))
+                elif (
+                    self._state.opts.export_metadata
+                    and self._state.file_helper.cc_file.is_file()
+                ):
+                    codec_opts.append(("-c:s", self._get_subtitle_format()))
+
+        return codec_opts
+
+    def _get_metadata_opts(self) -> FlatList:
+        """Return opts for metadata."""
+        # custom metadata
+        metadata_opts = FlatList(
+            ("-metadata", f"{data[0]}={data[1]}") for data in self._state.opts.metadata
+        )
+
+        # audio
+        for idx, track in enumerate(self._state.opts.audio_track):
+            if (title := track.title) is not None:
+                metadata_opts.append((f"-metadata:s:a:{idx}", f"title={title}"))
+
+            if (language := track.language) is not None:
+                metadata_opts.append((f"-metadata:s:a:{idx}", f"language={language}"))
+
+            if (layout := track.layout) is not None:
+                metadata_opts.append((f"-channel_layout:a:{idx}", f"{layout}"))
+
+        # attachment
+        if self._get_supports_attachments() and not self._state.opts.no_attach_json:
+            metadata_opts.append(
+                (
+                    "-attach",
+                    self._state.file_helper.tbc_json.file_name,
+                    "-metadata:s:t:0",
+                    "mimetype=application/json",
+                )
+            )
+
+        return metadata_opts
+
+    def _get_output_opt(self) -> FlatList:
+        """Output opts for ffmpeg."""
+        output_file = (
+            self._state.file_helper.output_video_file_luma
+            if self._is_two_step_luma_mode()
+            else self._state.file_helper.output_video_file
+        )
+
+        # only set if the user has not manually specified a container
+        output_format = (
+            self._get_profile().video_profile.output_format
+            if not self._state.opts.profile_container
+            else None
+        )
+
+        if self._state.opts.checksum:
+            checksum_output = (
+                f"[f={output_format}]{output_file}"
+                if output_format is not None
+                else output_file
+            )
+
+            return FlatList(
+                (
+                    "-f",
+                    "tee",
+                    f"[f=streamhash]{output_file}.sha256|{checksum_output}",
+                )
+            )
+
+        return (
+            FlatList(("-f", output_format, output_file))
+            if output_format is not None
+            else FlatList(output_file)
+        )
+
+    def _get_profile(self) -> Profile:
+        """Return the profile in state."""
+        return self._state.profile
+
+    def _get_video_profile(self) -> ProfileVideo:
+        """Return the video profile in state."""
+        return self._state.profile.video_profile
+
+    def _get_profile_video_format(self) -> str:
+        """Return the video format in state."""
+        video_format = self._get_profile().video_profile.video_format
+
+        # if two step, set to gray8/16le
+        if self._is_two_step_luma_mode() or self._config.export_mode in (
+            ExportMode.LUMA,
+            ExportMode.LUMA_4FSC,
+            ExportMode.LUMA_EXTRACTED,
+        ):
+            depth = (
+                16
+                if self._state.opts.video_bitdepth is None
+                else self._state.opts.video_bitdepth
+            )
+
+            if (new_format := VideoFormatType.GRAY.value.get(depth)) is not None:
+                video_format = new_format
+
+        # check bitdepth override
+        if (depth := self._state.opts.video_bitdepth) is not None and (
+            new_format := VideoFormatType.get_new_format(video_format, depth)
+        ) is not None:
+            video_format = new_format
+
+        # if override opts, ensure format for bitdepth and set
+        # does not set the luma format when in two-step mode
+        if (
+            (vf := self._state.opts.video_format) is not None
+            and (depth := self._state.opts.video_bitdepth) is not None
+            and (new_format := vf.value.get(depth)) is not None
+            and not self._is_two_step_luma_mode()
+        ):
+            video_format = new_format
+
+        return video_format
+
+    def _is_two_step_luma_mode(self) -> bool:
+        """Return True if this wrapper is in luma mode while two-step is enabled."""
+        return self._state.opts.two_step and self._config.export_mode is ExportMode.LUMA
+
+    def _is_two_step_merge_mode(self) -> bool:
+        """Return True if this wrapper is in merge mode while two-step is enabled."""
+        return (
+            self._state.opts.two_step
+            and self._config.export_mode is ExportMode.CHROMA_MERGE
+        )
+
+    def _get_supports_attachments(self) -> bool:
+        """Return True if attachments are supported by the profile container."""
+        return self._state.file_helper.output_container.lower() == "mkv"
+
+    def _get_subtitle_format(self) -> str:
+        """Return subtitle format based on the profile container."""
+        return (
+            "srt"
+            if self._state.file_helper.output_container.lower() != "mov"
+            else "mov_text"
+        )
+
+    def _get_field_order(self) -> str:
+        """Return the formatted field order from opts."""
+        return self._state.opts.field_order.name.lower()
+
+    @cached_property
+    def process_name(self) -> ProcessName:  # noqa: D102
+        return ProcessName.FFMPEG
+
+    @cached_property
+    def supported_pipe_types(self) -> PipeType:  # noqa: D102
+        return PipeType.NULL | PipeType.OS | PipeType.NAMED
+
+    @cached_property
+    def stdin(self) -> int | None:  # noqa: D102
+        # if ffmpeg has a pipe with a handle, use it
+        # we usually use named pipes that do not have handles
+        return next(
+            (
+                pipe.in_handle
+                for pipe in self._config.input_pipes
+                if pipe.in_handle is not None
+            ),
+            None,
+        )
+
+    @cached_property
+    def stdout(self) -> int | None:  # noqa: D102
+        # if ffmpeg has a pipe with a handle, use it
+        # we usually do not have any out pipes
+        return next(
+            (
+                pipe.in_handle
+                for pipe in self._config.input_pipes
+                if pipe.in_handle is not None
+            ),
+            None,
+        )
+
+    @cached_property
+    def stderr(self) -> int | None:  # noqa: D102
+        return asyncio.subprocess.PIPE
+
+    @cached_property
+    def log_output(self) -> bool:  # noqa: D102
+        # we use built in FFmpeg logging via env
+        return False
+
+    @cached_property
+    def log_stdout(self) -> bool:  # noqa: D102
+        return False
+
+    @cached_property
+    def env(self) -> dict[str, str] | None:  # noqa: D102
+        if self._state.opts.log_process_output:
+            file_name = self._state.file_helper.get_log_file(
+                self.process_name, TBCType.NONE
+            )
+
+            return {"FFREPORT": f"file='{file_name}'"}
+        return None
+
+    @cached_property
+    def ignore_error(self) -> bool:  # noqa: D102
+        return False
+
+    @cached_property
+    def stop_on_last_alive(self) -> bool:  # noqa: D102
+        return False

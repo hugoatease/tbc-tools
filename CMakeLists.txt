@@ -151,6 +151,7 @@ add_subdirectory(src/ld-process-vbi)
 add_subdirectory(src/ld-process-vits)
 add_subdirectory(src/library)
 add_subdirectory(src/efm-decoder)
+add_subdirectory(src/tbc-video-export)
 
 if(BUILD_TESTING)
     add_subdirectory(src/library/filter/testfilter)

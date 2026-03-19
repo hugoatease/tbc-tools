@@ -19,9 +19,6 @@ env:
   FLAC_FILE: "flac-1.5.0-win.zip"
   FLAC_PATH: "flac-1.5.0-win"
   FLAC_URL: "https://ftp.osuosl.org/pub/xiph/releases/flac/flac-1.5.0-win.zip"
-  TBC_VIDEO_EXPORT_FILE: "tbc-video-export.exe"
-  TBC_VIDEO_EXPORT_URL: "https://github.com/JuniorIsAJitterbug/tbc-video-export/releases/download/v0.1.8/tbc-video-export.exe"
-  TBC_VIDEO_EXPORT_LICENSE_URL: "https://raw.githubusercontent.com/JuniorIsAJitterbug/tbc-video-export/v0.1.8/LICENSE"
   # Persist vcpkg binary artifacts across runs for faster Windows builds.
   VCPKG_BINARY_CACHE_DIR: "${{ github.workspace }}\\.vcpkg-binary-cache"
   VCPKG_BINARY_SOURCES: "clear;files,${{ github.workspace }}\\.vcpkg-binary-cache,readwrite"
@@ -58,6 +55,10 @@ jobs:
           fetch-tags: true
           submodules: true
           ref: ${{ inputs.checkout_ref || github.ref }}
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
       - uses: lukka/get-cmake@latest
         with:
@@ -168,15 +169,26 @@ jobs:
           Copy-Item -Path .\\${{ env.FLAC_PATH }}\\Win64\\* -Destination release\\
           Copy-Item -Path .\\${{ env.FLAC_PATH }}\\COPYING.GPL -Destination release\\LICENSES\\copyright-flac
 
-      - name: Download and copy tbc-video-export to release directory
+      - name: Build and copy vendored tbc-video-export to release directory
         if: matrix.bundle_external_tools == true
         run: |
-          Invoke-WebRequest "${{ env.TBC_VIDEO_EXPORT_URL }}" -OutFile ".\\${{ env.TBC_VIDEO_EXPORT_FILE }}"
-          Copy-Item -Path ".\\${{ env.TBC_VIDEO_EXPORT_FILE }}" -Destination release\\
-          Invoke-WebRequest "${{ env.TBC_VIDEO_EXPORT_LICENSE_URL }}" -OutFile release\\LICENSES\\copyright-tbc-video-export
+          $exporterRoot = "${{ github.workspace }}\\src\\tbc-video-export"
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller pyinstaller-versionfile dunamai
+          $env:PYTHONPATH = "$exporterRoot\\src"
+          Push-Location $exporterRoot
+          New-Item -ItemType Directory -Force -Path .\\build | Out-Null
+          python .\\pyinstaller\\build_windows.py
+          Pop-Location
+          $builtExporter = "$exporterRoot\\dist\\tbc-video-export.exe"
+          if (-not (Test-Path $builtExporter)) {
+            throw "Vendored tbc-video-export build did not produce $builtExporter"
+          }
+          Copy-Item -Path $builtExporter -Destination release\\
+          Copy-Item -Path "$exporterRoot\\LICENSE" -Destination release\\LICENSES\\copyright-tbc-video-export
           if ("${{ matrix.arch }}" -eq "x86_64") {
             Push-Location release
-            .\\${{ env.TBC_VIDEO_EXPORT_FILE }} --dump-default-config
+            .\\tbc-video-export.exe --dump-default-config
             Pop-Location
           } else {
             Write-Host "Skipping tbc-video-export --dump-default-config on arm64."

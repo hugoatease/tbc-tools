@@ -78,6 +78,8 @@ private:
     QString sanitizeOutputBaseName(const QString &path) const;
     bool findExistingOutputFiles(const QString &outputBase, QStringList *existingFiles) const;
     QString selectedMainCodecId() const;
+    QString selectedMainContainerId() const;
+    int selectedMainBitDepth() const;
     QString selectedExportProfileName() const;
     QString proxyExportProfileName(const QString &proxyCodecId) const;
     QString videoSystemArg(int system) const;

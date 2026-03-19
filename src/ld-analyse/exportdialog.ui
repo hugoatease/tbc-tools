@@ -155,6 +155,40 @@
         </widget>
        </item>
        <item>
+        <widget class="QLabel" name="mainContainerLabel">
+         <property name="text">
+          <string>Container</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QComboBox" name="mainContainerComboBox">
+         <property name="minimumSize">
+          <size>
+           <width>96</width>
+           <height>0</height>
+          </size>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="mainBitDepthLabel">
+         <property name="text">
+          <string>Bit-depth</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QComboBox" name="mainBitDepthComboBox">
+         <property name="minimumSize">
+          <size>
+           <width>86</width>
+           <height>0</height>
+          </size>
+         </property>
+        </widget>
+       </item>
+       <item>
         <widget class="QLabel" name="audioProfileLabel">
          <property name="text">
           <string>Audio</string>

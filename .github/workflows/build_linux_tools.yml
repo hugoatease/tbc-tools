@@ -76,7 +76,7 @@ jobs:
           export PATH="/nix/var/nix/profiles/default/bin:/root/.nix-profile/bin:$HOME/.nix-profile/bin:$PATH"
           chown -R "$(id -u):$(id -g)" "$GITHUB_WORKSPACE"
           nix build .#
-          mkdir -p AppDir/usr/bin AppDir/usr/lib
+          mkdir -p AppDir/usr/bin AppDir/usr/lib AppDir/usr/share
           SKIP_LIB_REGEX='^(libc\.so\.6|libm\.so\.6|libpthread\.so\.0|libdl\.so\.2|librt\.so\.1|libresolv\.so\.2|ld-linux-.*\.so\..*|libnss_.*|libutil\.so\..*|libanl\.so\..*)$'
           for wrapped in result/bin/.*-wrapped; do
             [ -f "$wrapped" ] || continue
@@ -107,6 +107,7 @@ jobs:
           cp -a "$FFMPEG_BIN" AppDir/usr/bin/ffmpeg
           cp -a "$FFPROBE_BIN" AppDir/usr/bin/ffprobe
           cp -a result/lib/. AppDir/usr/lib/ || true
+          cp -a result/share/. AppDir/usr/share/ || true
           LIBSTDCPP_PATH="$(ldd result/bin/.ld-analyse-wrapped | awk '$1 == "libstdc++.so.6" { print $3; exit }')"
           LIBGCC_PATH="$(ldd result/bin/.ld-analyse-wrapped | awk '$1 == "libgcc_s.so.1" { print $3; exit }')"
           [ -n "$LIBSTDCPP_PATH" ] && cp -L "$LIBSTDCPP_PATH" AppDir/usr/lib/libstdc++.so.6
@@ -260,7 +261,7 @@ jobs:
           nix_path: nixpkgs=channel:nixos-unstable
 
       - name: Create release directory
-        run: mkdir -p release/bin release/lib release/plugins
+        run: mkdir -p release/bin release/lib release/plugins release/share
 
       - name: Build with Nix
         run: |
@@ -295,6 +296,7 @@ jobs:
           cp -a "$FFMPEG_BIN" release/bin/ffmpeg
           cp -a "$FFPROBE_BIN" release/bin/ffprobe
           cp -a result/lib/. release/lib/ || true
+          cp -a result/share/. release/share/ || true
           LIBSTDCPP_PATH="$(ldd result/bin/.ld-analyse-wrapped | awk '$1 == "libstdc++.so.6" { print $3; exit }')"
           LIBGCC_PATH="$(ldd result/bin/.ld-analyse-wrapped | awk '$1 == "libgcc_s.so.1" { print $3; exit }')"
           [ -n "$LIBSTDCPP_PATH" ] && cp -L "$LIBSTDCPP_PATH" release/lib/libstdc++.so.6

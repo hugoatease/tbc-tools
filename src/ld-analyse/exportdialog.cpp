@@ -372,6 +372,18 @@ bool isFfv1ProfileName(const QString &profileName)
 {
     return profileName.trimmed().compare(QStringLiteral("ffv1"), Qt::CaseInsensitive) == 0;
 }
+bool isWebProfileName(const QString &profileName)
+{
+    const QString normalized = profileName.trimmed().toLower();
+    return normalized == QStringLiteral("web")
+           || normalized == QStringLiteral("h264_web")
+           || normalized == QStringLiteral("h265_web")
+           || normalized == QStringLiteral("x264_web")
+           || normalized == QStringLiteral("x265_web")
+           || normalized == QStringLiteral("av1_web")
+           || normalized.startsWith(QStringLiteral("x264_web_"))
+           || normalized.startsWith(QStringLiteral("x265_web_"));
+}
 
 bool isPalFamilySystem(int system)
 {
@@ -1012,6 +1024,22 @@ ExportDialog::ExportDialog(QWidget *parent) :
 
     ui->inputLineEdit->setReadOnly(true);
     ui->profileComboBox->setEditable(false);
+    if (ui->mainContainerComboBox) {
+        ui->mainContainerComboBox->clear();
+        ui->mainContainerComboBox->addItem(tr("MKV"), QStringLiteral("mkv"));
+        ui->mainContainerComboBox->addItem(tr("MXF"), QStringLiteral("mxf"));
+        ui->mainContainerComboBox->addItem(tr("MOV"), QStringLiteral("mov"));
+        ui->mainContainerComboBox->addItem(tr("MP4"), QStringLiteral("mp4"));
+        const int defaultIndex = ui->mainContainerComboBox->findData(QStringLiteral("mkv"));
+        ui->mainContainerComboBox->setCurrentIndex(defaultIndex >= 0 ? defaultIndex : 0);
+    }
+    if (ui->mainBitDepthComboBox) {
+        ui->mainBitDepthComboBox->clear();
+        ui->mainBitDepthComboBox->addItem(tr("10-bit"), 10);
+        ui->mainBitDepthComboBox->addItem(tr("8-bit"), 8);
+        const int defaultIndex = ui->mainBitDepthComboBox->findData(10);
+        ui->mainBitDepthComboBox->setCurrentIndex(defaultIndex >= 0 ? defaultIndex : 0);
+    }
     if (ui->resolutionModeComboBox) {
         ui->resolutionModeComboBox->clear();
         ui->resolutionModeComboBox->addItem(tr("Active Area"), QStringLiteral("active_area"));
@@ -2854,6 +2882,18 @@ void ExportDialog::setBusy(bool busy)
     ui->audio3BrowseButton->setEnabled(enabled);
     ui->audio4BrowseButton->setEnabled(enabled);
     ui->profileComboBox->setEnabled(enabled);
+    if (ui->mainContainerLabel) {
+        ui->mainContainerLabel->setEnabled(enabled);
+    }
+    if (ui->mainContainerComboBox) {
+        ui->mainContainerComboBox->setEnabled(enabled);
+    }
+    if (ui->mainBitDepthLabel) {
+        ui->mainBitDepthLabel->setEnabled(enabled);
+    }
+    if (ui->mainBitDepthComboBox) {
+        ui->mainBitDepthComboBox->setEnabled(enabled);
+    }
     if (ui->resolutionModeComboBox) {
         ui->resolutionModeComboBox->setEnabled(enabled);
     }
@@ -2918,10 +2958,6 @@ void ExportDialog::setBusy(bool busy)
 
 QString ExportDialog::resolveVideoExportPath() const
 {
-    const QString fromPath = QStandardPaths::findExecutable(QStringLiteral("tbc-video-export"));
-    if (!fromPath.isEmpty()) {
-        return fromPath;
-    }
     const QStringList candidateDirs = defaultExecutableSearchDirs(currentInputFile);
 
     QStringList candidateNames;
@@ -2939,6 +2975,10 @@ QString ExportDialog::resolveVideoExportPath() const
                 return candidate;
             }
         }
+    }
+    const QString fromPath = QStandardPaths::findExecutable(QStringLiteral("tbc-video-export"));
+    if (!fromPath.isEmpty()) {
+        return fromPath;
     }
 
     return QString();
@@ -3055,6 +3095,27 @@ QString ExportDialog::selectedMainCodecId() const
     }
     const QString selectedId = ui->profileComboBox->currentData().toString().trimmed().toLower();
     return selectedId.isEmpty() ? QStringLiteral("ffv1") : selectedId;
+}
+
+QString ExportDialog::selectedMainContainerId() const
+{
+    if (!ui || !ui->mainContainerComboBox) {
+        return QStringLiteral("mkv");
+    }
+    const QString selectedId = ui->mainContainerComboBox->currentData().toString().trimmed().toLower();
+    return selectedId.isEmpty() ? QStringLiteral("mkv") : selectedId;
+}
+
+int ExportDialog::selectedMainBitDepth() const
+{
+    if (!ui || !ui->mainBitDepthComboBox) {
+        return 10;
+    }
+    const int selectedBitDepth = ui->mainBitDepthComboBox->currentData().toInt();
+    if (selectedBitDepth == 8 || selectedBitDepth == 10) {
+        return selectedBitDepth;
+    }
+    return 10;
 }
 
 QString ExportDialog::selectedExportProfileName() const
@@ -3666,14 +3727,27 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
     args << QStringLiteral("--start") << QString::number(startFrameOneBased);
     args << QStringLiteral("--length") << QString::number(rangeLength);
 
-    const QString profile = profileOverride.trimmed().isEmpty()
-                                ? selectedExportProfileName()
-                                : profileOverride.trimmed();
+    const bool usingProfileOverride = !profileOverride.trimmed().isEmpty();
+    const QString profile = usingProfileOverride
+                                ? profileOverride.trimmed()
+                                : selectedExportProfileName();
     if (!configFileOverride.isEmpty()) {
         args << QStringLiteral("--config-file") << configFileOverride;
     }
     if (!profile.isEmpty()) {
         args << QStringLiteral("--profile") << profile;
+    }
+    if (!usingProfileOverride) {
+        const QString mainContainer = selectedMainContainerId();
+        if (!mainContainer.isEmpty()) {
+            args << QStringLiteral("--profile-container") << mainContainer;
+        }
+        const int bitDepth = selectedMainBitDepth();
+        if (bitDepth == 8) {
+            args << QStringLiteral("--8bit");
+        } else if (bitDepth == 10) {
+            args << QStringLiteral("--10bit");
+        }
     }
     const QString exportPath = resolveVideoExportPath();
     const QString dropoutMode = ui->dropoutModeComboBox
@@ -4053,6 +4127,33 @@ QString ExportDialog::createTemporaryExportConfig(QString *errorMessage,
         return QString();
     }
     root.insert(QStringLiteral("profiles"), profiles);
+    if (isWebProfileName(selectedProfile)) {
+        const QStringList selectedVideoProfiles = profileVideoProfileNames(selectedProfileObject);
+        if (!selectedVideoProfiles.isEmpty()) {
+            QJsonArray videoProfiles = root.value(QStringLiteral("video_profiles")).toArray();
+            bool changedVideoProfiles = false;
+            for (int i = 0; i < videoProfiles.size(); ++i) {
+                if (!videoProfiles.at(i).isObject()) {
+                    continue;
+                }
+                QJsonObject videoProfileObject = videoProfiles.at(i).toObject();
+                const QString videoProfileName = videoProfileObject.value(QStringLiteral("name")).toString();
+                if (!listContainsCaseInsensitive(selectedVideoProfiles, videoProfileName)) {
+                    continue;
+                }
+                if (videoProfileObject.value(QStringLiteral("container")).toString().compare(
+                        QStringLiteral("mp4"), Qt::CaseInsensitive) == 0) {
+                    continue;
+                }
+                videoProfileObject.insert(QStringLiteral("container"), QStringLiteral("mp4"));
+                videoProfiles.replace(i, videoProfileObject);
+                changedVideoProfiles = true;
+            }
+            if (changedVideoProfiles) {
+                root.insert(QStringLiteral("video_profiles"), videoProfiles);
+            }
+        }
+    }
     if (isFfv1ProfileName(selectedProfile) && ui->ffv1SlicesSpinBox) {
         const int ffv1Slices = qBound(1, ui->ffv1SlicesSpinBox->value(), 32);
         const QStringList selectedVideoProfiles = profileVideoProfileNames(selectedProfileObject);
