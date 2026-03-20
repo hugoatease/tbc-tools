@@ -128,6 +128,8 @@ private:
     QString m_secondaryYAxisTitle;
     double m_xMin, m_xMax;
     double m_yMin, m_yMax;
+    double m_xBoundMin, m_xBoundMax;
+    double m_yBoundMin, m_yBoundMax;
     double m_secondaryYMin, m_secondaryYMax;
     bool m_xAutoScale;
     bool m_yAutoScale;
@@ -160,6 +162,8 @@ private:
     QColor m_canvasBackground;
     bool m_usePaletteCanvasBackground;
     bool m_isDragging;  // Track if mouse is being dragged
+    bool m_isPanning;   // Track if right-button panning is active
+    QPointF m_lastPanScenePos;
     
 public:
     // Coordinate mapping methods (needed by plot items)
@@ -172,6 +176,8 @@ private:
     void updatePlotArea();
     void updateAxisLabels();
     void calculateDataRange();
+    void zoomAt(const QPointF &scenePos, double scaleFactor);
+    void panBySceneDelta(const QPointF &sceneDelta);
 };
 
 // Plot series class for drawing data series

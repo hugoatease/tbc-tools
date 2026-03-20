@@ -34,6 +34,8 @@ PlotWidget::PlotWidget(QWidget *parent)
     , m_dataRect(0, 0, 100, 100)
     , m_xMin(0), m_xMax(100)
     , m_yMin(0), m_yMax(100)
+    , m_xBoundMin(0), m_xBoundMax(100)
+    , m_yBoundMin(0), m_yBoundMax(100)
     , m_xAutoScale(true)
     , m_yAutoScale(true)
     , m_yIntegerLabels(false)
@@ -60,6 +62,8 @@ PlotWidget::PlotWidget(QWidget *parent)
     , m_canvasBackground()
     , m_usePaletteCanvasBackground(true)
     , m_isDragging(false)
+    , m_isPanning(false)
+    , m_lastPanScenePos(0.0, 0.0)
     , m_noDataTextItem(nullptr)
 {
     setupView();
@@ -127,10 +131,14 @@ void PlotWidget::setAxisRange(Qt::Orientation orientation, double min, double ma
     if (orientation == Qt::Horizontal) {
         m_xMin = min;
         m_xMax = max;
+        m_xBoundMin = min;
+        m_xBoundMax = max;
         m_xAutoScale = false;
     } else {
         m_yMin = min;
         m_yMax = max;
+        m_yBoundMin = min;
+        m_yBoundMax = max;
         m_yAutoScale = false;
     }
     replot();
@@ -318,9 +326,8 @@ void PlotWidget::setLegendEnabled(bool enabled)
 void PlotWidget::setZoomEnabled(bool enabled)
 {
     m_zoomEnabled = enabled;
-    if (enabled) {
-        m_view->setDragMode(QGraphicsView::RubberBandDrag);
-    }
+    // We handle zoom manually (wheel + data range updates), not via view transforms.
+    m_view->setDragMode(QGraphicsView::NoDrag);
 }
 
 void PlotWidget::setPanEnabled(bool enabled)
@@ -330,7 +337,14 @@ void PlotWidget::setPanEnabled(bool enabled)
 
 void PlotWidget::resetZoom()
 {
-    m_view->fitInView(m_plotRect, Qt::KeepAspectRatio);
+    m_xMin = m_xBoundMin;
+    m_xMax = m_xBoundMax;
+    m_yMin = m_yBoundMin;
+    m_yMax = m_yBoundMax;
+    m_xAutoScale = false;
+    m_yAutoScale = false;
+    replot();
+    emit plotAreaChanged(m_plotRect);
 }
 
 void PlotWidget::setCanvasBackground(const QColor &color)
@@ -484,8 +498,37 @@ void PlotWidget::mouseReleaseEvent(QMouseEvent *event)
 bool PlotWidget::eventFilter(QObject *obj, QEvent *event)
 {
     if (obj == m_view->viewport()) {
+        if (event->type() == QEvent::Wheel) {
+            QWheelEvent *wheelEvent = static_cast<QWheelEvent*>(event);
+            if (!m_zoomEnabled) {
+                return false;
+            }
+
+            const QPointF scenePos = m_view->mapToScene(wheelEvent->position().toPoint());
+            if (!m_plotRect.contains(scenePos)) {
+                return false;
+            }
+
+            const qreal deltaY = wheelEvent->angleDelta().y();
+            if (deltaY == 0) {
+                return true;
+            }
+
+            // < 1 zooms in, > 1 zooms out.
+            const double scaleFactor = (deltaY > 0) ? 0.85 : 1.18;
+            zoomAt(scenePos, scaleFactor);
+            return true;
+        }
         if (event->type() == QEvent::MouseButtonPress) {
             QMouseEvent *mouseEvent = static_cast<QMouseEvent*>(event);
+            if (mouseEvent->button() == Qt::RightButton) {
+                const QPointF scenePos = m_view->mapToScene(mouseEvent->pos());
+                if (m_panEnabled && m_plotRect.contains(scenePos)) {
+                    m_isPanning = true;
+                    m_lastPanScenePos = scenePos;
+                    return true;
+                }
+            }
             if (mouseEvent->button() == Qt::LeftButton) {
                 // Map to scene coordinates
                 QPointF scenePos = m_view->mapToScene(mouseEvent->pos());
@@ -501,6 +544,13 @@ bool PlotWidget::eventFilter(QObject *obj, QEvent *event)
             }
         } else if (event->type() == QEvent::MouseMove) {
             QMouseEvent *mouseEvent = static_cast<QMouseEvent*>(event);
+            if (m_isPanning) {
+                const QPointF scenePos = m_view->mapToScene(mouseEvent->pos());
+                const QPointF sceneDelta = scenePos - m_lastPanScenePos;
+                m_lastPanScenePos = scenePos;
+                panBySceneDelta(sceneDelta);
+                return true;
+            }
             if (m_isDragging) {
                 // Map to scene coordinates
                 QPointF scenePos = m_view->mapToScene(mouseEvent->pos());
@@ -515,6 +565,10 @@ bool PlotWidget::eventFilter(QObject *obj, QEvent *event)
             }
         } else if (event->type() == QEvent::MouseButtonRelease) {
             QMouseEvent *mouseEvent = static_cast<QMouseEvent*>(event);
+            if (mouseEvent->button() == Qt::RightButton) {
+                m_isPanning = false;
+                return true;
+            }
             if (mouseEvent->button() == Qt::LeftButton) {
                 m_isDragging = false;
                 return true;  // Event handled
@@ -528,6 +582,111 @@ bool PlotWidget::eventFilter(QObject *obj, QEvent *event)
 void PlotWidget::onSceneSelectionChanged()
 {
     // Handle selection changes if needed
+}
+
+void PlotWidget::zoomAt(const QPointF &scenePos, double scaleFactor)
+{
+    if (scaleFactor <= 0.0 || m_plotRect.width() <= 0.0 || m_plotRect.height() <= 0.0) {
+        return;
+    }
+
+    const QPointF anchorData = mapToData(scenePos);
+    const double xRange = m_xMax - m_xMin;
+    const double yRange = m_yMax - m_yMin;
+    if (xRange <= 0.0 || yRange <= 0.0) {
+        return;
+    }
+
+    const double newXRange = qMax(1e-9, xRange * scaleFactor);
+    const double newYRange = qMax(1e-9, yRange * scaleFactor);
+    const double maxXRange = qMax(1e-9, m_xBoundMax - m_xBoundMin);
+    const double maxYRange = qMax(1e-9, m_yBoundMax - m_yBoundMin);
+    const double clampedXRange = qMin(newXRange, maxXRange);
+    const double clampedYRange = qMin(newYRange, maxYRange);
+
+    // Keep the data point under the cursor stable as we zoom.
+    const double anchorFx = (scenePos.x() - m_plotRect.left()) / m_plotRect.width();
+    const double anchorFy = (m_plotRect.bottom() - scenePos.y()) / m_plotRect.height();
+
+    m_xMin = anchorData.x() - (anchorFx * clampedXRange);
+    m_xMax = m_xMin + clampedXRange;
+    m_yMin = anchorData.y() - (anchorFy * clampedYRange);
+    m_yMax = m_yMin + clampedYRange;
+
+    // Clamp zoomed window to configured bounds.
+    if (m_xMin < m_xBoundMin) {
+        const double shift = m_xBoundMin - m_xMin;
+        m_xMin += shift;
+        m_xMax += shift;
+    }
+    if (m_xMax > m_xBoundMax) {
+        const double shift = m_xMax - m_xBoundMax;
+        m_xMin -= shift;
+        m_xMax -= shift;
+    }
+    if (m_yMin < m_yBoundMin) {
+        const double shift = m_yBoundMin - m_yMin;
+        m_yMin += shift;
+        m_yMax += shift;
+    }
+    if (m_yMax > m_yBoundMax) {
+        const double shift = m_yMax - m_yBoundMax;
+        m_yMin -= shift;
+        m_yMax -= shift;
+    }
+
+    m_xAutoScale = false;
+    m_yAutoScale = false;
+    replot();
+    emit plotAreaChanged(m_plotRect);
+}
+
+void PlotWidget::panBySceneDelta(const QPointF &sceneDelta)
+{
+    if (m_plotRect.width() <= 0.0 || m_plotRect.height() <= 0.0) {
+        return;
+    }
+
+    const double xRange = m_xMax - m_xMin;
+    const double yRange = m_yMax - m_yMin;
+    if (xRange <= 0.0 || yRange <= 0.0) {
+        return;
+    }
+
+    const double dx = -(sceneDelta.x() / m_plotRect.width()) * xRange;
+    const double dy =  (sceneDelta.y() / m_plotRect.height()) * yRange;
+
+    m_xMin += dx;
+    m_xMax += dx;
+    m_yMin += dy;
+    m_yMax += dy;
+
+    // Clamp panning window to configured bounds.
+    if (m_xMin < m_xBoundMin) {
+        const double shift = m_xBoundMin - m_xMin;
+        m_xMin += shift;
+        m_xMax += shift;
+    }
+    if (m_xMax > m_xBoundMax) {
+        const double shift = m_xMax - m_xBoundMax;
+        m_xMin -= shift;
+        m_xMax -= shift;
+    }
+    if (m_yMin < m_yBoundMin) {
+        const double shift = m_yBoundMin - m_yMin;
+        m_yMin += shift;
+        m_yMax += shift;
+    }
+    if (m_yMax > m_yBoundMax) {
+        const double shift = m_yMax - m_yBoundMax;
+        m_yMin -= shift;
+        m_yMax -= shift;
+    }
+
+    m_xAutoScale = false;
+    m_yAutoScale = false;
+    replot();
+    emit plotAreaChanged(m_plotRect);
 }
 
 void PlotWidget::updatePlotArea()
