@@ -38,6 +38,7 @@
 #include <QDateTime>
 #include <QFileOpenEvent>
 #include <QMimeData>
+#include <QScreen>
 #include <QtMath>
 #include <QUrl>
 #include <QUuid>
@@ -602,9 +603,19 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     if (ui->imageViewerLabel) {
         ui->imageViewerLabel->setAcceptDrops(true);
     }
-    connect(ui->actionOpen_TBC_file, &QAction::triggered, this, &MainWindow::on_actionOpen_TBC_file_triggered, Qt::UniqueConnection);
     if (ui->mainTabWidget && ui->viewerTab) {
         ui->mainTabWidget->setCurrentWidget(ui->viewerTab);
+    }
+    if (ui->mainTabWidget) {
+        connect(ui->mainTabWidget, &QTabWidget::currentChanged, this, [this](int) {
+            if (!isViewerTabActive()) {
+                clearCursorReadout();
+                return;
+            }
+            if (resizeFrameWithWindow && tbcSource.getIsSourceLoaded() && isViewerTabActive()) {
+                resizeTimer->start();
+            }
+        });
     }
     if (ui->posTimecodeLineEdit) {
         ui->posTimecodeLineEdit->setPlaceholderText(tr("HH:MM:SS:FF"));
@@ -612,12 +623,15 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
         ui->posTimecodeLineEdit->setAlignment(Qt::AlignCenter);
         ui->posTimecodeLineEdit->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
         QFont valueFont = ui->posTimecodeLineEdit->font();
-        valueFont.setPointSize(qMax(11, valueFont.pointSize() + 1));
+        valueFont.setPointSize(qMax(12, valueFont.pointSize() + 3));
         ui->posTimecodeLineEdit->setFont(valueFont);
+        ui->posTimecodeLineEdit->setTextMargins(3, 0, 1, 0);
+        ui->posTimecodeLineEdit->setMinimumHeight(30);
+        ui->posTimecodeLineEdit->setMaximumHeight(30);
         const QFontMetrics valueMetrics(valueFont);
-        const int valueMinWidth = valueMetrics.horizontalAdvance(QStringLiteral("00:00:00:00")) + 10;
+        const int valueMinWidth = valueMetrics.horizontalAdvance(QStringLiteral("00:00:00:00")) + 8;
         ui->posTimecodeLineEdit->setMinimumWidth(valueMinWidth);
-        ui->posTimecodeLineEdit->setMaximumWidth(valueMinWidth + 8);
+        ui->posTimecodeLineEdit->setMaximumWidth(valueMinWidth + 4);
         ui->posTimecodeLineEdit->setVisible(false);
     }
     if (ui->posNumberSpinBox) {
@@ -646,6 +660,24 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     ensureSvgButtonIcon(ui->zoomOutPushButton, QStringLiteral(":/icons/Graphics/zoom-out.svg"));
     ensureSvgButtonIcon(ui->originalSizePushButton, QStringLiteral(":/icons/Graphics/zoom-original.svg"));
     ensureSvgButtonIcon(ui->mouseModePushButton, QStringLiteral(":/icons/Graphics/oscilloscope-target.svg"));
+    vectorscopeSelectionPushButton = new QPushButton(ui->mediaControl_frame);
+    vectorscopeSelectionPushButton->setObjectName(QStringLiteral("vectorscopeSelectionPushButton"));
+    vectorscopeSelectionPushButton->setMinimumSize(QSize(30, 30));
+    vectorscopeSelectionPushButton->setMaximumSize(QSize(30, 30));
+    vectorscopeSelectionPushButton->setCheckable(true);
+    vectorscopeSelectionPushButton->setChecked(false);
+    vectorscopeSelectionPushButton->setToolTip(tr("Enable vectorscope custom-area selection on the main viewer"));
+    ensureSvgButtonIcon(vectorscopeSelectionPushButton, QStringLiteral(":/icons/Graphics/highlight-selection.svg"));
+    if (ui->horizontalLayout_3 && ui->mouseModePushButton) {
+        const int mouseModeButtonIndex = ui->horizontalLayout_3->indexOf(ui->mouseModePushButton);
+        if (mouseModeButtonIndex >= 0) {
+            ui->horizontalLayout_3->insertWidget(mouseModeButtonIndex + 1, vectorscopeSelectionPushButton);
+        } else {
+            ui->horizontalLayout_3->addWidget(vectorscopeSelectionPushButton);
+        }
+    }
+    connect(vectorscopeSelectionPushButton, &QPushButton::toggled,
+            this, &MainWindow::on_vectorscopeSelectionPushButton_toggled);
     populateThemesMenu();
 
     // Set up dialogues
@@ -671,10 +703,24 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     ui->statusBar->addWidget(&fieldNumberStatus);
     ui->statusBar->addWidget(&vbiStatus);
     ui->statusBar->addWidget(&timeCodeStatus);
+    ui->statusBar->addPermanentWidget(&cursorStatus, 1);
     sourceVideoStatus.setText(tr("No source video file loaded"));
     fieldNumberStatus.setText(tr(" Frames: ./. Fields: ./."));
     vbiStatus.hide();
     timeCodeStatus.hide();
+    cursorStatus.setText(tr(" Cursor: --"));
+
+    if (ui->imageViewerLabel) {
+        ui->imageViewerLabel->setMouseTracking(true);
+        ui->imageViewerLabel->installEventFilter(this);
+    }
+    if (ui->scrollArea) {
+        ui->scrollArea->setMouseTracking(true);
+        if (ui->scrollArea->viewport()) {
+            ui->scrollArea->viewport()->setMouseTracking(true);
+            ui->scrollArea->viewport()->installEventFilter(this);
+        }
+    }
 
     // Set the initial field/frame number
     setCurrentFrame(1);
@@ -949,6 +995,9 @@ void MainWindow::setGuiEnabled(bool enabled)
     ui->zoomInPushButton->setEnabled(enabled);
     ui->zoomOutPushButton->setEnabled(enabled);
     ui->originalSizePushButton->setEnabled(enabled);
+    if (vectorscopeSelectionPushButton) {
+        vectorscopeSelectionPushButton->setEnabled(enabled);
+    }
 }
 
 bool MainWindow::event(QEvent *event)
@@ -971,6 +1020,126 @@ bool MainWindow::event(QEvent *event)
     }
 
     return QMainWindow::event(event);
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    if (!ui || !event) {
+        return QMainWindow::eventFilter(watched, event);
+    }
+
+    const bool watchingImageLabel = (ui->imageViewerLabel && watched == ui->imageViewerLabel);
+    const bool watchingViewport = (ui->scrollArea && ui->scrollArea->viewport() && watched == ui->scrollArea->viewport());
+    if (watchingImageLabel || watchingViewport) {
+        if (!tbcSource.getIsSourceLoaded() || !isViewerTabActive()) {
+            if (event->type() == QEvent::MouseMove || event->type() == QEvent::Leave) {
+                clearCursorReadout();
+            }
+            return QMainWindow::eventFilter(watched, event);
+        }
+
+        if (event->type() == QEvent::MouseMove) {
+            const auto *mouseEvent = static_cast<QMouseEvent *>(event);
+            QPoint globalPos;
+            if (watchingImageLabel) {
+                globalPos = ui->imageViewerLabel->mapToGlobal(mouseEvent->pos());
+            } else {
+                globalPos = ui->scrollArea->viewport()->mapToGlobal(mouseEvent->pos());
+            }
+            const QPoint viewerPos = ui->imageViewerLabel->mapFromGlobal(globalPos);
+            updateCursorReadout(viewerPos);
+        } else if (event->type() == QEvent::Leave) {
+            clearCursorReadout();
+        }
+    }
+
+    return QMainWindow::eventFilter(watched, event);
+}
+
+bool MainWindow::mapViewerToSourceCoordinates(const QPoint &viewerPoint, qint32 &sourceX, qint32 &sourceY) const
+{
+    if (!tbcSource.getIsSourceLoaded() || !ui || !ui->imageViewerLabel) {
+        return false;
+    }
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    const QPixmap viewerPixmap = ui->imageViewerLabel->pixmap();
+#elif QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
+    const QPixmap viewerPixmap = ui->imageViewerLabel->pixmap(Qt::ReturnByValue);
+#else
+    const QPixmap viewerPixmap = *(ui->imageViewerLabel->pixmap());
+#endif
+    if (viewerPixmap.isNull() || viewerPixmap.width() <= 0 || viewerPixmap.height() <= 0) {
+        return false;
+    }
+
+    const double offsetX = (static_cast<double>(ui->imageViewerLabel->width()) - static_cast<double>(viewerPixmap.width())) / 2.0;
+    const double offsetY = (static_cast<double>(ui->imageViewerLabel->height()) - static_cast<double>(viewerPixmap.height())) / 2.0;
+    const double localX = static_cast<double>(viewerPoint.x()) - offsetX;
+    const double localY = static_cast<double>(viewerPoint.y()) - offsetY;
+    if (localX < 0.0 || localY < 0.0
+        || localX >= static_cast<double>(viewerPixmap.width())
+        || localY >= static_cast<double>(viewerPixmap.height())) {
+        return false;
+    }
+
+    const qint32 sourceWidth = (!cursorReadoutImage.isNull() && cursorReadoutImage.width() > 0)
+        ? cursorReadoutImage.width()
+        : tbcSource.getFrameWidth();
+    const qint32 sourceHeight = (!cursorReadoutImage.isNull() && cursorReadoutImage.height() > 0)
+        ? cursorReadoutImage.height()
+        : tbcSource.getFrameHeight();
+    if (sourceWidth <= 0 || sourceHeight <= 0) {
+        return false;
+    }
+
+    sourceX = qBound<qint32>(0,
+                             static_cast<qint32>((localX / static_cast<double>(viewerPixmap.width())) * sourceWidth),
+                             sourceWidth - 1);
+    sourceY = qBound<qint32>(0,
+                             static_cast<qint32>((localY / static_cast<double>(viewerPixmap.height())) * sourceHeight),
+                             sourceHeight - 1);
+    return true;
+}
+
+void MainWindow::updateCursorReadout(const QPoint &viewerPoint)
+{
+    qint32 sourceX = 0;
+    qint32 sourceY = 0;
+    if (!mapViewerToSourceCoordinates(viewerPoint, sourceX, sourceY)) {
+        clearCursorReadout();
+        return;
+    }
+
+    QColor rgb = Qt::black;
+    if (!cursorReadoutImage.isNull()
+        && sourceX >= 0 && sourceX < cursorReadoutImage.width()
+        && sourceY >= 0 && sourceY < cursorReadoutImage.height()) {
+        rgb = cursorReadoutImage.pixelColor(sourceX, sourceY);
+    }
+
+    QString rawHex = QStringLiteral("----");
+    const TbcSource::ScanLineData scanLineData = tbcSource.getScanLineData(sourceY + 1);
+    if (!scanLineData.composite.isEmpty() && sourceX >= 0 && sourceX < scanLineData.composite.size()) {
+        const quint16 rawValue = static_cast<quint16>(qBound(0, scanLineData.composite[sourceX], 65535));
+        rawHex = QStringLiteral("0x%1").arg(rawValue, 4, 16, QChar('0')).toUpper();
+    }
+
+    const QString rgbHex = QStringLiteral("#%1%2%3")
+                               .arg(rgb.red(), 2, 16, QChar('0'))
+                               .arg(rgb.green(), 2, 16, QChar('0'))
+                               .arg(rgb.blue(), 2, 16, QChar('0'))
+                               .toUpper();
+    cursorStatus.setText(QStringLiteral(" Cursor X:%1 Y:%2 RGB:%3 Raw:%4")
+                             .arg(sourceX)
+                             .arg(sourceY)
+                             .arg(rgbHex)
+                             .arg(rawHex));
+}
+
+void MainWindow::clearCursorReadout()
+{
+    cursorStatus.setText(tr(" Cursor: --"));
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent *event)
@@ -1127,13 +1296,13 @@ void MainWindow::updateGuiLoaded()
     // Disable "Save Metadata", now we've loaded the metadata into the GUI
     ui->actionSave_Metadata->setEnabled(false);
 
-	//resize the windows to fit the content in full screen
-	MainWindow::resize_on_aspect();
-	
-	// If resizeFrameWithWindow is enabled, resize frame to fit current window
-	if (resizeFrameWithWindow) {
-		resizeTimer->start();
-	}
+    // Keep load-time sizing stable: either fit frame to existing window, or
+    // resize window to image size (legacy auto-resize behavior), but not both.
+    if (resizeFrameWithWindow) {
+        resizeTimer->start();
+    } else if (autoResize) {
+        resize_on_aspect();
+    }
 
     updateMetadataStatusPanel();
 }
@@ -1142,6 +1311,10 @@ void MainWindow::updateGuiLoaded()
 void MainWindow::updateGuiUnloaded()
 {
     setPlaybackRunning(false);
+    vectorscopeSelectionDragging = false;
+    if (vectorscopeSelectionPushButton) {
+        vectorscopeSelectionPushButton->setChecked(false);
+    }
     // Disable the GUI controls
     setGuiEnabled(false);
 
@@ -1518,7 +1691,10 @@ QString MainWindow::outputBaseNameForCurrentSource()
 void MainWindow::updateImageViewer()
 {
     QImage image = tbcSource.getImage();
+    cursorReadoutImage = image;
     if (image.isNull() || image.width() == 0 || image.height() == 0) {
+        cursorReadoutImage = QImage();
+        clearCursorReadout();
         if (tbcSource.getIsMetadataOnly()) {
             ui->imageViewerLabel->setText(tr("Metadata-only mode (no TBC image data)"));
         }
@@ -1575,6 +1751,33 @@ void MainWindow::updateImageViewer()
                     if (borderRect.width() > 0 && borderRect.height() > 0) {
                         painter.drawRect(borderRect);
                     }
+                }
+            }
+        }
+
+        const bool showVectorscopeSelection = vectorscopeDialog
+            && (vectorscopeDialog->isCustomAreaModeSelected() || vectorscopeSelectionDragging);
+        if (showVectorscopeSelection && !cursorReadoutImage.isNull()
+            && cursorReadoutImage.width() > 0 && cursorReadoutImage.height() > 0) {
+            const QRect sourceSelectionRect = vectorscopeDialog->customAreaRect();
+            if (sourceSelectionRect.width() > 0 && sourceSelectionRect.height() > 0) {
+                const double scaleX = static_cast<double>(scaledPixmap.width()) / static_cast<double>(cursorReadoutImage.width());
+                const double scaleY = static_cast<double>(scaledPixmap.height()) / static_cast<double>(cursorReadoutImage.height());
+                QRect scaledSelectionRect(qRound(sourceSelectionRect.x() * scaleX),
+                                          qRound(sourceSelectionRect.y() * scaleY),
+                                          qMax(1, qRound(sourceSelectionRect.width() * scaleX)),
+                                          qMax(1, qRound(sourceSelectionRect.height() * scaleY)));
+                scaledSelectionRect = scaledSelectionRect.intersected(QRect(0, 0, scaledPixmap.width(), scaledPixmap.height()));
+
+                if (scaledSelectionRect.width() > 0 && scaledSelectionRect.height() > 0) {
+                    QPainter painter(&scaledPixmap);
+                    painter.setRenderHint(QPainter::Antialiasing, false);
+                    QPen selectionPen(QColor(255, 255, 0, 220));
+                    selectionPen.setWidth(2);
+                    selectionPen.setStyle(Qt::DashLine);
+                    painter.setPen(selectionPen);
+                    painter.setBrush(Qt::NoBrush);
+                    painter.drawRect(scaledSelectionRect.adjusted(0, 0, -1, -1));
                 }
             }
         }
@@ -1676,6 +1879,9 @@ QVector<QRect> MainWindow::getActiveVideoRects() const
 void MainWindow::hideImage()
 {
     ui->imageViewerLabel->clear();
+    vectorscopeSelectionDragging = false;
+    cursorReadoutImage = QImage();
+    clearCursorReadout();
 }
 
 // Misc private methods -----------------------------------------------------------------------------------------------
@@ -3671,20 +3877,36 @@ void MainWindow::on_aspectPushButton_clicked()
 void MainWindow::resize_on_aspect()
 {
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-    int width = ui->imageViewerLabel->pixmap().width();
-    int height = ui->imageViewerLabel->pixmap().height();
+    QPixmap pixmap = ui->imageViewerLabel->pixmap();
 #elif QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
-    int width = ui->imageViewerLabel->pixmap(Qt::ReturnByValue).width();
-    int height = ui->imageViewerLabel->pixmap(Qt::ReturnByValue).height();
+    QPixmap pixmap = ui->imageViewerLabel->pixmap(Qt::ReturnByValue);
 #else
-    int width = ui->imageViewerLabel->pixmap()->width();
-    int height = ui->imageViewerLabel->pixmap()->height();
+    QPixmap pixmap = *(ui->imageViewerLabel->pixmap());
 #endif
+    if (pixmap.isNull() || !ui || !ui->scrollArea) {
+        return;
+    }
+    if (this->isFullScreen() || this->isMaximized() || !autoResize) {
+        return;
+    }
 
-	if(!this->isFullScreen() && !this->isMaximized() && autoResize)
-	{
-		this->resize(width + 20, height + 140);
-	}
+    const QSize viewportSize = ui->scrollArea->viewport()->size();
+    if (viewportSize.width() < 1 || viewportSize.height() < 1) {
+        return;
+    }
+
+    const int nonViewerWidth = this->width() - viewportSize.width();
+    const int nonViewerHeight = this->height() - viewportSize.height();
+    QSize targetWindowSize(pixmap.width() + nonViewerWidth,
+                           pixmap.height() + nonViewerHeight);
+    targetWindowSize = targetWindowSize.expandedTo(this->minimumSize());
+
+    if (QScreen *windowScreen = this->screen()) {
+        const QSize maxWindowSize = windowScreen->availableGeometry().size() - QSize(12, 12);
+        targetWindowSize = targetWindowSize.boundedTo(maxWindowSize);
+    }
+
+    this->resize(targetWindowSize);
 }
 
 // Resize the frame to fit within the current window size
@@ -3693,10 +3915,13 @@ void MainWindow::resizeFrameToWindow()
 	if (!tbcSource.getIsSourceLoaded()) {
 		return;
 	}
+    if (!isViewerTabActive()) {
+        return;
+    }
 
 	// Get the scroll area size (which contains the imageViewerLabel)
 	QScrollArea* scrollArea = ui->scrollArea;
-	QSize availableSize = scrollArea->viewport()->size();
+	QSize availableSize = scrollArea->viewport()->size() - QSize(2, 2);
 	
 	// Ensure we have a valid size - sometimes during resize events the size might be invalid
 	if (availableSize.width() <= 0 || availableSize.height() <= 0) {
@@ -3725,7 +3950,7 @@ void MainWindow::resizeFrameToWindow()
 	}
 	
 	// Only update if there's a significant change to avoid constant tiny adjustments
-	if (qAbs(newScaleFactor - scaleFactor) > 0.01) {
+	if (qAbs(newScaleFactor - scaleFactor) > 0.001) {
 		scaleFactor = newScaleFactor;
 		updateImageViewer();
 	}
@@ -3954,6 +4179,9 @@ void MainWindow::on_originalSizePushButton_clicked()
 void MainWindow::on_mouseModePushButton_clicked()
 {
     if (ui->mouseModePushButton->isChecked()) {
+        if (vectorscopeSelectionPushButton && vectorscopeSelectionPushButton->isChecked()) {
+            vectorscopeSelectionPushButton->setChecked(false);
+        }
         // Show the oscilloscope view if currently hidden
         if (!oscilloscopeDialog->isVisible()) {
             updateOscilloscopeDialogue();
@@ -3962,6 +4190,20 @@ void MainWindow::on_mouseModePushButton_clicked()
     }
 
     // Update the image viewer to display/hide the indicator line
+    updateImageViewer();
+}
+
+void MainWindow::on_vectorscopeSelectionPushButton_toggled(bool checked)
+{
+    vectorscopeSelectionDragging = false;
+    if (checked && ui->mouseModePushButton && ui->mouseModePushButton->isChecked()) {
+        ui->mouseModePushButton->setChecked(false);
+    }
+
+    if (checked && vectorscopeDialog) {
+        vectorscopeDialog->setCustomAreaModeSelected(true);
+    }
+
     updateImageViewer();
 }
 
@@ -3999,7 +4241,13 @@ void MainWindow::vectorscopeChangedSignalHandler()
 // Mouse press event handler
 void MainWindow::mousePressEvent(QMouseEvent *event)
 {
-    if (!tbcSource.getIsSourceLoaded() || !isViewerTabActive()) return;
+    if (!event) {
+        return;
+    }
+    if (!tbcSource.getIsSourceLoaded() || !isViewerTabActive()) {
+        QMainWindow::mousePressEvent(event);
+        return;
+    }
 
     // Get the mouse position relative to our scene
     QPoint origin = ui->imageViewerLabel->mapFromGlobal(QCursor::pos());
@@ -4012,16 +4260,42 @@ void MainWindow::mousePressEvent(QMouseEvent *event)
             oY >= 0 &&
             oX + 1 <= ui->imageViewerLabel->width() &&
             oY <= ui->imageViewerLabel->height()) {
+        if (vectorscopeSelectionPushButton
+            && vectorscopeSelectionPushButton->isChecked()
+            && vectorscopeDialog
+            && event->button() == Qt::LeftButton) {
+            qint32 sourceX = 0;
+            qint32 sourceY = 0;
+            if (mapViewerToSourceCoordinates(origin, sourceX, sourceY)) {
+                vectorscopeSelectionDragging = true;
+                vectorscopeSelectionAnchor = QPoint(sourceX, sourceY);
+                vectorscopeDialog->setCustomAreaModeSelected(true);
+                vectorscopeDialog->setCustomAreaRect(QRect(sourceX, sourceY, 1, 1));
+                updateImageViewer();
+                updateVectorscopeDialogue();
+            }
+            event->accept();
+            return;
+        }
 
         mouseScanLineSelect(oX, oY);
         event->accept();
+        return;
     }
+
+    QMainWindow::mousePressEvent(event);
 }
 
 // Mouse move event
 void MainWindow::mouseMoveEvent(QMouseEvent *event)
 {
-    if (!tbcSource.getIsSourceLoaded() || !isViewerTabActive()) return;
+    if (!event) {
+        return;
+    }
+    if (!tbcSource.getIsSourceLoaded() || !isViewerTabActive()) {
+        QMainWindow::mouseMoveEvent(event);
+        return;
+    }
 
     // Get the mouse position relative to our scene
     QPoint origin = ui->imageViewerLabel->mapFromGlobal(QCursor::pos());
@@ -4034,10 +4308,63 @@ void MainWindow::mouseMoveEvent(QMouseEvent *event)
             oY >= 0 &&
             oX + 1 <= ui->imageViewerLabel->width() &&
             oY <= ui->imageViewerLabel->height()) {
+        if (vectorscopeSelectionDragging && vectorscopeDialog) {
+            qint32 sourceX = 0;
+            qint32 sourceY = 0;
+            if (mapViewerToSourceCoordinates(origin, sourceX, sourceY)) {
+                const qint32 left = qMin(vectorscopeSelectionAnchor.x(), sourceX);
+                const qint32 right = qMax(vectorscopeSelectionAnchor.x(), sourceX);
+                const qint32 top = qMin(vectorscopeSelectionAnchor.y(), sourceY);
+                const qint32 bottom = qMax(vectorscopeSelectionAnchor.y(), sourceY);
+                vectorscopeDialog->setCustomAreaRect(QRect(left, top, (right - left) + 1, (bottom - top) + 1));
+                updateImageViewer();
+                updateVectorscopeDialogue();
+            }
+            event->accept();
+            return;
+        }
 
         mouseScanLineSelect(oX, oY);
         event->accept();
+        return;
     }
+
+    if (!vectorscopeSelectionDragging) {
+        clearCursorReadout();
+    }
+    QMainWindow::mouseMoveEvent(event);
+}
+
+void MainWindow::mouseReleaseEvent(QMouseEvent *event)
+{
+    if (!event) {
+        return;
+    }
+    if (!tbcSource.getIsSourceLoaded() || !isViewerTabActive()) {
+        QMainWindow::mouseReleaseEvent(event);
+        return;
+    }
+
+    if (vectorscopeSelectionDragging && event->button() == Qt::LeftButton) {
+        vectorscopeSelectionDragging = false;
+        QPoint origin = ui->imageViewerLabel->mapFromGlobal(QCursor::pos());
+        qint32 sourceX = 0;
+        qint32 sourceY = 0;
+        if (vectorscopeDialog && mapViewerToSourceCoordinates(origin, sourceX, sourceY)) {
+            const qint32 left = qMin(vectorscopeSelectionAnchor.x(), sourceX);
+            const qint32 right = qMax(vectorscopeSelectionAnchor.x(), sourceX);
+            const qint32 top = qMin(vectorscopeSelectionAnchor.y(), sourceY);
+            const qint32 bottom = qMax(vectorscopeSelectionAnchor.y(), sourceY);
+            vectorscopeDialog->setCustomAreaModeSelected(true);
+            vectorscopeDialog->setCustomAreaRect(QRect(left, top, (right - left) + 1, (bottom - top) + 1));
+            updateVectorscopeDialogue();
+        }
+        updateImageViewer();
+        event->accept();
+        return;
+    }
+
+    QMainWindow::mouseReleaseEvent(event);
 }
 
 // Perform mouse based scan line selection
@@ -4046,39 +4373,20 @@ void MainWindow::mouseScanLineSelect(qint32 oX, qint32 oY)
     if (!isViewerTabActive()) {
         return;
     }
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-    QPixmap imageViewerPixmap = ui->imageViewerLabel->pixmap();
-#elif QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
-    QPixmap imageViewerPixmap = ui->imageViewerLabel->pixmap(Qt::ReturnByValue);
-#else
-    QPixmap imageViewerPixmap = *(ui->imageViewerLabel->pixmap());
-#endif
+    const QPoint viewerPoint(oX, oY);
+    updateCursorReadout(viewerPoint);
 
-    // X calc
-    double offsetX = ((static_cast<double>(ui->imageViewerLabel->width()) -
-                       static_cast<double>(imageViewerPixmap.width())) / 2.0);
-
-    double unscaledXR = (static_cast<double>(tbcSource.getFrameWidth()) /
-                         static_cast<double>(imageViewerPixmap.width())) * static_cast<double>(oX - offsetX);
-    qint32 unscaledX = static_cast<qint32>(unscaledXR);
-    if (unscaledX > tbcSource.getFrameWidth() - 1) unscaledX = tbcSource.getFrameWidth() - 1;
-    if (unscaledX < 0) unscaledX = 0;
-
-    // Y Calc
-    double offsetY = ((static_cast<double>(ui->imageViewerLabel->height()) -
-                       static_cast<double>(imageViewerPixmap.height())) / 2.0);
-
-    double unscaledYR = (static_cast<double>(tbcSource.getFrameHeight()) /
-                         static_cast<double>(imageViewerPixmap.height())) * static_cast<double>(oY - offsetY);
-    qint32 unscaledY = static_cast<qint32>(unscaledYR);
-    if (unscaledY > tbcSource.getFrameHeight()) unscaledY = tbcSource.getFrameHeight();
-    if (unscaledY < 1) unscaledY = 1;
+    qint32 sourceX = 0;
+    qint32 sourceY = 0;
+    if (!mapViewerToSourceCoordinates(viewerPoint, sourceX, sourceY)) {
+        return;
+    }
 
     // Show the oscilloscope dialogue for the selected scan-line (if the right mouse mode is selected)
     if (ui->mouseModePushButton->isChecked()) {
         // Remember the last line rendered
-        lastScopeLine = unscaledY;
-        lastScopeDot = unscaledX;
+        lastScopeLine = qBound<qint32>(1, sourceY + 1, tbcSource.getFrameHeight());
+        lastScopeDot = sourceX;
 
         updateOscilloscopeDialogue();
         oscilloscopeDialog->show();

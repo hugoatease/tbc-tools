@@ -6,6 +6,7 @@
         <file>Graphics/128-analyse.png</file>
         <file>Graphics/256-analyse.png</file>
         <file>Graphics/end-frame.svg</file>
+        <file>Graphics/highlight-selection.svg</file>
         <file>Graphics/next-frame.svg</file>
         <file>Graphics/oscilloscope-target.svg</file>
         <file>Graphics/prev-frame.svg</file>

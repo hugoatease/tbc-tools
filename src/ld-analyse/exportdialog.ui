@@ -131,7 +131,7 @@
         <widget class="QComboBox" name="outputResolutionModeComboBox">
          <property name="minimumSize">
           <size>
-           <width>128</width>
+           <width>104</width>
            <height>0</height>
           </size>
          </property>
@@ -373,10 +373,29 @@
      <item row="4" column="1">
       <layout class="QHBoxLayout" name="audio1Layout">
        <item>
+        <widget class="QLineEdit" name="audio1NameLineEdit">
+         <property name="minimumSize">
+          <size>
+           <width>124</width>
+           <height>0</height>
+          </size>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>170</width>
+           <height>16777215</height>
+          </size>
+         </property>
+         <property name="placeholderText">
+          <string>Track name</string>
+         </property>
+        </widget>
+       </item>
+       <item>
         <widget class="QLineEdit" name="audio1LineEdit">
          <property name="minimumSize">
           <size>
-           <width>320</width>
+           <width>220</width>
            <height>0</height>
           </size>
          </property>
@@ -404,10 +423,29 @@
      <item row="5" column="1">
       <layout class="QHBoxLayout" name="audio2Layout">
        <item>
+        <widget class="QLineEdit" name="audio2NameLineEdit">
+         <property name="minimumSize">
+          <size>
+           <width>124</width>
+           <height>0</height>
+          </size>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>170</width>
+           <height>16777215</height>
+          </size>
+         </property>
+         <property name="placeholderText">
+          <string>Track name</string>
+         </property>
+        </widget>
+       </item>
+       <item>
         <widget class="QLineEdit" name="audio2LineEdit">
          <property name="minimumSize">
           <size>
-           <width>320</width>
+           <width>220</width>
            <height>0</height>
           </size>
          </property>
@@ -435,10 +473,29 @@
      <item row="6" column="1">
       <layout class="QHBoxLayout" name="audio3Layout">
        <item>
+        <widget class="QLineEdit" name="audio3NameLineEdit">
+         <property name="minimumSize">
+          <size>
+           <width>124</width>
+           <height>0</height>
+          </size>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>170</width>
+           <height>16777215</height>
+          </size>
+         </property>
+         <property name="placeholderText">
+          <string>Track name</string>
+         </property>
+        </widget>
+       </item>
+       <item>
         <widget class="QLineEdit" name="audio3LineEdit">
          <property name="minimumSize">
           <size>
-           <width>320</width>
+           <width>220</width>
            <height>0</height>
           </size>
          </property>
@@ -466,10 +523,29 @@
      <item row="7" column="1">
       <layout class="QHBoxLayout" name="audio4Layout">
        <item>
+        <widget class="QLineEdit" name="audio4NameLineEdit">
+         <property name="minimumSize">
+          <size>
+           <width>124</width>
+           <height>0</height>
+          </size>
+         </property>
+         <property name="maximumSize">
+          <size>
+           <width>170</width>
+           <height>16777215</height>
+          </size>
+         </property>
+         <property name="placeholderText">
+          <string>Track name</string>
+         </property>
+        </widget>
+       </item>
+       <item>
         <widget class="QLineEdit" name="audio4LineEdit">
          <property name="minimumSize">
           <size>
-           <width>320</width>
+           <width>220</width>
            <height>0</height>
           </size>
          </property>

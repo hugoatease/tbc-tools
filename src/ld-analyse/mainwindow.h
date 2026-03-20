@@ -29,6 +29,7 @@
 #include <QTimer>
 #include <QVector>
 #include <QActionGroup>
+#include <QImage>
 
 #include "oscilloscopedialog.h"
 #include "vectorscopedialog.h"
@@ -120,6 +121,7 @@ private slots:
     void on_zoomOutPushButton_clicked();
     void on_originalSizePushButton_clicked();
     void on_mouseModePushButton_clicked();
+    void on_vectorscopeSelectionPushButton_toggled(bool checked);
     //void on_autoResizeButton_clicked();
 	void on_toggleAutoResize_toggled(bool checked);
 	void on_actionResizeFrameWithWindow_toggled(bool checked);
@@ -129,6 +131,7 @@ private slots:
     void vectorscopeChangedSignalHandler();
     void mousePressEvent(QMouseEvent *event);
     void mouseMoveEvent(QMouseEvent *event);
+    void mouseReleaseEvent(QMouseEvent *event);
     void videoParametersChangedSignalHandler(const LdDecodeMetaData::VideoParameters &videoParameters);
     void videoLevelsChangedSignalHandler(qint32 blackLevel, qint32 whiteLevel);
     void chromaDecoderConfigChangedSignalHandler();
@@ -144,6 +147,7 @@ private slots:
 	void resize_on_aspect();
 protected:
     bool event(QEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dragMoveEvent(QDragMoveEvent *event) override;
     void dropEvent(QDropEvent *event) override;
@@ -196,6 +200,7 @@ private:
     QLabel fieldNumberStatus;
     QLabel vbiStatus;
     QLabel timeCodeStatus;
+    QLabel cursorStatus;
     TbcSource tbcSource;
     bool displayAspectRatio;
     bool showExportBoundary = false;
@@ -206,12 +211,15 @@ private:
     qint32 lastScopeDot;
     qint32 currentFieldNumber = 1;
     qint32 currentFrameNumber = 1;
+    bool vectorscopeSelectionDragging = false;
+    QPoint vectorscopeSelectionAnchor;
     double scaleFactor;
     QPalette buttonPalette;
     QString lastFilename;
     bool metadataJsonLoaded = false;
     QString metadataJsonFilename;
     QString metadataTempSqliteFilename;
+    QImage cursorReadoutImage;
     QTimer* playbackTimer = nullptr;
     QTimer* resizeTimer = nullptr;
     double playbackTickCarryMs = 0.0;
@@ -260,6 +268,9 @@ private:
     void updateImageViewer();
     QVector<QRect> getActiveVideoRects() const;
     void hideImage();
+    bool mapViewerToSourceCoordinates(const QPoint &viewerPoint, qint32 &sourceX, qint32 &sourceY) const;
+    void updateCursorReadout(const QPoint &viewerPoint);
+    void clearCursorReadout();
     void resizeFrameToWindow();
     void enterChromaSeekMode(QPushButton* button);
     void exitChromaSeekMode(QPushButton* button);
@@ -281,6 +292,7 @@ private:
     QActionGroup *themesActionGroup = nullptr;
     QAction *saveAllModesPngAction = nullptr;
     QAction *copyCurrentDisplayAction = nullptr;
+    QPushButton *vectorscopeSelectionPushButton = nullptr;
     UiStateSnapshot pendingUiStateSnapshot;
     bool restoreUiStateAfterReload = false;
 };

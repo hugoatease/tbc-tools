@@ -569,11 +569,6 @@ int fullFrameHeightForSystemFallback(int system)
     return system == PAL ? 625 : 525;
 }
 
-QString bt601ParTextForSystem(int system)
-{
-    return system == PAL ? QStringLiteral("128:117")
-                         : QStringLiteral("12:13");
-}
 
 struct OutputResamplePlan {
     bool enabled = false;
@@ -1466,7 +1461,6 @@ void ExportDialog::refreshOutputResolutionModeOptions()
     }
 
     const int standardHeight = activeAreaOutputHeightForSystem(system);
-    const QString bt601Par = bt601ParTextForSystem(system);
     const int imxHeight = activeVbiOutputHeightForSystem(system);
     const int vbiNativeHeight = vbiNativeOutputHeightForSystem(system);
 
@@ -1483,45 +1477,33 @@ void ExportDialog::refreshOutputResolutionModeOptions()
     ui->outputResolutionModeComboBox->clear();
 
     if (resolutionMode == QStringLiteral("active_vbi")) {
-        ui->outputResolutionModeComboBox->addItem(tr("D10/IMX 720x%1").arg(imxHeight), QStringLiteral("default_safe"));
-        ui->outputResolutionModeComboBox->addItem(tr("Decode Native %1x%2")
+        ui->outputResolutionModeComboBox->addItem(tr("D10 720x%1").arg(imxHeight), QStringLiteral("default_safe"));
+        ui->outputResolutionModeComboBox->addItem(tr("Native %1x%2")
                                                       .arg(activeNativeWidth)
                                                       .arg(vbiNativeHeight),
                                                   QStringLiteral("tool_native"));
     } else if (resolutionMode == QStringLiteral("full_frame_4fsc")) {
-        ui->outputResolutionModeComboBox->addItem(tr("Decode Native %1x%2 (Full-Frame 4fsc)")
+        ui->outputResolutionModeComboBox->addItem(tr("Native %1x%2")
                                                       .arg(fullFrameWidth)
                                                       .arg(fullFrameHeight),
                                                   QStringLiteral("tool_native"));
     } else if (resolutionMode == QStringLiteral("user_defined")) {
-        ui->outputResolutionModeComboBox->addItem(tr("Decode Native %1x%2")
+        ui->outputResolutionModeComboBox->addItem(tr("Native %1x%2")
                                                       .arg(activeNativeWidth)
                                                       .arg(activeNativeHeight),
                                                   QStringLiteral("tool_native"));
     } else {
-        ui->outputResolutionModeComboBox->addItem(tr("Standard 720x%1").arg(standardHeight), QStringLiteral("default_safe"));
-        ui->outputResolutionModeComboBox->addItem(tr("Decode Native %1x%2")
+        ui->outputResolutionModeComboBox->addItem(tr("D1 720x%1").arg(standardHeight), QStringLiteral("default_safe"));
+        ui->outputResolutionModeComboBox->addItem(tr("Native %1x%2")
                                                       .arg(activeNativeWidth)
                                                       .arg(activeNativeHeight),
                                                   QStringLiteral("tool_native"));
-        ui->outputResolutionModeComboBox->addItem(tr("BT.601 702x%1 (PAR %2)")
-                                                      .arg(standardHeight)
-                                                      .arg(bt601Par),
+        ui->outputResolutionModeComboBox->addItem(tr("BT.601 702x%1")
+                                                      .arg(standardHeight),
                                                   QStringLiteral("bt601_702"));
-        ui->outputResolutionModeComboBox->addItem(tr("BT.601 704x%1 (PAR %2)")
-                                                      .arg(standardHeight)
-                                                      .arg(bt601Par),
-                                                  QStringLiteral("bt601_704"));
-        ui->outputResolutionModeComboBox->addItem(tr("BT.601 720x%1 (PAR %2)")
-                                                      .arg(standardHeight)
-                                                      .arg(bt601Par),
-                                                  QStringLiteral("bt601_720"));
-        ui->outputResolutionModeComboBox->addItem(tr("Square 768x%1 (PAR 1:1)")
+        ui->outputResolutionModeComboBox->addItem(tr("Square 768x%1")
                                                       .arg(standardHeight),
                                                   QStringLiteral("square_768"));
-        ui->outputResolutionModeComboBox->addItem(tr("Square 786x%1 (PAR 1:1)")
-                                                      .arg(standardHeight),
-                                                  QStringLiteral("square_786"));
     }
 
     int targetIndex = ui->outputResolutionModeComboBox->findData(previousMode);
@@ -2937,6 +2919,18 @@ void ExportDialog::setBusy(bool busy)
         ui->proxyCodecComboBox->setEnabled(enabled);
     }
     ui->outputLineEdit->setEnabled(browseEnabled);
+    if (ui->audio1NameLineEdit) {
+        ui->audio1NameLineEdit->setEnabled(enabled);
+    }
+    if (ui->audio2NameLineEdit) {
+        ui->audio2NameLineEdit->setEnabled(enabled);
+    }
+    if (ui->audio3NameLineEdit) {
+        ui->audio3NameLineEdit->setEnabled(enabled);
+    }
+    if (ui->audio4NameLineEdit) {
+        ui->audio4NameLineEdit->setEnabled(enabled);
+    }
     ui->audio1LineEdit->setEnabled(enabled);
     ui->audio2LineEdit->setEnabled(enabled);
     ui->audio3LineEdit->setEnabled(enabled);
@@ -3781,7 +3775,36 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
     }
 
     const QStringList tracksToUse = audioTracks.isEmpty() ? collectAudioTracks() : audioTracks;
-    for (const QString &track : tracksToUse) {
+    QStringList trackTitles;
+    const auto appendTrackTitle = [&trackTitles](const QLineEdit *fileEdit, const QLineEdit *titleEdit) {
+        if (!fileEdit) {
+            return;
+        }
+        if (fileEdit->text().trimmed().isEmpty()) {
+            return;
+        }
+        trackTitles << (titleEdit ? titleEdit->text().trimmed() : QString());
+    };
+    if (ui) {
+        appendTrackTitle(ui->audio1LineEdit, ui->audio1NameLineEdit);
+        appendTrackTitle(ui->audio2LineEdit, ui->audio2NameLineEdit);
+        appendTrackTitle(ui->audio3LineEdit, ui->audio3NameLineEdit);
+        appendTrackTitle(ui->audio4LineEdit, ui->audio4NameLineEdit);
+    }
+    for (int i = 0; i < tracksToUse.size(); ++i) {
+        const QString track = tracksToUse.at(i).trimmed();
+        if (track.isEmpty()) {
+            continue;
+        }
+        const QString title = (i < trackTitles.size()) ? trackTitles.at(i).trimmed() : QString();
+        if (!title.isEmpty()) {
+            QJsonArray advancedTrack;
+            advancedTrack.append(track);
+            advancedTrack.append(title);
+            args << QStringLiteral("--audio-track-advanced")
+                 << QString::fromUtf8(QJsonDocument(advancedTrack).toJson(QJsonDocument::Compact));
+            continue;
+        }
         args << QStringLiteral("--audio-track") << track;
     }
     if (ui->logProcessOutputCheckBox && ui->logProcessOutputCheckBox->isChecked()) {

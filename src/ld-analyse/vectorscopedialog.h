@@ -12,8 +12,11 @@
 #define VECTORSCOPEDIALOG_H
 
 #include <QAbstractButton>
+#include <QButtonGroup>
 #include <QGraphicsPixmapItem>
 #include <QDialog>
+#include <QRect>
+#include <QRadioButton>
 
 #include "componentframe.h"
 #include "lddecodemetadata.h"
@@ -33,6 +36,10 @@ public:
 
     void showTraceImage(const ComponentFrame &componentFrame, const LdDecodeMetaData::VideoParameters &videoParameters,
                         const TbcSource::ViewMode& viewMode, const bool isFirstField);
+    bool isCustomAreaModeSelected() const;
+    QRect customAreaRect() const;
+    void setCustomAreaModeSelected(bool selected);
+    void setCustomAreaRect(const QRect &areaRect);
 
 signals:
     void scopeChanged();
@@ -42,11 +49,36 @@ private slots:
     void on_blendColorCheckBox_clicked();
     void on_graticuleButtonGroup_buttonClicked(QAbstractButton *button);
     void on_fieldSelectButtonGroup_buttonClicked(QAbstractButton *button);
+    void on_renderModeButtonGroup_buttonClicked(QAbstractButton *button);
+    void on_areaModeButtonGroup_buttonClicked(QAbstractButton *button);
 
 private:
     Ui::VectorscopeDialog *ui;
 
     QImage getTraceImage(const ComponentFrame &componentFrame, const LdDecodeMetaData::VideoParameters &videoParameters);
+    void initialiseAdvancedControls();
+    void updateAreaControlState(const ComponentFrame &componentFrame, const LdDecodeMetaData::VideoParameters &videoParameters);
+    void applyAreaPreset();
+
+    QButtonGroup *renderModeButtonGroup = nullptr;
+    QRadioButton *renderModePointsRadioButton = nullptr;
+    QRadioButton *renderModeDensityRadioButton = nullptr;
+    QButtonGroup *areaModeButtonGroup = nullptr;
+    QRadioButton *areaModeActiveRadioButton = nullptr;
+    QRadioButton *areaModeFullRadioButton = nullptr;
+    QRadioButton *areaModeCustomRadioButton = nullptr;
+
+    bool hasAreaContext = false;
+    qint32 areaFrameWidth = 0;
+    qint32 areaFrameHeight = 0;
+    qint32 activeXStart = 0;
+    qint32 activeXEnd = 0;
+    qint32 activeYStart = 0;
+    qint32 activeYEnd = 0;
+    qint32 customXStart = 0;
+    qint32 customXEnd = 0;
+    qint32 customYStart = 0;
+    qint32 customYEnd = 0;
 };
 
 #endif // VECTORSCOPEDIALOG_H
