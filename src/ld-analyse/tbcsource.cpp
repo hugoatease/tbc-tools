@@ -11,6 +11,8 @@
 
 #include <limits>
 #include <QDir>
+#include <QDateTime>
+#include <QFileInfo>
 #include <QStringList>
 
 #include "tbcsource.h"
@@ -19,6 +21,24 @@
 #include "sourcefield.h"
 
 namespace {
+QString backupFilenameWithTimestampFallback(const QString &inputMetadataFilename,
+                                            const QString &backupSuffix)
+{
+    const QString defaultBackupFilename = inputMetadataFilename + backupSuffix;
+    if (!QFileInfo::exists(defaultBackupFilename)) {
+        return defaultBackupFilename;
+    }
+
+    const QString timestamp = QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMdd_HHmmss"));
+    QString backupFilename = inputMetadataFilename + QStringLiteral(".") + timestamp + backupSuffix;
+    qint32 collisionCounter = 1;
+    while (QFileInfo::exists(backupFilename)) {
+        backupFilename = inputMetadataFilename + QStringLiteral(".") + timestamp
+                         + QStringLiteral("_") + QString::number(collisionCounter) + backupSuffix;
+        collisionCounter++;
+    }
+    return backupFilename;
+}
 void applyFullFrameDecodeBounds(LdDecodeMetaData::VideoParameters &videoParameters)
 {
     const qint32 frameHeight = (videoParameters.fieldHeight * 2) - 1;
@@ -1678,20 +1698,14 @@ bool TbcSource::startBackgroundSave(QString metadataFilename)
         return false;
     }
 
-    // If there isn't already a .bup backup file, rename the existing file to that name
-    // (matching the behaviour of ld-process-vbi)
-    QString backupFilename = metadataFilename + ".bup";
-    if (!QFile::exists(backupFilename)) {
-        if (!QFile::rename(metadataFilename, metadataFilename + ".bup")) {
+    // Preserve the current metadata by moving it to a backup file.
+    // If a default backup already exists, create a timestamped backup name.
+    if (QFile::exists(metadataFilename)) {
+        const QString backupFilename =
+            backupFilenameWithTimestampFallback(metadataFilename, QStringLiteral(".bup"));
+        if (!QFile::rename(metadataFilename, backupFilename)) {
             // Renaming failed
             lastIOError = "Could not rename existing metadata file to backup";
-            return false;
-        }
-    } else {
-        // There is a backup, so it's safe to remove the existing file
-        if (!QFile::remove(metadataFilename)) {
-            // Deleting failed
-            lastIOError = "Could not remove existing metadata file";
             return false;
         }
     }

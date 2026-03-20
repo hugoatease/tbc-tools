@@ -131,15 +131,23 @@ int main(int argc, char *argv[])
 
     // Option to specify a different metadata input file
     QCommandLineOption inputMetadataOption(QStringList() << "input-metadata",
-                                       QCoreApplication::translate("main", "Specify the input metadata file (default input.db)"),
+                                       QCoreApplication::translate("main", "Specify the input metadata file (default auto-detect .db/.json)"),
                                        QCoreApplication::translate("main", "filename"));
     parser.addOption(inputMetadataOption);
+    QCommandLineOption inputJsonOption(QStringList() << "input-json",
+                                       QCoreApplication::translate("main", "Specify the input metadata file (legacy alias for --input-metadata)"),
+                                       QCoreApplication::translate("main", "filename"));
+    parser.addOption(inputJsonOption);
 
     // Option to specify a different metadata output file
     QCommandLineOption outputMetadataOption(QStringList() << "output-metadata",
                                         QCoreApplication::translate("main", "Specify the output metadata file (default same as input)"),
                                         QCoreApplication::translate("main", "filename"));
     parser.addOption(outputMetadataOption);
+    QCommandLineOption outputJsonOption(QStringList() << "output-json",
+                                        QCoreApplication::translate("main", "Specify the output metadata file (legacy alias for --output-metadata)"),
+                                        QCoreApplication::translate("main", "filename"));
+    parser.addOption(outputJsonOption);
 
     // Option to disable metadata back-up (-n)
     QCommandLineOption showNoBackupOption(QStringList() << "n" << "nobackup",
@@ -188,14 +196,27 @@ int main(int argc, char *argv[])
 
     // Work out the metadata filenames
     QString inputMetadataFilename;
+    if (parser.isSet(inputMetadataOption) && parser.isSet(inputJsonOption)) {
+        qCritical("Specify only one of --input-metadata or --input-json");
+        return -1;
+    }
+    if (parser.isSet(outputMetadataOption) && parser.isSet(outputJsonOption)) {
+        qCritical("Specify only one of --output-metadata or --output-json");
+        return -1;
+    }
+
     if (parser.isSet(inputMetadataOption)) {
         inputMetadataFilename = parser.value(inputMetadataOption);
+    } else if (parser.isSet(inputJsonOption)) {
+        inputMetadataFilename = parser.value(inputJsonOption);
     } else {
         inputMetadataFilename = resolveDefaultMetadataFilename(inputFilename);
     }
     QString outputMetadataFilename = inputMetadataFilename;
     if (parser.isSet(outputMetadataOption)) {
         outputMetadataFilename = parser.value(outputMetadataOption);
+    } else if (parser.isSet(outputJsonOption)) {
+        outputMetadataFilename = parser.value(outputJsonOption);
     }
 
     // Open the source video metadata

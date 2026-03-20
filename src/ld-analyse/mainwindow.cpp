@@ -43,6 +43,7 @@
 #include <QUrl>
 #include <QUuid>
 #include <QClipboard>
+#include <QHash>
 #include <QLineEdit>
 #include <QPlainTextEdit>
 #include <QTextEdit>
@@ -152,6 +153,108 @@ QString formatOptionalBoolFromInt(qint32 value)
         return QStringLiteral("—");
     }
     return value != 0 ? QStringLiteral("Yes") : QStringLiteral("No");
+}
+
+QString backupFilenameWithTimestampFallback(const QString &inputMetadataFilename,
+                                            const QString &backupSuffix)
+{
+    const QString defaultBackupFilename = inputMetadataFilename + backupSuffix;
+    if (!QFileInfo::exists(defaultBackupFilename)) {
+        return defaultBackupFilename;
+    }
+
+    const QString timestamp = QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMdd_HHmmss"));
+    QString backupFilename = inputMetadataFilename + QStringLiteral(".") + timestamp + backupSuffix;
+    qint32 collisionCounter = 1;
+    while (QFileInfo::exists(backupFilename)) {
+        backupFilename = inputMetadataFilename + QStringLiteral(".") + timestamp
+                         + QStringLiteral("_") + QString::number(collisionCounter) + backupSuffix;
+        collisionCounter++;
+    }
+    return backupFilename;
+}
+
+bool toolHelpListsOption(const QString &toolPath, const QString &optionName)
+{
+    if (toolPath.isEmpty() || optionName.isEmpty()) {
+        return false;
+    }
+
+    const QString cacheKey = QDir::cleanPath(toolPath) + QLatin1Char('|') + optionName;
+    static QHash<QString, bool> supportCache;
+    if (supportCache.contains(cacheKey)) {
+        return supportCache.value(cacheKey);
+    }
+
+    QProcess probeProcess;
+    probeProcess.setProcessChannelMode(QProcess::MergedChannels);
+    probeProcess.start(toolPath, {QStringLiteral("--help")});
+
+    bool supportsOption = false;
+    if (probeProcess.waitForStarted(2000)) {
+        if (!probeProcess.waitForFinished(6000)) {
+            probeProcess.kill();
+            probeProcess.waitForFinished(1000);
+        } else {
+            const QString helpOutput = QString::fromLocal8Bit(probeProcess.readAllStandardOutput());
+            supportsOption = helpOutput.contains(optionName);
+        }
+    }
+
+    supportCache.insert(cacheKey, supportsOption);
+    return supportsOption;
+}
+
+QString metadataInputOptionForTool(const QString &toolPath)
+{
+    if (toolHelpListsOption(toolPath, QStringLiteral("--input-metadata"))) {
+        return QStringLiteral("--input-metadata");
+    }
+    if (toolHelpListsOption(toolPath, QStringLiteral("--input-json"))) {
+        return QStringLiteral("--input-json");
+    }
+    return QStringLiteral("--input-metadata");
+}
+
+QString noBackupOptionForTool(const QString &toolPath)
+{
+    if (toolHelpListsOption(toolPath, QStringLiteral("--nobackup"))) {
+        return QStringLiteral("--nobackup");
+    }
+    if (toolHelpListsOption(toolPath, QStringLiteral("-n"))) {
+        return QStringLiteral("-n");
+    }
+    return QString();
+}
+
+bool createTimestampedMetadataBackup(const QString &metadataFilename,
+                                     const QString &backupSuffix,
+                                     QString *errorMessage)
+{
+    if (errorMessage) {
+        errorMessage->clear();
+    }
+    if (metadataFilename.trimmed().isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = QObject::tr("Metadata filename is empty.");
+        }
+        return false;
+    }
+    if (!QFileInfo::exists(metadataFilename)) {
+        if (errorMessage) {
+            *errorMessage = QObject::tr("Metadata file does not exist:\n%1").arg(metadataFilename);
+        }
+        return false;
+    }
+
+    const QString backupFilename = backupFilenameWithTimestampFallback(metadataFilename, backupSuffix);
+    if (!QFile::copy(metadataFilename, backupFilename)) {
+        if (errorMessage) {
+            *errorMessage = QObject::tr("Unable to create backup file:\n%1").arg(backupFilename);
+        }
+        return false;
+    }
+    return true;
 }
 
 void appendUniqueCandidate(QStringList &candidates, const QString &candidate)
@@ -2973,9 +3076,23 @@ void MainWindow::on_actionProcess_VBI_triggered()
         return;
     }
 
-    const QStringList toolArguments = {
-        QStringLiteral("--input-metadata"), metadataFilename, inputFileName
+    QString backupErrorMessage;
+    if (!createTimestampedMetadataBackup(metadataFilename, QStringLiteral(".bup"), &backupErrorMessage)) {
+        QMessageBox::warning(this, tr("Backup failed"),
+                             backupErrorMessage.isEmpty()
+                                 ? tr("Could not create metadata backup before processing.")
+                                 : backupErrorMessage);
+        return;
+    }
+
+    QStringList toolArguments = {
+        metadataInputOptionForTool(toolPath), metadataFilename
     };
+    const QString noBackupOption = noBackupOptionForTool(toolPath);
+    if (!noBackupOption.isEmpty()) {
+        toolArguments << noBackupOption;
+    }
+    toolArguments << inputFileName;
 
     QString errorMessage;
     if (!runExternalToolWithProgress(toolPath, toolArguments, tr("VBI processing"), &errorMessage)) {
@@ -3048,9 +3165,23 @@ void MainWindow::on_actionProcess_VITS_triggered()
         return;
     }
 
-    const QStringList toolArguments = {
-        QStringLiteral("--input-metadata"), metadataFilename, inputFileName
+    QString backupErrorMessage;
+    if (!createTimestampedMetadataBackup(metadataFilename, QStringLiteral(".vbup"), &backupErrorMessage)) {
+        QMessageBox::warning(this, tr("Backup failed"),
+                             backupErrorMessage.isEmpty()
+                                 ? tr("Could not create metadata backup before processing.")
+                                 : backupErrorMessage);
+        return;
+    }
+
+    QStringList toolArguments = {
+        metadataInputOptionForTool(toolPath), metadataFilename
     };
+    const QString noBackupOption = noBackupOptionForTool(toolPath);
+    if (!noBackupOption.isEmpty()) {
+        toolArguments << noBackupOption;
+    }
+    toolArguments << inputFileName;
 
     QString errorMessage;
     if (!runExternalToolWithProgress(toolPath, toolArguments, tr("VITS processing"), &errorMessage)) {
@@ -3110,24 +3241,7 @@ void MainWindow::on_actionFix_JSON_SNR_triggered()
         return;
     }
 
-    const QString backupFilename = metadataFilename + QStringLiteral(".vbup");
-    if (QFileInfo::exists(backupFilename)) {
-        const QMessageBox::StandardButton overwrite =
-            QMessageBox::question(this,
-                                  tr("Backup exists"),
-                                  tr("Backup file already exists:\n%1\n\nOverwrite it?").arg(backupFilename),
-                                  QMessageBox::Yes | QMessageBox::No,
-                                  QMessageBox::No);
-        if (overwrite != QMessageBox::Yes) {
-            return;
-        }
-
-        if (!QFile::remove(backupFilename)) {
-            QMessageBox::warning(this, tr("Backup failed"),
-                                 tr("Unable to remove existing backup file:\n%1").arg(backupFilename));
-            return;
-        }
-    }
+    const QString backupFilename = backupFilenameWithTimestampFallback(metadataFilename, QStringLiteral(".vbup"));
 
     if (!QFile::copy(metadataFilename, backupFilename)) {
         QMessageBox::warning(this, tr("Backup failed"),
