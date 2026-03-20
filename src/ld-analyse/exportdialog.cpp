@@ -946,7 +946,9 @@ QString dropoutInterfieldCorrectionValue(const TbcSource *source, const QString 
     if (correctionMode == QStringLiteral("intra")) {
         return QStringLiteral("none");
     }
-    if (correctionMode != QStringLiteral("innerfield")) {
+    const bool interfieldMode = correctionMode == QStringLiteral("innerfield")
+                                || correctionMode == QStringLiteral("interfield");
+    if (!interfieldMode) {
         return QString();
     }
     if (!source) {
@@ -1148,9 +1150,9 @@ ExportDialog::ExportDialog(QWidget *parent) :
     if (ui->dropoutFieldModeComboBox) {
         ui->dropoutFieldModeComboBox->clear();
         ui->dropoutFieldModeComboBox->addItem(tr("Intra"), QStringLiteral("intra"));
-        ui->dropoutFieldModeComboBox->addItem(tr("Innerfield"), QStringLiteral("innerfield"));
-        const int intraFieldModeIndex = ui->dropoutFieldModeComboBox->findData(QStringLiteral("intra"));
-        ui->dropoutFieldModeComboBox->setCurrentIndex(intraFieldModeIndex >= 0 ? intraFieldModeIndex : 0);
+        ui->dropoutFieldModeComboBox->addItem(tr("Interfield"), QStringLiteral("innerfield"));
+        const int interfieldModeIndex = ui->dropoutFieldModeComboBox->findData(QStringLiteral("innerfield"));
+        ui->dropoutFieldModeComboBox->setCurrentIndex(interfieldModeIndex >= 0 ? interfieldModeIndex : 0);
     }
     const auto updateDropoutFieldModeControls = [this]() {
         const bool dropoutCorrectionEnabled = !ui->dropoutModeComboBox
@@ -2132,7 +2134,7 @@ void ExportDialog::on_exportButton_clicked()
                                         : QStringLiteral("basic");
         const QString correctionMode = ui->dropoutFieldModeComboBox
                                            ? ui->dropoutFieldModeComboBox->currentData().toString()
-                                           : QStringLiteral("intra");
+                                           : QStringLiteral("innerfield");
         const bool supportsDropoutInterfieldCorrection = executableSupportsOption(
             exportPath, QStringLiteral("--dropout-interfield-correction"));
         const QString outputResolutionMode = effectiveOutputResolutionMode(ui ? ui->outputResolutionModeComboBox : nullptr);
@@ -2151,7 +2153,7 @@ void ExportDialog::on_exportButton_clicked()
             && !supportsDropoutInterfieldCorrection
             && !executableSupportsOption(exportPath, QStringLiteral("--innerfield"))
             && !executableSupportsOption(exportPath, QStringLiteral("--interfield"))) {
-            appendLog(tr("Dropout field mode 'Innerfield' selected, but no explicit inner/inter-field option is supported by the detected tbc-video-export. Using tool default correction mode."));
+            appendLog(tr("Dropout field mode 'Interfield' selected, but no explicit inner/inter-field option is supported by the detected tbc-video-export. Using tool default correction mode."));
         }
         const OutputResamplePlan outputResamplePlan = outputResamplePlanForModes(videoSystem,
                                                                                   resolutionMode,
@@ -3806,7 +3808,7 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
                                     : QStringLiteral("basic");
     const QString correctionMode = ui->dropoutFieldModeComboBox
                                        ? ui->dropoutFieldModeComboBox->currentData().toString()
-                                       : QStringLiteral("intra");
+                                       : QStringLiteral("innerfield");
     const bool supportsDropoutInterfieldCorrection = executableSupportsOption(
         exportPath, QStringLiteral("--dropout-interfield-correction"));
     const QString outputResolutionMode = effectiveOutputResolutionMode(ui ? ui->outputResolutionModeComboBox : nullptr);
@@ -3826,7 +3828,8 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
             if (executableSupportsOption(exportPath, QStringLiteral("--intra"))) {
                 args << QStringLiteral("--intra");
             }
-        } else if (correctionMode == QStringLiteral("innerfield")) {
+        } else if (correctionMode == QStringLiteral("innerfield")
+                   || correctionMode == QStringLiteral("interfield")) {
             if (executableSupportsOption(exportPath, QStringLiteral("--innerfield"))) {
                 args << QStringLiteral("--innerfield");
             } else if (executableSupportsOption(exportPath, QStringLiteral("--interfield"))) {
