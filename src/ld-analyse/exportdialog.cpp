@@ -941,6 +941,28 @@ QString proxyCodecDisplayName(const QString &proxyCodecId)
     }
     return QStringLiteral("AVC/H.264");
 }
+QString dropoutInterfieldCorrectionValue(const TbcSource *source, const QString &correctionMode)
+{
+    if (correctionMode == QStringLiteral("intra")) {
+        return QStringLiteral("none");
+    }
+    if (correctionMode != QStringLiteral("innerfield")) {
+        return QString();
+    }
+    if (!source) {
+        return QStringLiteral("combined");
+    }
+    switch (source->getSourceMode()) {
+    case TbcSource::LUMA_SOURCE:
+        return QStringLiteral("luma");
+    case TbcSource::CHROMA_SOURCE:
+        return QStringLiteral("chroma");
+    case TbcSource::BOTH_SOURCES:
+    case TbcSource::ONE_SOURCE:
+    default:
+        return QStringLiteral("combined");
+    }
+}
 
 QStringList parseFfmpegEncoderNames(const QString &rawOutput)
 {
@@ -2111,6 +2133,8 @@ void ExportDialog::on_exportButton_clicked()
         const QString correctionMode = ui->dropoutFieldModeComboBox
                                            ? ui->dropoutFieldModeComboBox->currentData().toString()
                                            : QStringLiteral("intra");
+        const bool supportsDropoutInterfieldCorrection = executableSupportsOption(
+            exportPath, QStringLiteral("--dropout-interfield-correction"));
         const QString outputResolutionMode = effectiveOutputResolutionMode(ui ? ui->outputResolutionModeComboBox : nullptr);
         if (dropoutMode == QStringLiteral("heavy")
             && !executableSupportsOption(exportPath, QStringLiteral("--overcorrect"))) {
@@ -2118,11 +2142,13 @@ void ExportDialog::on_exportButton_clicked()
         }
         if (dropoutMode != QStringLiteral("disabled")
             && correctionMode == QStringLiteral("intra")
+            && !supportsDropoutInterfieldCorrection
             && !executableSupportsOption(exportPath, QStringLiteral("--intra"))) {
             appendLog(tr("Dropout field mode 'Intra' selected, but --intra is not supported by the detected tbc-video-export. Falling back to tool default correction mode."));
         }
         if (dropoutMode != QStringLiteral("disabled")
             && correctionMode == QStringLiteral("innerfield")
+            && !supportsDropoutInterfieldCorrection
             && !executableSupportsOption(exportPath, QStringLiteral("--innerfield"))
             && !executableSupportsOption(exportPath, QStringLiteral("--interfield"))) {
             appendLog(tr("Dropout field mode 'Innerfield' selected, but no explicit inner/inter-field option is supported by the detected tbc-video-export. Using tool default correction mode."));
@@ -3781,6 +3807,8 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
     const QString correctionMode = ui->dropoutFieldModeComboBox
                                        ? ui->dropoutFieldModeComboBox->currentData().toString()
                                        : QStringLiteral("intra");
+    const bool supportsDropoutInterfieldCorrection = executableSupportsOption(
+        exportPath, QStringLiteral("--dropout-interfield-correction"));
     const QString outputResolutionMode = effectiveOutputResolutionMode(ui ? ui->outputResolutionModeComboBox : nullptr);
     if (dropoutMode == QStringLiteral("disabled")) {
         args << QStringLiteral("--no-dropout-correct");
@@ -3789,7 +3817,12 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
             && executableSupportsOption(exportPath, QStringLiteral("--overcorrect"))) {
             args << QStringLiteral("--overcorrect");
         }
-        if (correctionMode == QStringLiteral("intra")) {
+        if (supportsDropoutInterfieldCorrection) {
+            const QString correctionValue = dropoutInterfieldCorrectionValue(tbcSource, correctionMode);
+            if (!correctionValue.isEmpty()) {
+                args << QStringLiteral("--dropout-interfield-correction") << correctionValue;
+            }
+        } else if (correctionMode == QStringLiteral("intra")) {
             if (executableSupportsOption(exportPath, QStringLiteral("--intra"))) {
                 args << QStringLiteral("--intra");
             }
