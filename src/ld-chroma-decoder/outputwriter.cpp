@@ -49,6 +49,8 @@ static constexpr double ONE_MINUS_Kr = 1.0 - 0.299;
 // [Poynton eq 28.1 p336]
 static constexpr double kB = 0.49211104112248356308804691718185;
 static constexpr double kR = 0.87728321993817866838972487283129;
+static constexpr double HYBRID_BLACK_NTSC = 0x0d48;
+static constexpr double HYBRID_BLACK_PAL = 0x0708;
 
 void OutputWriter::updateConfiguration(LdDecodeMetaData::VideoParameters &_videoParameters,
                                        const OutputWriter::Configuration &_config)
@@ -313,6 +315,10 @@ void OutputWriter::convertLine(qint32 lineNumber, const ComponentFrame &componen
     };
 
     const double leveledYOffset = static_cast<double>(videoParameters.black16bIre);
+    const double hybridBackgroundYOffset =
+        ((videoParameters.system == PAL) || (videoParameters.system == PAL_M))
+            ? HYBRID_BLACK_PAL
+            : HYBRID_BLACK_NTSC;
     double yRange = static_cast<double>(videoParameters.white16bIre - videoParameters.black16bIre);
     double uvRange = yRange;
     if (yRange <= 0.0) {
@@ -332,7 +338,9 @@ void OutputWriter::convertLine(qint32 lineNumber, const ComponentFrame &componen
 
             for (qint32 x = 0; x < activeWidth; x++) {
                 const bool leveledRange = useLeveledRangeAtX(x);
-                const double yOffset = leveledRange ? leveledYOffset : 0.0;
+                const double yOffset = leveledRange
+                                           ? leveledYOffset
+                                           : (hybridLevelWindowMode ? hybridBackgroundYOffset : 0.0);
                 const double yScale = leveledRange ? leveledYScale : 1.0;
                 // Scale Y'UV to 0-65535
                 const double rY = qBound(0.0, (inY[x] - yOffset) * yScale, 65535.0);
@@ -361,7 +369,9 @@ void OutputWriter::convertLine(qint32 lineNumber, const ComponentFrame &componen
 
             for (qint32 x = 0; x < activeWidth; x++) {
                 const bool leveledRange = useLeveledRangeAtX(x);
-                const double yOffset = leveledRange ? leveledYOffset : 0.0;
+                const double yOffset = leveledRange
+                                           ? leveledYOffset
+                                           : (hybridLevelWindowMode ? hybridBackgroundYOffset : 0.0);
                 const double yScale = leveledRange ? leveledYScale : fullSignalYScale;
                 outY[x]  = static_cast<quint16>(qBound(Y_MIN, ((inY[x] - yOffset) * yScale)  + Y_ZERO, Y_MAX));
                 outCB[x] = static_cast<quint16>(qBound(C_MIN, (inU[x]             * cbScale) + C_ZERO, C_MAX));
@@ -379,7 +389,9 @@ void OutputWriter::convertLine(qint32 lineNumber, const ComponentFrame &componen
 
             for (qint32 x = 0; x < activeWidth; x++) {
                 const bool leveledRange = useLeveledRangeAtX(x);
-                const double yOffset = leveledRange ? leveledYOffset : 0.0;
+                const double yOffset = leveledRange
+                                           ? leveledYOffset
+                                           : (hybridLevelWindowMode ? hybridBackgroundYOffset : 0.0);
                 const double yScale = leveledRange ? leveledYScale : fullSignalYScale;
                 out[x] = static_cast<quint16>(qBound(Y_MIN, ((inY[x] - yOffset) * yScale) + Y_ZERO, Y_MAX));
             }

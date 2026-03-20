@@ -940,7 +940,7 @@ void TbcSource::configureChromaDecoder()
     // Configure the chroma decoder
     LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters();
     LdDecodeMetaData::VideoParameters decodeVideoParameters = videoParameters;
-    if (outputConfiguration.fullFrameDecode) {
+    if (outputConfiguration.fullFrameDecode || chromaDecodeMode == HYBRID_CHROMA_MODE) {
         applyFullFrameDecodeBounds(decodeVideoParameters);
     }
 	
