@@ -1019,6 +1019,30 @@ ExportDialog::ExportDialog(QWidget *parent) :
 
     ui->inputLineEdit->setReadOnly(true);
     ui->profileComboBox->setEditable(false);
+    if (ui->profileLabel) {
+        ui->profileLabel->setText(tr("Encoding"));
+    }
+    const auto configureCompactedProfileControl = [](QLabel *label, QComboBox *comboBox, const QString &tooltipText) {
+        if (comboBox) {
+            comboBox->setToolTip(tooltipText);
+        }
+        if (label) {
+            label->setToolTip(tooltipText);
+            label->setVisible(false);
+        }
+    };
+    configureCompactedProfileControl(ui->outputResolutionModeLabel,
+                                     ui->outputResolutionModeComboBox,
+                                     tr("Output resolution preset for the selected framing mode."));
+    configureCompactedProfileControl(ui->mainContainerLabel,
+                                     ui->mainContainerComboBox,
+                                     tr("Main output container format."));
+    configureCompactedProfileControl(ui->mainBitDepthLabel,
+                                     ui->mainBitDepthComboBox,
+                                     tr("Main output bit depth."));
+    configureCompactedProfileControl(ui->audioProfileLabel,
+                                     ui->audioProfileComboBox,
+                                     tr("Audio encoding profile."));
     if (ui->mainContainerComboBox) {
         ui->mainContainerComboBox->clear();
         ui->mainContainerComboBox->addItem(tr("MKV"), QStringLiteral("mkv"));
@@ -1158,22 +1182,29 @@ ExportDialog::ExportDialog(QWidget *parent) :
             updateProfileDependentControls();
         });
     }
-    if (ui->inPointTimecodeLineEdit) {
-        ui->inPointTimecodeLineEdit->setPlaceholderText(tr("HH:MM:SS:FF"));
-        ui->inPointTimecodeLineEdit->setMaxLength(15);
-        ui->inPointTimecodeLineEdit->setAlignment(Qt::AlignCenter);
-        QFont inFont = ui->inPointTimecodeLineEdit->font();
-        inFont.setPointSize(qMax(10, inFont.pointSize() + 1));
-        ui->inPointTimecodeLineEdit->setFont(inFont);
-    }
-    if (ui->outPointTimecodeLineEdit) {
-        ui->outPointTimecodeLineEdit->setPlaceholderText(tr("HH:MM:SS:FF"));
-        ui->outPointTimecodeLineEdit->setMaxLength(15);
-        ui->outPointTimecodeLineEdit->setAlignment(Qt::AlignCenter);
-        QFont outFont = ui->outPointTimecodeLineEdit->font();
-        outFont.setPointSize(qMax(10, outFont.pointSize() + 1));
-        ui->outPointTimecodeLineEdit->setFont(outFont);
-    }
+    const auto configureRangeTimecodeLineEdit = [this](QLineEdit *lineEdit) {
+        if (!lineEdit) {
+            return;
+        }
+        lineEdit->setPlaceholderText(tr("HH:MM:SS:FF"));
+        lineEdit->setMaxLength(15);
+        lineEdit->setAlignment(Qt::AlignCenter);
+        lineEdit->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+
+        QFont timecodeFont = lineEdit->font();
+        timecodeFont.setPointSize(qMax(12, timecodeFont.pointSize() + 3));
+        lineEdit->setFont(timecodeFont);
+        lineEdit->setTextMargins(3, 0, 1, 0);
+        lineEdit->setMinimumHeight(30);
+        lineEdit->setMaximumHeight(30);
+
+        const QFontMetrics timecodeMetrics(timecodeFont);
+        const int timecodeMinWidth = timecodeMetrics.horizontalAdvance(QStringLiteral("00:00:00:00")) + 8;
+        lineEdit->setMinimumWidth(timecodeMinWidth);
+        lineEdit->setMaximumWidth(timecodeMinWidth + 4);
+    };
+    configureRangeTimecodeLineEdit(ui->inPointTimecodeLineEdit);
+    configureRangeTimecodeLineEdit(ui->outPointTimecodeLineEdit);
     if (ui->rangeLengthValueLabel) {
         QFont durationFont = ui->rangeLengthValueLabel->font();
         durationFont.setPointSize(qMax(10, durationFont.pointSize() + 1));

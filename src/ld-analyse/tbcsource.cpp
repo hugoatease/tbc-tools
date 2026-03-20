@@ -664,11 +664,27 @@ TbcSource::ScanLineData TbcSource::getScanLineData(qint32 scanLine)
     scanLineData.isActiveLine = (frameLine - 1) >= videoParameters.firstActiveFrameLine
                                 && (frameLine -1) < videoParameters.lastActiveFrameLine;
 
+    // Decode/load first; this can refresh input field vectors.
+    const ComponentFrame &componentFrame = getComponentFrame();
+    if (componentFrame.getWidth() < videoParameters.fieldWidth
+        || frameLine < 1
+        || frameLine > componentFrame.getHeight()) {
+        return ScanLineData();
+    }
+
+    const qint32 firstInputIndex = inputStartIndex;
+    const qint32 secondInputIndex = inputStartIndex + 1;
+    if (firstInputIndex < 0
+        || secondInputIndex < 0
+        || firstInputIndex >= inputFields.size()
+        || secondInputIndex >= inputFields.size()) {
+        return ScanLineData();
+    }
+
     // Get the field video and dropout data
     // Put chroma in "composite" field if using Y/C input.
-    const SourceVideo::Data &fieldData = isFirstField ? inputFields[inputStartIndex].data
-                            : inputFields[inputStartIndex + 1].data;
-    const ComponentFrame &componentFrame = getComponentFrame();
+    const SourceVideo::Data &fieldData = isFirstField ? inputFields[firstInputIndex].data
+                            : inputFields[secondInputIndex].data;
     DropOuts &dropouts = isFirstField ? firstField.dropOuts : secondField.dropOuts;
 
     scanLineData.composite.resize(videoParameters.fieldWidth);
@@ -691,9 +707,13 @@ TbcSource::ScanLineData TbcSource::getScanLineData(qint32 scanLine)
         }
     }
 
-    if (sourceMode == BOTH_SOURCES) {
-        const auto &chromaFieldData = isFirstField ? chromaInputFields[inputStartIndex].data
-                     : chromaInputFields[inputStartIndex + 1].data;
+    if (sourceMode == BOTH_SOURCES
+        && firstInputIndex >= 0
+        && secondInputIndex >= 0
+        && firstInputIndex < chromaInputFields.size()
+        && secondInputIndex < chromaInputFields.size()) {
+        const auto &chromaFieldData = isFirstField ? chromaInputFields[firstInputIndex].data
+                     : chromaInputFields[secondInputIndex].data;
         // We need to offset by half a word since the input is 16-bit unsigned.
         const short offset = std::numeric_limits<int16_t>::min();
         scanLineData.chroma.resize(videoParameters.fieldWidth);
