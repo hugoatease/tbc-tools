@@ -5,7 +5,6 @@ NoDisplay=false
 Terminal=false
 Exec=ld-analyse
 Icon=ld-analyse
-Type=Application
 Name=ld-analyse
 MimeType=application/video-tbc
 Comment=
