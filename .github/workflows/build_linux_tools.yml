@@ -272,6 +272,10 @@ jobs:
           fi
           for elf in AppDir/usr/bin/* AppDir/usr/lib/*.so* AppDir/usr/plugins/*/*.so; do
             [ -f "$elf" ] || continue
+            base="$(basename "$elf")"
+            if echo "$base" | grep -Eq "$SKIP_LIB_REGEX"; then
+              continue
+            fi
             if ! "$PATCH_ELF_BIN" --print-rpath "$elf" >/dev/null 2>&1; then
               continue
             fi
