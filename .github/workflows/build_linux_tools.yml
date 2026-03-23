@@ -200,8 +200,9 @@ jobs:
           curl -LJO ${{ env.APPIMAGE_URL }}
           curl -LJO ${{ env.APPIMAGE_PLUGIN_URL }}
           curl -LJO ${{ env.APPIMAGE_QT_URL }}
+          curl -L -o appimagetool-x86_64.AppImage https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
 
-          chmod +x ${{ env.APPIMAGE_FILE }} ${{ env.APPIMAGE_PLUGIN_FILE }} ${{ env.APPIMAGE_QT_FILE }}
+          chmod +x ${{ env.APPIMAGE_FILE }} ${{ env.APPIMAGE_PLUGIN_FILE }} ${{ env.APPIMAGE_QT_FILE }} appimagetool-x86_64.AppImage
           export APPIMAGE_EXTRACT_AND_RUN=1
           SKIP_LIB_REGEX='^(libc\.so\.6|libm\.so\.6|libpthread\.so\.0|libdl\.so\.2|librt\.so\.1|libresolv\.so\.2|ld-linux-.*\.so\..*|libnss_.*|libutil\.so\..*|libanl\.so\..*)$'
           QMAKE="$(find /nix/store -type f -path '*/bin/qmake' | sort | head -n 1 || true)"
@@ -326,19 +327,11 @@ jobs:
           # Provide application icon for desktop entry
           mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
           cp src/ld-analyse/Graphics/256-analyse.png AppDir/usr/share/icons/hicolor/256x256/apps/tbc-tools.png
+          ln -sf usr/share/applications/tbc-tools.desktop AppDir/tbc-tools.desktop
+          ln -sf usr/share/icons/hicolor/256x256/apps/tbc-tools.png AppDir/tbc-tools.png
+          ln -sf tbc-tools.png AppDir/.DirIcon
 
-          ./${{ env.APPIMAGE_FILE }} \
-          --desktop-file AppDir/usr/share/applications/tbc-tools.desktop \
-          --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/tbc-tools.png \
-          --appdir AppDir/ \
-          --output appimage
-          APPIMAGE_OUT="$(find . -maxdepth 1 -type f -name '*.AppImage' ! -name 'linuxdeploy*.AppImage' | sort | head -n 1)"
-          if [ -z "$APPIMAGE_OUT" ]; then
-            echo "No generated AppImage found in workspace root"
-            ls -1 *.AppImage || true
-            exit 1
-          fi
-          cp "$APPIMAGE_OUT" release/tbc-tools-x86_64.AppImage
+          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool-x86_64.AppImage AppDir release/tbc-tools-x86_64.AppImage
       - name: Validate x86_64 AppImage bundle
         run: bash ci/verify_linux_bundle.sh x86-appimage release/tbc-tools-x86_64.AppImage
 
