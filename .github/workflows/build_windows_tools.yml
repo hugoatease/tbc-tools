@@ -60,9 +60,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      - uses: lukka/get-cmake@latest
+      - name: Set up CMake
+        uses: jwlawson/actions-setup-cmake@v2
         with:
-            cmakeVersion: "^3.31.6" # Need to pin to cmake 3.x until fftw3 is updated to support cmake 4.x.
+          cmake-version: "3.31.6" # Need to pin to CMake 3.x until fftw3 is updated to support CMake 4.x.
       - name: Restore vcpkg binary cache
         uses: actions/cache@v4
         with:

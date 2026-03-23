@@ -81,62 +81,15 @@ jobs:
           zip -r ../tbc-tools_windows_arm64.zip .
           cd ../..
 
-      - name: Upload Linux release asset
-        uses: actions/upload-release-asset@v1
+      - name: Upload release assets
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./artifacts/tbc-tools_linux_x86_64.tar.xz
-          asset_name: tbc-tools_linux_x86_64.tar.xz
-          asset_content_type: application/x-xz
-
-      - name: Upload Linux ARM64 release asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./artifacts/tbc-tools_linux_arm64.tar.xz
-          asset_name: tbc-tools_linux_arm64.tar.xz
-          asset_content_type: application/x-xz
-
-      - name: Upload Windows release asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./artifacts/tbc-tools_windows_x86_64.zip
-          asset_name: tbc-tools_windows_x86_64.zip
-          asset_content_type: application/zip
-
-      - name: Upload Windows ARM64 release asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./artifacts/tbc-tools_windows_arm64.zip
-          asset_name: tbc-tools_windows_arm64.zip
-          asset_content_type: application/zip
-
-      - name: Upload macOS x86_64 release asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./artifacts/tbc-tools_x86_64.dmg
-          asset_name: tbc-tools_macos_x86_64.dmg
-          asset_content_type: application/x-apple-diskimage
-
-      - name: Upload macOS arm64 release asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./artifacts/tbc-tools_arm64.dmg
-          asset_name: tbc-tools_macos_arm64.dmg
-          asset_content_type: application/x-apple-diskimage
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          cp ./artifacts/tbc-tools_x86_64.dmg ./artifacts/tbc-tools_macos_x86_64.dmg
+          cp ./artifacts/tbc-tools_arm64.dmg ./artifacts/tbc-tools_macos_arm64.dmg
+          gh release upload "${{ github.event.release.tag_name }}" ./artifacts/tbc-tools_linux_x86_64.tar.xz --repo "${{ github.repository }}" --clobber
+          gh release upload "${{ github.event.release.tag_name }}" ./artifacts/tbc-tools_linux_arm64.tar.xz --repo "${{ github.repository }}" --clobber
+          gh release upload "${{ github.event.release.tag_name }}" ./artifacts/tbc-tools_windows_x86_64.zip --repo "${{ github.repository }}" --clobber
+          gh release upload "${{ github.event.release.tag_name }}" ./artifacts/tbc-tools_windows_arm64.zip --repo "${{ github.repository }}" --clobber
+          gh release upload "${{ github.event.release.tag_name }}" ./artifacts/tbc-tools_macos_x86_64.dmg --repo "${{ github.repository }}" --clobber
+          gh release upload "${{ github.event.release.tag_name }}" ./artifacts/tbc-tools_macos_arm64.dmg --repo "${{ github.repository }}" --clobber
