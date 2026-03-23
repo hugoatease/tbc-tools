@@ -141,12 +141,20 @@ jobs:
               cp -Lf "$glibc_dep" "AppDir/usr/lib/$base"
             done
           }
+          copy_glibc_runtime_from_interpreter() {
+            local source_elf="$1"
+            local interp
+            local interp_dir
+            interp="$("$PATCH_ELF_BIN" --print-interpreter "$source_elf" 2>/dev/null || true)"
+            [ -n "$interp" ] || return 0
+            interp_dir="$(dirname "$interp")"
+            for glibc_name in libc.so.6 libm.so.6 libpthread.so.0 libdl.so.2 librt.so.1 libutil.so.1 libanl.so.1 libresolv.so.2; do
+              [ -f "$interp_dir/$glibc_name" ] && cp -Lf "$interp_dir/$glibc_name" "AppDir/usr/lib/$glibc_name"
+            done
+          }
           gather_loader_and_glibc_deps result/bin/.ld-analyse-wrapped
           gather_loader_and_glibc_deps AppDir/usr/bin/ld-analyse
-          for glibc_name in libc.so.6 libm.so.6 libpthread.so.0 libdl.so.2 librt.so.1 libutil.so.1 libanl.so.1 libresolv.so.2; do
-            glibc_src="$(find /nix/store -type f -name "$glibc_name" -path "*/lib/*" | sort | tail -n 1 || true)"
-            [ -n "$glibc_src" ] && cp -Lf "$glibc_src" "AppDir/usr/lib/$glibc_name"
-          done
+          copy_glibc_runtime_from_interpreter result/bin/.ld-analyse-wrapped
           pending=1
           while [ "$pending" -eq 1 ]; do
             pending=0
@@ -423,12 +431,20 @@ jobs:
               cp -Lf "$glibc_dep" "release/lib/$base"
             done
           }
+          copy_glibc_runtime_from_interpreter() {
+            local source_elf="$1"
+            local interp
+            local interp_dir
+            interp="$("$PATCH_ELF_BIN" --print-interpreter "$source_elf" 2>/dev/null || true)"
+            [ -n "$interp" ] || return 0
+            interp_dir="$(dirname "$interp")"
+            for glibc_name in libc.so.6 libm.so.6 libpthread.so.0 libdl.so.2 librt.so.1 libutil.so.1 libanl.so.1 libresolv.so.2; do
+              [ -f "$interp_dir/$glibc_name" ] && cp -Lf "$interp_dir/$glibc_name" "release/lib/$glibc_name"
+            done
+          }
           gather_loader_and_glibc_deps result/bin/.ld-analyse-wrapped
           gather_loader_and_glibc_deps release/bin/ld-analyse
-          for glibc_name in libc.so.6 libm.so.6 libpthread.so.0 libdl.so.2 librt.so.1 libutil.so.1 libanl.so.1 libresolv.so.2; do
-            glibc_src="$(find /nix/store -type f -name "$glibc_name" -path "*/lib/*" | sort | tail -n 1 || true)"
-            [ -n "$glibc_src" ] && cp -Lf "$glibc_src" "release/lib/$glibc_name"
-          done
+          copy_glibc_runtime_from_interpreter result/bin/.ld-analyse-wrapped
           pending=1
           while [ "$pending" -eq 1 ]; do
             pending=0

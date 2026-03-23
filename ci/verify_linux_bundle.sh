@@ -85,6 +85,21 @@ require_runtime_libs() {
   done
 }
 
+run_smoke_test() {
+  local label="$1"
+  local log_file="$2"
+  shift 2
+  local exit_code=0
+  timeout 20 "$@" >"$log_file" 2>&1 || exit_code=$?
+  if [ "$exit_code" -ne 0 ]; then
+    echo "Runtime smoke test failed: $label (exit=$exit_code)" >&2
+    if [ -f "$log_file" ]; then
+      sed -n '1,200p' "$log_file" >&2 || true
+    fi
+    exit 1
+  fi
+}
+
 if [ "$#" -ne 2 ]; then
   usage
 fi
@@ -150,6 +165,7 @@ case "$MODE" in
     for rel in "${COMMON_RELATIVE_PATHS[@]}"; do
       require_path "$ROOT/$rel"
     done
+    run_smoke_test "x86-appimage-apprun-help" "$ROOT/.smoke-x86.log" "$ROOT/AppRun" --help
 
     rm -rf "$ROOT"
     ;;
@@ -184,6 +200,7 @@ case "$MODE" in
     require_path "$TARGET/plugins/sqldrivers/libqsqlite.so"
     require_path "$TARGET/plugins/iconengines/libqsvgicon.so"
     require_path "$TARGET/plugins/imageformats/libqsvg.so"
+    run_smoke_test "arm64-launcher-help" "$TARGET/.smoke-arm64.log" "$TARGET/tbc-tools-run" --help
     ;;
 
   *)
