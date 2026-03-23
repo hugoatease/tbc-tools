@@ -159,6 +159,22 @@ jobs:
               done
             done
           done
+          PATCH_ELF_BIN="$(command -v patchelf || true)"
+          if [ -z "$PATCH_ELF_BIN" ]; then
+            nix build nixpkgs#patchelf --out-link patchelf-result
+            PATCH_ELF_BIN="patchelf-result/bin/patchelf"
+          fi
+          if [ ! -x "$PATCH_ELF_BIN" ]; then
+            echo "Failed to locate patchelf for RPATH normalization"
+            exit 1
+          fi
+          for elf in AppDir/usr/bin/* AppDir/usr/lib/*.so* AppDir/usr/plugins/*/*.so; do
+            [ -f "$elf" ] || continue
+            if ! "$PATCH_ELF_BIN" --print-rpath "$elf" >/dev/null 2>&1; then
+              continue
+            fi
+            "$PATCH_ELF_BIN" --set-rpath '$ORIGIN:$ORIGIN/../lib:$ORIGIN/../../lib' "$elf" || true
+          done
 
       - name: Download linuxdeploy and build AppImage
         run: |
@@ -229,6 +245,22 @@ jobs:
           # Some copied Nix store files are read-only; make bundle writable so linuxdeploy
           # can strip binaries/libs in non-root environments.
           chmod -R u+w AppDir/usr/bin AppDir/usr/lib AppDir/usr/plugins
+          cat > AppDir/AppRun <<'EOF'
+          #!/usr/bin/env bash
+          set -e
+          APPDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          export LD_LIBRARY_PATH="$APPDIR/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          export QT_PLUGIN_PATH="$APPDIR/usr/plugins${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}"
+          export QT_QPA_PLATFORM_PLUGIN_PATH="$APPDIR/usr/plugins/platforms"
+          export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
+          if [ "$#" -gt 0 ] && [ -x "$APPDIR/usr/bin/$1" ]; then
+            cmd="$1"
+            shift
+            exec "$APPDIR/usr/bin/$cmd" "$@"
+          fi
+          exec "$APPDIR/usr/bin/ld-analyse" "$@"
+          EOF
+          chmod +x AppDir/AppRun
           # Create minimal desktop file
           mkdir -p AppDir/usr/share/applications
           cat > AppDir/usr/share/applications/tbc-tools.desktop << EOF
@@ -420,6 +452,39 @@ jobs:
               done
             done
           done
+
+          PATCH_ELF_BIN="$(command -v patchelf || true)"
+          if [ -z "$PATCH_ELF_BIN" ]; then
+            nix build nixpkgs#patchelf --out-link patchelf-result
+            PATCH_ELF_BIN="patchelf-result/bin/patchelf"
+          fi
+          if [ ! -x "$PATCH_ELF_BIN" ]; then
+            echo "Failed to locate patchelf for RPATH normalization"
+            exit 1
+          fi
+          for elf in release/bin/* release/lib/*.so* release/plugins/*/*.so; do
+            [ -f "$elf" ] || continue
+            if ! "$PATCH_ELF_BIN" --print-rpath "$elf" >/dev/null 2>&1; then
+              continue
+            fi
+            "$PATCH_ELF_BIN" --set-rpath '$ORIGIN:$ORIGIN/../lib:$ORIGIN/../../lib' "$elf" || true
+          done
+          cat > release/tbc-tools-run <<'EOF'
+          #!/usr/bin/env bash
+          set -e
+          SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          export LD_LIBRARY_PATH="$SELF_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          export QT_PLUGIN_PATH="$SELF_DIR/plugins${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}"
+          export QT_QPA_PLATFORM_PLUGIN_PATH="$SELF_DIR/plugins/platforms"
+          export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
+          if [ "$#" -gt 0 ] && [ -x "$SELF_DIR/bin/$1" ]; then
+            cmd="$1"
+            shift
+            exec "$SELF_DIR/bin/$cmd" "$@"
+          fi
+          exec "$SELF_DIR/bin/ld-analyse" "$@"
+          EOF
+          chmod +x release/tbc-tools-run
 
       - name: Validate arm64 release bundle
         run: bash ci/verify_linux_bundle.sh arm64-release release
