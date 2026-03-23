@@ -308,9 +308,12 @@ jobs:
           if [ "$#" -gt 0 ] && [ -x "$APPDIR/usr/bin/$1" ]; then
             cmd="$1"
             shift
+            if [ "$cmd" = "ld-analyse" ]; then
+              exec "$LOADER" --library-path "$APPDIR/usr/lib" "$APPDIR/usr/bin/$cmd" --force-dark-theme "$@"
+            fi
             exec "$LOADER" --library-path "$APPDIR/usr/lib" "$APPDIR/usr/bin/$cmd" "$@"
           fi
-          exec "$LOADER" --library-path "$APPDIR/usr/lib" "$APPDIR/usr/bin/ld-analyse" "$@"
+          exec "$LOADER" --library-path "$APPDIR/usr/lib" "$APPDIR/usr/bin/ld-analyse" --force-dark-theme "$@"
           EOF
           chmod +x AppDir/AppRun
           # Create minimal desktop file
@@ -554,9 +557,12 @@ jobs:
           if [ "$#" -gt 0 ] && [ -x "$SELF_DIR/bin/$1" ]; then
             cmd="$1"
             shift
+            if [ "$cmd" = "ld-analyse" ]; then
+              exec "$LOADER" --library-path "$SELF_DIR/lib" "$SELF_DIR/bin/$cmd" --force-dark-theme "$@"
+            fi
             exec "$LOADER" --library-path "$SELF_DIR/lib" "$SELF_DIR/bin/$cmd" "$@"
           fi
-          exec "$LOADER" --library-path "$SELF_DIR/lib" "$SELF_DIR/bin/ld-analyse" "$@"
+          exec "$LOADER" --library-path "$SELF_DIR/lib" "$SELF_DIR/bin/ld-analyse" --force-dark-theme "$@"
           EOF
           chmod +x release/tbc-tools-run
 
