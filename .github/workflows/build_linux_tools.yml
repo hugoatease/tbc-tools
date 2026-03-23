@@ -106,6 +106,33 @@ jobs:
           fi
           cp -a "$FFMPEG_BIN" AppDir/usr/bin/ffmpeg
           cp -a "$FFPROBE_BIN" AppDir/usr/bin/ffprobe
+          PATCH_ELF_BIN="$(command -v patchelf || true)"
+          if [ -z "$PATCH_ELF_BIN" ]; then
+            nix build nixpkgs#patchelf --out-link patchelf-result
+            PATCH_ELF_BIN="patchelf-result/bin/patchelf"
+          fi
+          if [ ! -x "$PATCH_ELF_BIN" ]; then
+            echo "Failed to locate patchelf for interpreter normalization"
+            exit 1
+          fi
+          INTERPRETER_PATH=""
+          case "$(uname -m)" in
+            x86_64) INTERPRETER_PATH="/lib64/ld-linux-x86-64.so.2" ;;
+            aarch64|arm64) INTERPRETER_PATH="/lib/ld-linux-aarch64.so.1" ;;
+          esac
+          if [ -n "$INTERPRETER_PATH" ]; then
+            for elf in AppDir/usr/bin/*; do
+              [ -f "$elf" ] || continue
+              if ! "$PATCH_ELF_BIN" --print-interpreter "$elf" >/dev/null 2>&1; then
+                continue
+              fi
+              CURRENT_INTERPRETER="$("$PATCH_ELF_BIN" --print-interpreter "$elf" || true)"
+              if echo "$CURRENT_INTERPRETER" | grep -q '^/nix/store/'; then
+                "$PATCH_ELF_BIN" --set-interpreter "$INTERPRETER_PATH" "$elf"
+                echo "Normalized ELF interpreter: $elf -> $INTERPRETER_PATH"
+              fi
+            done
+          fi
           cp -a result/lib/. AppDir/usr/lib/ || true
           cp -a result/share/. AppDir/usr/share/ || true
           LIBSTDCPP_PATH="$(ldd result/bin/.ld-analyse-wrapped | awk '$1 == "libstdc++.so.6" { print $3; exit }')"
@@ -295,6 +322,33 @@ jobs:
           fi
           cp -a "$FFMPEG_BIN" release/bin/ffmpeg
           cp -a "$FFPROBE_BIN" release/bin/ffprobe
+          PATCH_ELF_BIN="$(command -v patchelf || true)"
+          if [ -z "$PATCH_ELF_BIN" ]; then
+            nix build nixpkgs#patchelf --out-link patchelf-result
+            PATCH_ELF_BIN="patchelf-result/bin/patchelf"
+          fi
+          if [ ! -x "$PATCH_ELF_BIN" ]; then
+            echo "Failed to locate patchelf for interpreter normalization"
+            exit 1
+          fi
+          INTERPRETER_PATH=""
+          case "$(uname -m)" in
+            x86_64) INTERPRETER_PATH="/lib64/ld-linux-x86-64.so.2" ;;
+            aarch64|arm64) INTERPRETER_PATH="/lib/ld-linux-aarch64.so.1" ;;
+          esac
+          if [ -n "$INTERPRETER_PATH" ]; then
+            for elf in release/bin/*; do
+              [ -f "$elf" ] || continue
+              if ! "$PATCH_ELF_BIN" --print-interpreter "$elf" >/dev/null 2>&1; then
+                continue
+              fi
+              CURRENT_INTERPRETER="$("$PATCH_ELF_BIN" --print-interpreter "$elf" || true)"
+              if echo "$CURRENT_INTERPRETER" | grep -q '^/nix/store/'; then
+                "$PATCH_ELF_BIN" --set-interpreter "$INTERPRETER_PATH" "$elf"
+                echo "Normalized ELF interpreter: $elf -> $INTERPRETER_PATH"
+              fi
+            done
+          fi
           cp -a result/lib/. release/lib/ || true
           cp -a result/share/. release/share/ || true
           LIBSTDCPP_PATH="$(ldd result/bin/.ld-analyse-wrapped | awk '$1 == "libstdc++.so.6" { print $3; exit }')"

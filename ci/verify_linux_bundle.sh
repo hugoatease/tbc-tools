@@ -15,6 +15,19 @@ require_path() {
   fi
 }
 
+require_non_nix_interpreter() {
+  local elf="$1"
+  if [ ! -f "$elf" ]; then
+    return
+  fi
+  local interpreter
+  interpreter="$(readelf -l "$elf" 2>/dev/null | awk -F': ' '/Requesting program interpreter/ {gsub(/\]/, "", $2); print $2; exit}')"
+  if [ -n "$interpreter" ] && [[ "$interpreter" == /nix/store/* ]]; then
+    echo "ELF interpreter still points to Nix store: $elf -> $interpreter" >&2
+    exit 1
+  fi
+}
+
 if [ "$#" -ne 2 ]; then
   usage
 fi
@@ -51,6 +64,10 @@ case "$MODE" in
     require_path "$ROOT/usr/bin/tbc-video-export"
     require_path "$ROOT/usr/bin/qt.conf"
     require_path "$ROOT/usr/share/tbc-video-export/src/tbc_video_export/__main__.py"
+    require_non_nix_interpreter "$ROOT/usr/bin/ld-analyse"
+    require_non_nix_interpreter "$ROOT/usr/bin/ld-process-vbi"
+    require_non_nix_interpreter "$ROOT/usr/bin/ffmpeg"
+    require_non_nix_interpreter "$ROOT/usr/bin/ffprobe"
     for rel in "${COMMON_RELATIVE_PATHS[@]}"; do
       require_path "$ROOT/$rel"
     done
@@ -70,6 +87,10 @@ case "$MODE" in
     require_path "$TARGET/bin/tbc-video-export"
     require_path "$TARGET/bin/qt.conf"
     require_path "$TARGET/share/tbc-video-export/src/tbc_video_export/__main__.py"
+    require_non_nix_interpreter "$TARGET/bin/ld-analyse"
+    require_non_nix_interpreter "$TARGET/bin/ld-process-vbi"
+    require_non_nix_interpreter "$TARGET/bin/ffmpeg"
+    require_non_nix_interpreter "$TARGET/bin/ffprobe"
     require_path "$TARGET/bin/ffmpeg"
     require_path "$TARGET/bin/ffprobe"
     require_path "$TARGET/lib/libQt6Core.so.6"
