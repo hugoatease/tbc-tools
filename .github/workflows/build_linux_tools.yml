@@ -106,6 +106,7 @@ jobs:
           fi
           cp -a "$FFMPEG_BIN" AppDir/usr/bin/ffmpeg
           cp -a "$FFPROBE_BIN" AppDir/usr/bin/ffprobe
+          chmod -R u+w AppDir/usr/bin
           PATCH_ELF_BIN="$(command -v patchelf || true)"
           if [ -z "$PATCH_ELF_BIN" ]; then
             nix build nixpkgs#patchelf --out-link patchelf-result
@@ -322,6 +323,7 @@ jobs:
           fi
           cp -a "$FFMPEG_BIN" release/bin/ffmpeg
           cp -a "$FFPROBE_BIN" release/bin/ffprobe
+          chmod -R u+w release/bin
           PATCH_ELF_BIN="$(command -v patchelf || true)"
           if [ -z "$PATCH_ELF_BIN" ]; then
             nix build nixpkgs#patchelf --out-link patchelf-result
