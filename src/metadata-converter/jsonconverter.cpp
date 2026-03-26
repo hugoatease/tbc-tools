@@ -307,7 +307,7 @@ bool JsonConverter::createSchema()
     QSqlQuery query(m_database);
     
     // Set schema version
-    if (!query.exec("PRAGMA user_version = 3;")) {
+    if (!query.exec("PRAGMA user_version = 4;")) {
         qCritical() << "Failed to set schema version:" << query.lastError().text();
         return false;
     }
@@ -325,6 +325,10 @@ bool JsonConverter::createSchema()
         "    video_sample_rate REAL,"
         "    active_video_start INTEGER,"
         "    active_video_end INTEGER,"
+        "    first_active_field_line INTEGER,"
+        "    last_active_field_line INTEGER,"
+        "    first_active_frame_line INTEGER,"
+        "    last_active_frame_line INTEGER,"
         "    field_width INTEGER,"
         "    field_height INTEGER,"
         "    number_of_sequential_fields INTEGER,"
@@ -536,6 +540,8 @@ bool JsonConverter::insertData(LdDecodeMetaData &metaData)
             "INSERT INTO capture ("
             "capture_id, system, decoder, git_branch, git_commit, "
             "video_sample_rate, active_video_start, active_video_end, "
+            "first_active_field_line, last_active_field_line, "
+            "first_active_frame_line, last_active_frame_line, "
             "field_width, field_height, number_of_sequential_fields, "
             "colour_burst_start, colour_burst_end, is_mapped, "
             "is_subcarrier_locked, is_widescreen, white_16b_ire, "
@@ -543,7 +549,7 @@ bool JsonConverter::insertData(LdDecodeMetaData &metaData)
             "ntsc_adaptive, ntsc_adapt_threshold, ntsc_chroma_weight, ntsc_phase_compensation, "
             "pal_transform_threshold, capture_notes"
             ") VALUES ("
-            "1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
+            "1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?"
             ")"
         );
         
@@ -554,27 +560,31 @@ bool JsonConverter::insertData(LdDecodeMetaData &metaData)
         query.bindValue(4, videoParams.sampleRate);
         query.bindValue(5, videoParams.activeVideoStart);
         query.bindValue(6, videoParams.activeVideoEnd);
-        query.bindValue(7, videoParams.fieldWidth);
-        query.bindValue(8, videoParams.fieldHeight);
-        query.bindValue(9, metaData.getNumberOfFields());
-        query.bindValue(10, videoParams.colourBurstStart);
-        query.bindValue(11, videoParams.colourBurstEnd);
-        query.bindValue(12, videoParams.isMapped ? 1 : 0);
-        query.bindValue(13, videoParams.isSubcarrierLocked ? 1 : 0);
-        query.bindValue(14, videoParams.isWidescreen ? 1 : 0);
-        query.bindValue(15, videoParams.white16bIre);
-        query.bindValue(16, videoParams.black16bIre);
-        query.bindValue(17, videoParams.blanking16bIre != -1 ? videoParams.blanking16bIre : videoParams.black16bIre);
-        query.bindValue(18, videoParams.chromaDecoder.isEmpty() ? QVariant() : videoParams.chromaDecoder);
-        query.bindValue(19, videoParams.chromaGain != -1.0 ? QVariant(videoParams.chromaGain) : QVariant());
-        query.bindValue(20, videoParams.chromaPhase != -1.0 ? QVariant(videoParams.chromaPhase) : QVariant());
-        query.bindValue(21, videoParams.lumaNR != -1.0 ? QVariant(videoParams.lumaNR) : QVariant());
-        query.bindValue(22, videoParams.ntscAdaptive != -1 ? QVariant(videoParams.ntscAdaptive) : QVariant());
-        query.bindValue(23, videoParams.ntscAdaptThreshold != -1.0 ? QVariant(videoParams.ntscAdaptThreshold) : QVariant());
-        query.bindValue(24, videoParams.ntscChromaWeight != -1.0 ? QVariant(videoParams.ntscChromaWeight) : QVariant());
-        query.bindValue(25, videoParams.ntscPhaseCompensation != -1 ? QVariant(videoParams.ntscPhaseCompensation) : QVariant());
-        query.bindValue(26, videoParams.palTransformThreshold != -1.0 ? QVariant(videoParams.palTransformThreshold) : QVariant());
-        query.bindValue(27, videoParams.tapeFormat.isEmpty() ? QVariant() : videoParams.tapeFormat);
+        query.bindValue(7, videoParams.firstActiveFieldLine);
+        query.bindValue(8, videoParams.lastActiveFieldLine);
+        query.bindValue(9, videoParams.firstActiveFrameLine);
+        query.bindValue(10, videoParams.lastActiveFrameLine);
+        query.bindValue(11, videoParams.fieldWidth);
+        query.bindValue(12, videoParams.fieldHeight);
+        query.bindValue(13, metaData.getNumberOfFields());
+        query.bindValue(14, videoParams.colourBurstStart);
+        query.bindValue(15, videoParams.colourBurstEnd);
+        query.bindValue(16, videoParams.isMapped ? 1 : 0);
+        query.bindValue(17, videoParams.isSubcarrierLocked ? 1 : 0);
+        query.bindValue(18, videoParams.isWidescreen ? 1 : 0);
+        query.bindValue(19, videoParams.white16bIre);
+        query.bindValue(20, videoParams.black16bIre);
+        query.bindValue(21, videoParams.blanking16bIre != -1 ? videoParams.blanking16bIre : videoParams.black16bIre);
+        query.bindValue(22, videoParams.chromaDecoder.isEmpty() ? QVariant() : videoParams.chromaDecoder);
+        query.bindValue(23, videoParams.chromaGain != -1.0 ? QVariant(videoParams.chromaGain) : QVariant());
+        query.bindValue(24, videoParams.chromaPhase != -1.0 ? QVariant(videoParams.chromaPhase) : QVariant());
+        query.bindValue(25, videoParams.lumaNR != -1.0 ? QVariant(videoParams.lumaNR) : QVariant());
+        query.bindValue(26, videoParams.ntscAdaptive != -1 ? QVariant(videoParams.ntscAdaptive) : QVariant());
+        query.bindValue(27, videoParams.ntscAdaptThreshold != -1.0 ? QVariant(videoParams.ntscAdaptThreshold) : QVariant());
+        query.bindValue(28, videoParams.ntscChromaWeight != -1.0 ? QVariant(videoParams.ntscChromaWeight) : QVariant());
+        query.bindValue(29, videoParams.ntscPhaseCompensation != -1 ? QVariant(videoParams.ntscPhaseCompensation) : QVariant());
+        query.bindValue(30, videoParams.palTransformThreshold != -1.0 ? QVariant(videoParams.palTransformThreshold) : QVariant());
+        query.bindValue(31, videoParams.tapeFormat.isEmpty() ? QVariant() : videoParams.tapeFormat);
         
         if (!query.exec()) {
             qCritical() << "Failed to insert capture record:" << query.lastError().text();

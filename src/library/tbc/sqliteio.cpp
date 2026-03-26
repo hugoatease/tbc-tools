@@ -49,7 +49,7 @@ namespace SqliteValue
 
 // SQL schema as per documentation
 static const QString SCHEMA_SQL = R"(
-PRAGMA user_version = 3;
+PRAGMA user_version = 4;
 
 CREATE TABLE IF NOT EXISTS capture (
     capture_id INTEGER PRIMARY KEY,
@@ -63,6 +63,10 @@ CREATE TABLE IF NOT EXISTS capture (
     video_sample_rate REAL,
     active_video_start INTEGER,
     active_video_end INTEGER,
+    first_active_field_line INTEGER,
+    last_active_field_line INTEGER,
+    first_active_frame_line INTEGER,
+    last_active_frame_line INTEGER,
     field_width INTEGER,
     field_height INTEGER,
     number_of_sequential_fields INTEGER,
@@ -229,6 +233,8 @@ void SqliteReader::close()
 bool SqliteReader::readCaptureMetadata(int &captureId, QString &system, QString &decoder,
                                      QString &gitBranch, QString &gitCommit,
                                      double &videoSampleRate, int &activeVideoStart, int &activeVideoEnd,
+                                     int &firstActiveFieldLine, int &lastActiveFieldLine,
+                                     int &firstActiveFrameLine, int &lastActiveFrameLine,
                                      int &fieldWidth, int &fieldHeight, int &numberOfSequentialFields,
                                      int &colourBurstStart, int &colourBurstEnd,
                                      bool &isMapped, bool &isSubcarrierLocked, bool &isWidescreen,
@@ -249,6 +255,10 @@ bool SqliteReader::readCaptureMetadata(int &captureId, QString &system, QString 
     bool hasNtscChromaWeightColumn = false;
     bool hasNtscPhaseCompensationColumn = false;
     bool hasPalTransformThresholdColumn = false;
+    bool hasFirstActiveFieldLineColumn = false;
+    bool hasLastActiveFieldLineColumn = false;
+    bool hasFirstActiveFrameLineColumn = false;
+    bool hasLastActiveFrameLineColumn = false;
     QSqlQuery checkQuery(db);
     checkQuery.prepare("PRAGMA table_info(capture)");
     if (checkQuery.exec()) {
@@ -274,6 +284,14 @@ bool SqliteReader::readCaptureMetadata(int &captureId, QString &system, QString 
                 hasNtscPhaseCompensationColumn = true;
             } else if (columnName == "pal_transform_threshold") {
                 hasPalTransformThresholdColumn = true;
+            } else if (columnName == "first_active_field_line") {
+                hasFirstActiveFieldLineColumn = true;
+            } else if (columnName == "last_active_field_line") {
+                hasLastActiveFieldLineColumn = true;
+            } else if (columnName == "first_active_frame_line") {
+                hasFirstActiveFrameLineColumn = true;
+            } else if (columnName == "last_active_frame_line") {
+                hasLastActiveFrameLineColumn = true;
             }
         }
     }
@@ -284,6 +302,18 @@ bool SqliteReader::readCaptureMetadata(int &captureId, QString &system, QString 
                        "field_width, field_height, number_of_sequential_fields, "
                        "colour_burst_start, colour_burst_end, is_mapped, is_subcarrier_locked, "
                        "is_widescreen, white_16b_ire, black_16b_ire";
+    if (hasFirstActiveFieldLineColumn) {
+        queryStr += ", first_active_field_line";
+    }
+    if (hasLastActiveFieldLineColumn) {
+        queryStr += ", last_active_field_line";
+    }
+    if (hasFirstActiveFrameLineColumn) {
+        queryStr += ", first_active_frame_line";
+    }
+    if (hasLastActiveFrameLineColumn) {
+        queryStr += ", last_active_frame_line";
+    }
     if (hasBlankingColumn) {
         queryStr += ", blanking_16b_ire";
     }
@@ -336,6 +366,26 @@ bool SqliteReader::readCaptureMetadata(int &captureId, QString &system, QString 
     videoSampleRate = SqliteValue::toDoubleOrDefault(query, "video_sample_rate");
     activeVideoStart = SqliteValue::toIntOrDefault(query, "active_video_start");
     activeVideoEnd = SqliteValue::toIntOrDefault(query, "active_video_end");
+    if (hasFirstActiveFieldLineColumn) {
+        firstActiveFieldLine = SqliteValue::toIntOrDefault(query, "first_active_field_line");
+    } else {
+        firstActiveFieldLine = -1;
+    }
+    if (hasLastActiveFieldLineColumn) {
+        lastActiveFieldLine = SqliteValue::toIntOrDefault(query, "last_active_field_line");
+    } else {
+        lastActiveFieldLine = -1;
+    }
+    if (hasFirstActiveFrameLineColumn) {
+        firstActiveFrameLine = SqliteValue::toIntOrDefault(query, "first_active_frame_line");
+    } else {
+        firstActiveFrameLine = -1;
+    }
+    if (hasLastActiveFrameLineColumn) {
+        lastActiveFrameLine = SqliteValue::toIntOrDefault(query, "last_active_frame_line");
+    } else {
+        lastActiveFrameLine = -1;
+    }
     fieldWidth = SqliteValue::toIntOrDefault(query, "field_width");
     fieldHeight = SqliteValue::toIntOrDefault(query, "field_height");
     numberOfSequentialFields = SqliteValue::toIntOrDefault(query, "number_of_sequential_fields");
@@ -436,6 +486,10 @@ static bool ensureCaptureColumns(QSqlDatabase &db)
         {"chroma_gain", "REAL"},
         {"chroma_phase", "REAL"},
         {"luma_nr", "REAL"},
+        {"first_active_field_line", "INTEGER"},
+        {"last_active_field_line", "INTEGER"},
+        {"first_active_frame_line", "INTEGER"},
+        {"last_active_frame_line", "INTEGER"},
         {"ntsc_adaptive", "INTEGER"},
         {"ntsc_adapt_threshold", "REAL"},
         {"ntsc_chroma_weight", "REAL"},
@@ -460,8 +514,8 @@ static bool ensureCaptureColumns(QSqlDatabase &db)
 
     if (altered) {
         QSqlQuery versionQuery(db);
-        if (!versionQuery.exec("PRAGMA user_version = 3")) {
-            qWarning() << "Failed to update SQLite user_version to 3:" << versionQuery.lastError().text();
+        if (!versionQuery.exec("PRAGMA user_version = 4")) {
+            qWarning() << "Failed to update SQLite user_version to 4:" << versionQuery.lastError().text();
         }
     }
 
@@ -714,6 +768,8 @@ bool SqliteWriter::createSchema()
 int SqliteWriter::writeCaptureMetadata(const QString &system, const QString &decoder,
                                      const QString &gitBranch, const QString &gitCommit,
                                      double videoSampleRate, int activeVideoStart, int activeVideoEnd,
+                                     int firstActiveFieldLine, int lastActiveFieldLine,
+                                     int firstActiveFrameLine, int lastActiveFrameLine,
                                      int fieldWidth, int fieldHeight, int numberOfSequentialFields,
                                      int colourBurstStart, int colourBurstEnd,
                                      bool isMapped, bool isSubcarrierLocked, bool isWidescreen,
@@ -726,13 +782,14 @@ int SqliteWriter::writeCaptureMetadata(const QString &system, const QString &dec
     QSqlQuery query(db);
     query.prepare("INSERT INTO capture (system, decoder, git_branch, git_commit, "
                  "video_sample_rate, active_video_start, active_video_end, "
+                 "first_active_field_line, last_active_field_line, first_active_frame_line, last_active_frame_line, "
                  "field_width, field_height, number_of_sequential_fields, "
                  "colour_burst_start, colour_burst_end, is_mapped, is_subcarrier_locked, "
                  "is_widescreen, white_16b_ire, black_16b_ire, blanking_16b_ire, "
                  "chroma_decoder, chroma_gain, chroma_phase, luma_nr, "
                  "ntsc_adaptive, ntsc_adapt_threshold, ntsc_chroma_weight, ntsc_phase_compensation, "
                  "pal_transform_threshold, capture_notes) "
-                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
 
     query.addBindValue(system);
     query.addBindValue(decoder);
@@ -741,6 +798,10 @@ int SqliteWriter::writeCaptureMetadata(const QString &system, const QString &dec
     query.addBindValue(videoSampleRate);
     query.addBindValue(activeVideoStart);
     query.addBindValue(activeVideoEnd);
+    query.addBindValue(firstActiveFieldLine);
+    query.addBindValue(lastActiveFieldLine);
+    query.addBindValue(firstActiveFrameLine);
+    query.addBindValue(lastActiveFrameLine);
     query.addBindValue(fieldWidth);
     query.addBindValue(fieldHeight);
     query.addBindValue(numberOfSequentialFields);
@@ -774,6 +835,8 @@ int SqliteWriter::writeCaptureMetadata(const QString &system, const QString &dec
 bool SqliteWriter::updateCaptureMetadata(int captureId, const QString &system, const QString &decoder,
                                        const QString &gitBranch, const QString &gitCommit,
                                        double videoSampleRate, int activeVideoStart, int activeVideoEnd,
+                                       int firstActiveFieldLine, int lastActiveFieldLine,
+                                       int firstActiveFrameLine, int lastActiveFrameLine,
                                        int fieldWidth, int fieldHeight, int numberOfSequentialFields,
                                        int colourBurstStart, int colourBurstEnd,
                                        bool isMapped, bool isSubcarrierLocked, bool isWidescreen,
@@ -789,6 +852,7 @@ bool SqliteWriter::updateCaptureMetadata(int captureId, const QString &system, c
     QSqlQuery query(db);
     query.prepare("UPDATE capture SET system=?, decoder=?, git_branch=?, git_commit=?, "
                  "video_sample_rate=?, active_video_start=?, active_video_end=?, "
+                 "first_active_field_line=?, last_active_field_line=?, first_active_frame_line=?, last_active_frame_line=?, "
                  "field_width=?, field_height=?, number_of_sequential_fields=?, "
                  "colour_burst_start=?, colour_burst_end=?, is_mapped=?, is_subcarrier_locked=?, "
                  "is_widescreen=?, white_16b_ire=?, black_16b_ire=?, blanking_16b_ire=?, "
@@ -804,6 +868,10 @@ bool SqliteWriter::updateCaptureMetadata(int captureId, const QString &system, c
     query.addBindValue(videoSampleRate);
     query.addBindValue(activeVideoStart);
     query.addBindValue(activeVideoEnd);
+    query.addBindValue(firstActiveFieldLine);
+    query.addBindValue(lastActiveFieldLine);
+    query.addBindValue(firstActiveFrameLine);
+    query.addBindValue(lastActiveFrameLine);
     query.addBindValue(fieldWidth);
     query.addBindValue(fieldHeight);
     query.addBindValue(numberOfSequentialFields);

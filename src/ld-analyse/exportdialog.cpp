@@ -505,6 +505,12 @@ QString effectiveResolutionMode(const TbcSource *source, const QComboBox *resolu
     return resolutionMode;
 }
 
+bool isFullFrame4fscResolutionMode(const QString &resolutionMode)
+{
+    return resolutionMode == QStringLiteral("full_frame_4fsc")
+           || resolutionMode == QStringLiteral("hybrid_4fsc");
+}
+
 bool supportsOutputResolutionResample(const QString &resolutionMode)
 {
     return resolutionMode == QStringLiteral("active_area")
@@ -664,7 +670,7 @@ bool isFfv1SlicesCompatibleWithResolutionMode(int slices, int system, const QStr
     if (!isSupportedFfv1SlicesValue(slices)) {
         return false;
     }
-    if (resolutionMode == QStringLiteral("full_frame_4fsc")) {
+    if (isFullFrame4fscResolutionMode(resolutionMode)) {
         return supportedFullFrameFfv1SlicesValuesForSystem(system).contains(slices);
     }
     return true;
@@ -672,7 +678,7 @@ bool isFfv1SlicesCompatibleWithResolutionMode(int slices, int system, const QStr
 
 int recommendedFfv1SlicesForResolutionMode(int system, const QString &resolutionMode)
 {
-    if (resolutionMode == QStringLiteral("full_frame_4fsc")) {
+    if (isFullFrame4fscResolutionMode(resolutionMode)) {
         if (system == PAL) {
             return 20;
         }
@@ -685,7 +691,7 @@ int recommendedFfv1SlicesForResolutionMode(int system, const QString &resolution
 
 int recommendedCompressionFfv1SlicesForResolutionMode(int system, const QString &resolutionMode)
 {
-    if (resolutionMode == QStringLiteral("full_frame_4fsc")) {
+    if (isFullFrame4fscResolutionMode(resolutionMode)) {
         const QList<int> compatibleValues = supportedFullFrameFfv1SlicesValuesForSystem(system);
         if (!compatibleValues.isEmpty()) {
             return compatibleValues.first();
@@ -1145,6 +1151,7 @@ ExportDialog::ExportDialog(QWidget *parent) :
         ui->resolutionModeComboBox->addItem(tr("Active Area"), QStringLiteral("active_area"));
         ui->resolutionModeComboBox->addItem(tr("Active + VBI"), QStringLiteral("active_vbi"));
         ui->resolutionModeComboBox->addItem(tr("Full-Frame 4fsc"), QStringLiteral("full_frame_4fsc"));
+        ui->resolutionModeComboBox->addItem(tr("Hybrid 4fsc"), QStringLiteral("hybrid_4fsc"));
         ui->resolutionModeComboBox->addItem(tr("User Defined"), QStringLiteral("user_defined"));
         const int activeAreaIndex = ui->resolutionModeComboBox->findData(QStringLiteral("active_area"));
         ui->resolutionModeComboBox->setCurrentIndex(activeAreaIndex >= 0 ? activeAreaIndex : 0);
@@ -1594,7 +1601,7 @@ void ExportDialog::refreshOutputResolutionModeOptions()
                                                       .arg(activeNativeWidth)
                                                       .arg(vbiNativeHeight),
                                                   QStringLiteral("tool_native"));
-    } else if (resolutionMode == QStringLiteral("full_frame_4fsc")) {
+    } else if (isFullFrame4fscResolutionMode(resolutionMode)) {
         ui->outputResolutionModeComboBox->addItem(tr("Native %1x%2")
                                                       .arg(fullFrameWidth)
                                                       .arg(fullFrameHeight),
@@ -1620,9 +1627,11 @@ void ExportDialog::refreshOutputResolutionModeOptions()
 
     int targetIndex = ui->outputResolutionModeComboBox->findData(previousMode);
     if (targetIndex < 0) {
-        const QString fallbackMode = supportsOutputResolutionResample(resolutionMode)
-                                         ? QStringLiteral("default_safe")
-                                         : QStringLiteral("tool_native");
+        const QString fallbackMode = isFullFrame4fscResolutionMode(resolutionMode)
+                                         ? QStringLiteral("tool_native")
+                                         : supportsOutputResolutionResample(resolutionMode)
+                                               ? QStringLiteral("default_safe")
+                                               : QStringLiteral("tool_native");
         targetIndex = ui->outputResolutionModeComboBox->findData(fallbackMode);
     }
     if (targetIndex < 0 && ui->outputResolutionModeComboBox->count() > 0) {
@@ -2200,6 +2209,9 @@ void ExportDialog::on_exportButton_clicked()
         const QString outputResolutionMode = effectiveOutputResolutionMode(ui ? ui->outputResolutionModeComboBox : nullptr);
         const bool supportsAppendVideoFilter = executableSupportsOption(exportPath, QStringLiteral("--append-video-filter"));
         const bool supportsD1OutputSizing = executableSupportsD1OutputSizing(exportPath);
+        const LdDecodeMetaData::VideoParameters &previewVideoParameters = tbcSource->getVideoParameters();
+        const bool hasCustomActiveLineFraming = resolutionMode == QStringLiteral("user_defined")
+                                                || hasAnyNonDefaultVerticalFraming(previewVideoParameters);
         if (dropoutMode == QStringLiteral("heavy")
             && !executableSupportsOption(exportPath, QStringLiteral("--overcorrect"))) {
             appendLog(tr("Dropout mode 'Heavy' selected, but --overcorrect is not supported by the detected tbc-video-export. Falling back to basic dropout correction."));
@@ -2222,7 +2234,8 @@ void ExportDialog::on_exportButton_clicked()
                                                                                   outputResolutionMode);
         const bool useD1OutputSizing = outputResamplePlan.enabled
                                        && shouldUseD1OutputSizing(resolutionMode, outputResolutionMode)
-                                       && supportsD1OutputSizing;
+                                       && supportsD1OutputSizing
+                                       && !hasCustomActiveLineFraming;
         if (outputResamplePlan.enabled) {
             if (useD1OutputSizing) {
                 appendLog(tr("Output resolution mode '%1' will export %2x%3 with SAR %4 using --d1.")
@@ -2232,6 +2245,9 @@ void ExportDialog::on_exportButton_clicked()
                               .arg(outputResamplePlan.width)
                               .arg(outputResamplePlan.height)
                               .arg(outputResamplePlan.sampleAspectRatio));
+            } else if (hasCustomActiveLineFraming
+                       && shouldUseD1OutputSizing(resolutionMode, outputResolutionMode)) {
+                appendLog(tr("D1 output sizing is unavailable when active-area framing has custom line adjustments; using filter-based or native sizing instead."));
             } else if (supportsAppendVideoFilter) {
                 appendLog(tr("Output resolution mode '%1' will export %2x%3 with SAR %4.")
                               .arg(ui->outputResolutionModeComboBox
@@ -2264,8 +2280,8 @@ void ExportDialog::on_exportButton_clicked()
                     ui->ffv1SlicesSpinBox->setValue(compressionSlices);
                 }
                 ffv1Slices = compressionSlices;
-                const QString compressionMessage = resolutionMode == QStringLiteral("full_frame_4fsc")
-                                                       ? tr("FFV1 compression profile adjusted slices from %1 to %2 for Full-Frame 4fsc (%3 compatibility).")
+                const QString compressionMessage = isFullFrame4fscResolutionMode(resolutionMode)
+                                                       ? tr("FFV1 compression profile adjusted slices from %1 to %2 for 4fsc framing (%3 compatibility).")
                                                              .arg(originalSlices)
                                                              .arg(ffv1Slices)
                                                              .arg(videoSystemArg(videoSystem).toUpper())
@@ -2291,7 +2307,7 @@ void ExportDialog::on_exportButton_clicked()
             const int adjustedSlices = recommendedFfv1SlicesForResolutionMode(videoSystem, resolutionMode);
             if (!isSupportedFfv1SlicesValue(adjustedSlices)
                 || !isFfv1SlicesCompatibleWithResolutionMode(adjustedSlices, videoSystem, resolutionMode)) {
-                const QString errorToShow = tr("FFV1 slices value %1 is not compatible with Full-Frame 4fsc for %2. Supported values: %3.")
+                const QString errorToShow = tr("FFV1 slices value %1 is not compatible with 4fsc framing for %2. Supported values: %3.")
                                                 .arg(ffv1Slices)
                                                 .arg(videoSystemArg(videoSystem).toUpper())
                                                 .arg(supportedFullFrameFfv1SlicesValuesTextForSystem(videoSystem));
@@ -2309,7 +2325,7 @@ void ExportDialog::on_exportButton_clicked()
             }
             ffv1Slices = adjustedSlices;
 
-            const QString adjustMessage = tr("Adjusted FFV1 slices from %1 to %2 for Full-Frame 4fsc (%3 compatibility).")
+            const QString adjustMessage = tr("Adjusted FFV1 slices from %1 to %2 for 4fsc framing (%3 compatibility).")
                                               .arg(originalSlices)
                                               .arg(ffv1Slices)
                                               .arg(videoSystemArg(videoSystem).toUpper());
@@ -2349,6 +2365,14 @@ void ExportDialog::on_exportButton_clicked()
     const int startFrameOneBased = inPoint;
     const int zeroBasedStartForAudioTrim = qMax(0, startFrameOneBased - 1);
     const int rangeLength = outPoint - inPoint + 1;
+    const QString selectedDropoutMode = ui->dropoutModeComboBox
+                                            ? ui->dropoutModeComboBox->currentData().toString()
+                                            : QStringLiteral("basic");
+    const bool disableDropoutCorrectionForMidTapeRange =
+        startFrameOneBased > 1 && selectedDropoutMode != QStringLiteral("disabled");
+    if (disableDropoutCorrectionForMidTapeRange) {
+        appendLog(tr("Dropout correction disabled for this export range because ld-dropout-correct cannot seek to non-zero start frames."));
+    }
 
     QStringList exportAudioTracks = collectAudioTracks();
     if (!exportAudioTracks.isEmpty() && (zeroBasedStartForAudioTrim > 0 || rangeLength < totalFrames)) {
@@ -2373,7 +2397,8 @@ void ExportDialog::on_exportButton_clicked()
                                                  configOverridePath,
                                                  exportAudioTracks,
                                                  startFrameOneBased,
-                                                 rangeLength);
+                                                 rangeLength,
+                                                 disableDropoutCorrectionForMidTapeRange);
     if (arguments.isEmpty()) {
         cleanupTemporaryMetadataSnapshot();
         if (!errorMessage.isEmpty()) {
@@ -2396,6 +2421,7 @@ void ExportDialog::on_exportButton_clicked()
                                                 exportAudioTracks,
                                                 startFrameOneBased,
                                                 rangeLength,
+                                                disableDropoutCorrectionForMidTapeRange,
                                                 proxyProfile,
                                                 proxyOutputBase);
         if (parallelProxyArguments.isEmpty()) {
@@ -3794,6 +3820,7 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
                                          const QStringList &audioTracks,
                                          int startFrameOneBasedOverride,
                                          int lengthOverride,
+                                         bool disableDropoutCorrectOverride,
                                          const QString &profileOverride,
                                          const QString &outputBaseOverride) const
 {
@@ -3879,10 +3906,12 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
     const QString correctionMode = ui->dropoutFieldModeComboBox
                                        ? ui->dropoutFieldModeComboBox->currentData().toString()
                                        : QStringLiteral("innerfield");
+    const bool forceDisableDropoutCorrection =
+        disableDropoutCorrectOverride && dropoutMode != QStringLiteral("disabled");
     const bool supportsDropoutInterfieldCorrection = executableSupportsOption(
         exportPath, QStringLiteral("--dropout-interfield-correction"));
     const QString outputResolutionMode = effectiveOutputResolutionMode(ui ? ui->outputResolutionModeComboBox : nullptr);
-    if (dropoutMode == QStringLiteral("disabled")) {
+    if (dropoutMode == QStringLiteral("disabled") || forceDisableDropoutCorrection) {
         args << QStringLiteral("--no-dropout-correct");
     } else {
         if (dropoutMode == QStringLiteral("heavy")
@@ -3994,16 +4023,24 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
         }
     };
     const bool forwardActiveLines = hasAnyNonDefaultVerticalFraming(videoParameters);
-    if (resolutionMode == QStringLiteral("full_frame_4fsc")) {
+    const bool hasCustomActiveLineFraming = resolutionMode == QStringLiteral("user_defined")
+                                            || forwardActiveLines;
+    if (isFullFrame4fscResolutionMode(resolutionMode)) {
         const bool supportsFullFrame = executableSupportsOption(exportPath, QStringLiteral("--full-frame"));
         if (supportsFullFrame) {
             args << QStringLiteral("--full-frame");
         } else {
+            const QString framingLabel = resolutionMode == QStringLiteral("hybrid_4fsc")
+                                             ? tr("Hybrid 4fsc")
+                                             : tr("Full-Frame 4fsc");
             if (errorMessage) {
                 if (exportPath.isEmpty()) {
-                    *errorMessage = tr("Full-Frame 4fsc export requires tbc-video-export with --full-frame support, but no export executable was found.");
+                    *errorMessage = tr("%1 export requires tbc-video-export with --full-frame support, but no export executable was found.")
+                                        .arg(framingLabel);
                 } else {
-                    *errorMessage = tr("Full-Frame 4fsc export requires tbc-video-export with --full-frame support. Detected export tool does not support it: %1").arg(exportPath);
+                    *errorMessage = tr("%1 export requires tbc-video-export with --full-frame support. Detected export tool does not support it: %2")
+                                        .arg(framingLabel)
+                                        .arg(exportPath);
                 }
             }
             return QStringList();
@@ -4030,7 +4067,8 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
                                                                                   outputResolutionMode);
         const bool useD1OutputSizing = outputResamplePlan.enabled
                                        && shouldUseD1OutputSizing(resolutionMode, outputResolutionMode)
-                                       && executableSupportsD1OutputSizing(exportPath);
+                                       && executableSupportsD1OutputSizing(exportPath)
+                                       && !hasCustomActiveLineFraming;
         if (useD1OutputSizing) {
             args << QStringLiteral("--d1");
         } else if (outputResamplePlan.enabled

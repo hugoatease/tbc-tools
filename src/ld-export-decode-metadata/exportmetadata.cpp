@@ -172,12 +172,16 @@ void ExportMetaData::VideoParameters::read(JsonReader &reader)
         else if (member == "colourBurstStart") reader.read(colourBurstStart);
         else if (member == "fieldHeight") reader.read(fieldHeight);
         else if (member == "fieldWidth") reader.read(fieldWidth);
+        else if (member == "firstActiveFieldLine") reader.read(firstActiveFieldLine);
+        else if (member == "firstActiveFrameLine") reader.read(firstActiveFrameLine);
         else if (member == "gitBranch") reader.read(gitBranch);
         else if (member == "gitCommit") reader.read(gitCommit);
         else if (member == "isMapped") reader.read(isMapped);
         else if (member == "isSourcePal") reader.read(isSourcePal); // obsolete
         else if (member == "isSubcarrierLocked") reader.read(isSubcarrierLocked);
         else if (member == "isWidescreen") reader.read(isWidescreen);
+        else if (member == "lastActiveFieldLine") reader.read(lastActiveFieldLine);
+        else if (member == "lastActiveFrameLine") reader.read(lastActiveFrameLine);
         else if (member == "numberOfSequentialFields") reader.read(numberOfSequentialFields);
         else if (member == "sampleRate") reader.read(sampleRate);
         else if (member == "system") reader.read(systemString);
@@ -217,6 +221,8 @@ void ExportMetaData::VideoParameters::write(JsonWriter &writer) const
     writer.writeMember("colourBurstStart", colourBurstStart);
     writer.writeMember("fieldHeight", fieldHeight);
     writer.writeMember("fieldWidth", fieldWidth);
+    writer.writeMember("firstActiveFieldLine", firstActiveFieldLine);
+    writer.writeMember("firstActiveFrameLine", firstActiveFrameLine);
     if (gitBranch != "") {
         writer.writeMember("gitBranch", gitBranch);
     }
@@ -227,6 +233,8 @@ void ExportMetaData::VideoParameters::write(JsonWriter &writer) const
     if (isMapped) writer.writeMember("isMapped", isMapped);
     if (isSubcarrierLocked) writer.writeMember("isSubcarrierLocked", isSubcarrierLocked);
     if (isWidescreen) writer.writeMember("isWidescreen", isWidescreen);
+    writer.writeMember("lastActiveFieldLine", lastActiveFieldLine);
+    writer.writeMember("lastActiveFrameLine", lastActiveFrameLine);
     writer.writeMember("numberOfSequentialFields", numberOfSequentialFields);
     writer.writeMember("sampleRate", sampleRate);
     writer.writeMember("system", VIDEO_SYSTEM_DEFAULTS[system].name);
@@ -704,9 +712,14 @@ void ExportMetaData::initialiseVideoSystemParameters()
 {
     const VideoSystemDefaults &defaults = getSystemDefaults(videoParameters);
     videoParameters.fSC = defaults.fSC;
-
+    // Preserve serialized line parameters when present, otherwise defaults will
+    // be applied by processLineParameters().
     // Set default LineParameters
     ExportMetaData::LineParameters lineParameters;
+    lineParameters.firstActiveFieldLine = videoParameters.firstActiveFieldLine;
+    lineParameters.lastActiveFieldLine = videoParameters.lastActiveFieldLine;
+    lineParameters.firstActiveFrameLine = videoParameters.firstActiveFrameLine;
+    lineParameters.lastActiveFrameLine = videoParameters.lastActiveFrameLine;
     processLineParameters(lineParameters);
 }
 

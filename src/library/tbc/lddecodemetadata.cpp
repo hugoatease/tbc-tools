@@ -388,12 +388,16 @@ void LdDecodeMetaData::VideoParameters::read(JsonReader &reader)
         else if (member == "colourBurstStart") reader.read(colourBurstStart);
         else if (member == "fieldHeight") reader.read(fieldHeight);
         else if (member == "fieldWidth") reader.read(fieldWidth);
+        else if (member == "firstActiveFieldLine") reader.read(firstActiveFieldLine);
+        else if (member == "firstActiveFrameLine") reader.read(firstActiveFrameLine);
         else if (member == "gitBranch") reader.read(gitBranch);
         else if (member == "gitCommit") reader.read(gitCommit);
         else if (member == "isMapped") reader.read(isMapped);
         else if (member == "isSourcePal") reader.read(isSourcePal); // obsolete
         else if (member == "isSubcarrierLocked") reader.read(isSubcarrierLocked);
         else if (member == "isWidescreen") reader.read(isWidescreen);
+        else if (member == "lastActiveFieldLine") reader.read(lastActiveFieldLine);
+        else if (member == "lastActiveFrameLine") reader.read(lastActiveFrameLine);
         else if (member == "numberOfSequentialFields") reader.read(numberOfSequentialFields);
         else if (member == "sampleRate") reader.read(sampleRate);
         else if (member == "system") reader.read(systemString);
@@ -463,6 +467,8 @@ void LdDecodeMetaData::VideoParameters::write(JsonWriter &writer) const
     writer.writeMember("colourBurstStart", colourBurstStart);
     writer.writeMember("fieldHeight", fieldHeight);
     writer.writeMember("fieldWidth", fieldWidth);
+    writer.writeMember("firstActiveFieldLine", firstActiveFieldLine);
+    writer.writeMember("firstActiveFrameLine", firstActiveFrameLine);
     if (gitBranch != "") {
         writer.writeMember("gitBranch", gitBranch);
     }
@@ -472,6 +478,8 @@ void LdDecodeMetaData::VideoParameters::write(JsonWriter &writer) const
     writer.writeMember("isMapped", isMapped);
     writer.writeMember("isSubcarrierLocked", isSubcarrierLocked);
     writer.writeMember("isWidescreen", isWidescreen);
+    writer.writeMember("lastActiveFieldLine", lastActiveFieldLine);
+    writer.writeMember("lastActiveFrameLine", lastActiveFrameLine);
     writer.writeMember("numberOfSequentialFields", numberOfSequentialFields);
     writer.writeMember("sampleRate", sampleRate);
     writer.writeMember("system", VIDEO_SYSTEM_DEFAULTS[system].name);
@@ -873,6 +881,7 @@ bool LdDecodeMetaData::read(QString fileName)
         QString chromaDecoder;
         double videoSampleRate;
         int activeVideoStart, activeVideoEnd, fieldWidth, fieldHeight, numberOfSequentialFields;
+        int firstActiveFieldLine, lastActiveFieldLine, firstActiveFrameLine, lastActiveFrameLine;
         int colourBurstStart, colourBurstEnd, white16bIre, black16bIre, blanking16bIre;
         double chromaGain = -1.0;
         double chromaPhase = -1.0;
@@ -887,6 +896,8 @@ bool LdDecodeMetaData::read(QString fileName)
         // Read capture metadata
         if (!reader.readCaptureMetadata(captureId, system, decoder, gitBranch, gitCommit,
                                        videoSampleRate, activeVideoStart, activeVideoEnd,
+                                       firstActiveFieldLine, lastActiveFieldLine,
+                                       firstActiveFrameLine, lastActiveFrameLine,
                                        fieldWidth, fieldHeight, numberOfSequentialFields,
                                        colourBurstStart, colourBurstEnd, isMapped,
                                        isSubcarrierLocked, isWidescreen, white16bIre,
@@ -910,6 +921,10 @@ bool LdDecodeMetaData::read(QString fileName)
         videoParameters.colourBurstEnd = colourBurstEnd;
         videoParameters.activeVideoStart = activeVideoStart;
         videoParameters.activeVideoEnd = activeVideoEnd;
+        videoParameters.firstActiveFieldLine = firstActiveFieldLine;
+        videoParameters.lastActiveFieldLine = lastActiveFieldLine;
+        videoParameters.firstActiveFrameLine = firstActiveFrameLine;
+        videoParameters.lastActiveFrameLine = lastActiveFrameLine;
         videoParameters.white16bIre = white16bIre;
         videoParameters.black16bIre = black16bIre;
         videoParameters.blanking16bIre = blanking16bIre;
@@ -1002,6 +1017,7 @@ bool LdDecodeMetaData::write(QString fileName) const
             QString existingChromaDecoder;
             double existingVideoSampleRate;
             int existingActiveVideoStart, existingActiveVideoEnd, existingFieldWidth, existingFieldHeight;
+            int existingFirstActiveFieldLine, existingLastActiveFieldLine, existingFirstActiveFrameLine, existingLastActiveFrameLine;
             int existingNumberOfSequentialFields, existingColourBurstStart, existingColourBurstEnd;
             int existingWhite16bIre, existingBlack16bIre, existingBlanking16bIre;
             double existingChromaGain = -1.0;
@@ -1017,6 +1033,8 @@ bool LdDecodeMetaData::write(QString fileName) const
             if (reader.readCaptureMetadata(captureId, existingSystem, existingDecoder, 
                                          existingGitBranch, existingGitCommit, existingVideoSampleRate,
                                          existingActiveVideoStart, existingActiveVideoEnd, 
+                                         existingFirstActiveFieldLine, existingLastActiveFieldLine,
+                                         existingFirstActiveFrameLine, existingLastActiveFrameLine,
                                          existingFieldWidth, existingFieldHeight, existingNumberOfSequentialFields,
                                          existingColourBurstStart, existingColourBurstEnd,
                                          existingIsMapped, existingIsSubcarrierLocked, existingIsWidescreen,
@@ -1061,7 +1079,10 @@ bool LdDecodeMetaData::write(QString fileName) const
             if (!writer.updateCaptureMetadata(captureId, systemName, "ld-decode", // TODO: make decoder configurable
                                             videoParameters.gitBranch, videoParameters.gitCommit,
                                             videoParameters.sampleRate, videoParameters.activeVideoStart, 
-                                            videoParameters.activeVideoEnd, videoParameters.fieldWidth,
+                                            videoParameters.activeVideoEnd,
+                                            videoParameters.firstActiveFieldLine, videoParameters.lastActiveFieldLine,
+                                            videoParameters.firstActiveFrameLine, videoParameters.lastActiveFrameLine,
+                                            videoParameters.fieldWidth,
                                             videoParameters.fieldHeight, videoParameters.numberOfSequentialFields,
                                             videoParameters.colourBurstStart, videoParameters.colourBurstEnd,
                                             videoParameters.isMapped, videoParameters.isSubcarrierLocked,
@@ -1082,7 +1103,9 @@ bool LdDecodeMetaData::write(QString fileName) const
                 systemName, "ld-decode", // TODO: make decoder configurable
                 videoParameters.gitBranch, videoParameters.gitCommit,
                 videoParameters.sampleRate, videoParameters.activeVideoStart, 
-                videoParameters.activeVideoEnd, videoParameters.fieldWidth,
+                videoParameters.activeVideoEnd, videoParameters.firstActiveFieldLine,
+                videoParameters.lastActiveFieldLine, videoParameters.firstActiveFrameLine,
+                videoParameters.lastActiveFrameLine, videoParameters.fieldWidth,
                 videoParameters.fieldHeight, videoParameters.numberOfSequentialFields,
                 videoParameters.colourBurstStart, videoParameters.colourBurstEnd,
                 videoParameters.isMapped, videoParameters.isSubcarrierLocked,
@@ -1335,9 +1358,14 @@ void LdDecodeMetaData::initialiseVideoSystemParameters()
 {
     const VideoSystemDefaults &defaults = getSystemDefaults(videoParameters);
     videoParameters.fSC = defaults.fSC;
-
+    // Preserve serialized line parameters when present, otherwise defaults will
+    // be applied by processLineParameters().
     // Set default LineParameters
     LdDecodeMetaData::LineParameters lineParameters;
+    lineParameters.firstActiveFieldLine = videoParameters.firstActiveFieldLine;
+    lineParameters.lastActiveFieldLine = videoParameters.lastActiveFieldLine;
+    lineParameters.firstActiveFrameLine = videoParameters.firstActiveFrameLine;
+    lineParameters.lastActiveFrameLine = videoParameters.lastActiveFrameLine;
     processLineParameters(lineParameters);
 }
 
