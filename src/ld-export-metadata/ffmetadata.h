@@ -26,6 +26,7 @@
 #define FFMETADATA_H
 
 #include <QString>
+#include <QtGlobal>
 
 #include "lddecodemetadata.h"
 
@@ -36,8 +37,16 @@
     metadata for chapter-supporting formats like Matroska.
     Format description: <https://ffmpeg.org/ffmpeg-formats.html#Metadata-1>
 
+    @param startFrameOneBased Optional 1-based start frame for range export.
+           Pass a value < 1 to export from the first frame.
+    @param lengthFrames Optional frame length for range export.
+           Pass a value < 1 to export to the end of the input.
+
     Returns true on success, false on failure.
 */
-bool writeFfmetadata(LdDecodeMetaData &metaData, const QString &fileName);
+bool writeFfmetadata(LdDecodeMetaData &metaData,
+                     const QString &fileName,
+                     qint32 startFrameOneBased = -1,
+                     qint32 lengthFrames = -1);
 
 #endif

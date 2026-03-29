@@ -3318,36 +3318,51 @@ void MainWindow::on_actionExport_Decode_Metadata_triggered()
     QString defaultInput;
     if (tbcSource.getIsSourceLoaded()) {
         defaultInput = tbcSource.getCurrentMetadataFilename();
+        if (!defaultInput.endsWith(QStringLiteral(".db"), Qt::CaseInsensitive)
+            && !defaultInput.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive)) {
+            const QString sourceMetadataCandidate =
+                resolveMetadataFilenameForSource(tbcSource.getCurrentSourceFilename());
+            if (sourceMetadataCandidate.endsWith(QStringLiteral(".db"), Qt::CaseInsensitive)
+                || sourceMetadataCandidate.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive)) {
+                defaultInput = sourceMetadataCandidate;
+            }
+        }
     }
-    const QString startPath = defaultInput.isEmpty() ? configuration.getSourceDirectory() : defaultInput;
-    const QString inputFileName = QFileDialog::getOpenFileName(this,
-                                                               tr("Select metadata database"),
-                                                               startPath,
-                                                               tr("SQLite metadata (*.db);;All Files (*)"));
-    if (inputFileName.isEmpty()) {
+
+    if (!defaultInput.endsWith(QStringLiteral(".db"), Qt::CaseInsensitive)
+        && !defaultInput.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive)
+        && metadataJsonLoaded) {
+        const QString jsonPath = metadataJsonFilename.trimmed();
+        if (!jsonPath.isEmpty() && QFileInfo::exists(jsonPath)) {
+            defaultInput = jsonPath;
+        }
+    }
+    if (!defaultInput.endsWith(QStringLiteral(".db"), Qt::CaseInsensitive)
+        && !defaultInput.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive)) {
+        defaultInput.clear();
+    }
+
+    const QString toolPath = resolveExternalExecutable({QStringLiteral("ld-export-metadata")});
+    if (toolPath.isEmpty()) {
+        QMessageBox::warning(this, tr("Tool not found"),
+                             tr("ld-export-metadata was not found in PATH or alongside the application."));
+        return;
+    }
+    QStringList arguments = {QStringLiteral("--gui")};
+    if (!defaultInput.isEmpty()) {
+        arguments << QStringLiteral("--input") << defaultInput;
+    }
+    if (!QProcess::startDetached(toolPath, arguments)) {
+        QMessageBox::warning(this, tr("Launch failed"),
+                             tr("Unable to start ld-export-metadata GUI."));
         return;
     }
 
-    const QString defaultOutput = MetadataConverterUtil::defaultExportDecodeMetadataOutputPath(inputFileName);
-    const QString outputFileName = QFileDialog::getSaveFileName(this,
-                                                                tr("Select export JSON output"),
-                                                                defaultOutput,
-                                                                tr("Export JSON (*.json);;All Files (*)"));
-    if (outputFileName.isEmpty()) {
-        return;
+    if (!defaultInput.isEmpty()) {
+        statusBar()->showMessage(tr("Opened Metadata Export GUI with %1").arg(defaultInput), 5000);
+    } else {
+        statusBar()->showMessage(tr("Opened Metadata Export GUI. Select a metadata input file (.db or .json)."), 5000);
     }
-
-    QString errorMessage;
-    if (!MetadataConverterUtil::runExportDecodeMetadata(inputFileName, outputFileName, &errorMessage)) {
-        QMessageBox::warning(this, tr("Export failed"),
-                             errorMessage.isEmpty()
-                                 ? tr("ld-export-decode-metadata failed.")
-                                 : errorMessage);
-        return;
-    }
-
-    QMessageBox::information(this, tr("Export complete"),
-                             tr("Exported decode metadata to %1").arg(outputFileName));
 }
 
 void MainWindow::on_actionProcess_VBI_triggered()

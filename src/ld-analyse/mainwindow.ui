@@ -836,7 +836,7 @@
   </action>
   <action name="actionExport_Decode_Metadata">
    <property name="text">
-    <string>ld-export-decode-metadata...</string>
+    <string>Metadata Export</string>
    </property>
   </action>
   <action name="actionProcess_VBI">

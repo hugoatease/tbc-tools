@@ -169,6 +169,10 @@ class TestWrappersFFmpeg:
                 {"-map", "1:s"},
                 {"-i", f"{get_path('pal_composite_ld')}.ffmetadata"},
                 {"-map_metadata", "2"},
+                {"-map_chapters", "2"},
+            ],
+            unexpected_opts=[
+                {"-timecode"},
             ],
         ),
         WrapperTestCase(
@@ -180,6 +184,18 @@ class TestWrappersFFmpeg:
                 {"{-map", "[SUBTITLE_INDEX]:s}"},
                 {"{-i", "[METADATA_FILE]}"},
                 {"{-map_metadata", "[METADATA_INDEX]}"},
+                {"{-map_chapters", "[METADATA_INDEX]}"},
+            ],
+            unexpected_opts=[
+                {"-timecode"},
+            ],
+        ),
+        WrapperTestCase(
+            id="use direct timecode when export-metadata disabled",
+            input_tbc=f"{get_path('pal_svideo')}.tbc",
+            input_opts=[],
+            expected_opts=[
+                {"-timecode", "00:00:00:00"},
             ],
         ),
         WrapperTestCase(

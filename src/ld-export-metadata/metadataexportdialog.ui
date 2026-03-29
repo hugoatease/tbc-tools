@@ -1,0 +1,269 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>MetadataExportDialog</class>
+ <widget class="QDialog" name="MetadataExportDialog">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>680</width>
+    <height>360</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Metadata Export</string>
+  </property>
+  <layout class="QVBoxLayout" name="mainLayout">
+   <property name="spacing">
+    <number>6</number>
+   </property>
+   <item>
+    <layout class="QFormLayout" name="formLayout">
+     <property name="horizontalSpacing">
+      <number>6</number>
+     </property>
+     <property name="verticalSpacing">
+      <number>6</number>
+     </property>
+     <property name="fieldGrowthPolicy">
+      <enum>QFormLayout::AllNonFixedFieldsGrow</enum>
+     </property>
+     <item row="0" column="0">
+      <widget class="QLabel" name="inputLabel">
+       <property name="text">
+        <string>Input metadata</string>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="1">
+      <layout class="QHBoxLayout" name="inputLayout">
+       <item>
+        <widget class="QLineEdit" name="inputLineEdit">
+         <property name="placeholderText">
+          <string>.db or .json metadata input</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="inputBrowseButton">
+         <property name="text">
+          <string>Browse...</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item row="1" column="0">
+      <widget class="QLabel" name="vitsCsvLabel">
+       <property name="text">
+        <string>VITS CSV</string>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="1">
+      <widget class="QCheckBox" name="vitsCsvCheckBox">
+       <property name="text">
+        <string>Export as _vits.csv</string>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="0">
+      <widget class="QLabel" name="vbiCsvLabel">
+       <property name="text">
+        <string>VBI CSV</string>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="1">
+      <widget class="QCheckBox" name="vbiCsvCheckBox">
+       <property name="text">
+        <string>Export as _vbi.csv</string>
+       </property>
+      </widget>
+     </item>
+     <item row="3" column="0">
+      <widget class="QLabel" name="audacityLabelsLabel">
+       <property name="text">
+        <string>Audacity labels</string>
+       </property>
+      </widget>
+     </item>
+     <item row="3" column="1">
+      <widget class="QCheckBox" name="audacityLabelsCheckBox">
+       <property name="text">
+        <string>Export as _audacity-labels.txt</string>
+       </property>
+      </widget>
+     </item>
+     <item row="4" column="0">
+      <widget class="QLabel" name="ffmetadataLabel">
+       <property name="text">
+        <string>FFMETADATA</string>
+       </property>
+      </widget>
+     </item>
+     <item row="4" column="1">
+      <widget class="QCheckBox" name="ffmetadataCheckBox">
+       <property name="text">
+        <string>Export as _ffmetadata.txt</string>
+       </property>
+      </widget>
+     </item>
+     <item row="5" column="0">
+      <widget class="QLabel" name="ffmetadataRangeLabel">
+       <property name="text">
+        <string>FFMETADATA range</string>
+       </property>
+      </widget>
+     </item>
+     <item row="5" column="1">
+      <layout class="QHBoxLayout" name="ffmetadataRangeLayout">
+       <item>
+        <widget class="QLineEdit" name="ffmetadataStartLineEdit">
+         <property name="placeholderText">
+          <string>--start (optional, frame &gt;= 1)</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLineEdit" name="ffmetadataLengthLineEdit">
+         <property name="placeholderText">
+          <string>--length (optional, frames &gt;= 1)</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item row="6" column="0">
+      <widget class="QLabel" name="closedCaptionsLabel">
+       <property name="text">
+        <string>Closed captions</string>
+       </property>
+      </widget>
+     </item>
+     <item row="6" column="1">
+      <widget class="QCheckBox" name="closedCaptionsCheckBox">
+       <property name="text">
+        <string>Export as _closed-captions.scc</string>
+       </property>
+      </widget>
+     </item>
+     <item row="7" column="0">
+      <widget class="QLabel" name="commonOptionsLabel">
+       <property name="text">
+        <string>Common options</string>
+       </property>
+      </widget>
+     </item>
+     <item row="7" column="1">
+      <layout class="QHBoxLayout" name="commonOptionsLayout">
+       <item>
+        <widget class="QCheckBox" name="debugCheckBox">
+         <property name="text">
+          <string>Debug</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="quietCheckBox">
+         <property name="text">
+          <string>Quiet</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="commonOptionsSpacer">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>40</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QLabel" name="dropHintLabel">
+     <property name="text">
+      <string>Tip: drag and drop a metadata file (.db or .json) onto this window to set the input. Selected outputs are written beside the input using the suffix shown for each checkbox.</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="actionLayout">
+     <item>
+      <spacer name="actionSpacer">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>40</width>
+         <height>20</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+     <item>
+      <widget class="QPushButton" name="exportButton">
+       <property name="text">
+        <string>Export</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="closeButton">
+       <property name="text">
+        <string>Close</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QLabel" name="statusLabel">
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+     <property name="text">
+      <string/>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections>
+  <connection>
+   <sender>closeButton</sender>
+   <signal>clicked()</signal>
+   <receiver>MetadataExportDialog</receiver>
+   <slot>close()</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>614</x>
+     <y>327</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>337</x>
+     <y>177</y>
+    </hint>
+   </hints>
+  </connection>
+ </connections>
+</ui>

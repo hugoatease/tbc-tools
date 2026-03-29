@@ -14,7 +14,7 @@ ld-export-metadata exports and converts metadata from TBC files into various hum
 - `--vits-csv <file>`: Write VITS information as CSV
 - `--vbi-csv <file>`: Write VBI information as CSV  
 - `--audacity-labels <file>`: Write navigation information as Audacity labels
-- `--ffmetadata <file>`: Write navigation information as FFMETADATA1
+- `--ffmetadata <file>`: Write navigation information as FFMETADATA1 (includes VITC `timecode` when available)
 - `--closed-captions <file>`: Write closed captions as Scenarist SCC V1.0 format
 
 ### Data Categories
@@ -51,7 +51,7 @@ ld-export-metadata [options] <input.tbc>
 - `--vits-csv <file>`: Write VITS information as CSV
 - `--vbi-csv <file>`: Write VBI information as CSV
 - `--audacity-labels <file>`: Write navigation information as Audacity labels
-- `--ffmetadata <file>`: Write navigation information as FFMETADATA1
+- `--ffmetadata <file>`: Write navigation information as FFMETADATA1 (includes VITC `timecode` when available)
 - `--closed-captions <file>`: Write closed captions as Scenarist SCC V1.0 format
 
 #### Arguments

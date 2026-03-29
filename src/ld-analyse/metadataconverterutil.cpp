@@ -241,6 +241,17 @@ bool runExportDecodeMetadata(const QString &inputFilename,
                              const QString &outputFilename,
                              QString *errorMessage)
 {
+    return runExportDecodeMetadata(inputFilename,
+                                   outputFilename,
+                                   ExportDecodeMetadataOptions(),
+                                   errorMessage);
+}
+
+bool runExportDecodeMetadata(const QString &inputFilename,
+                             const QString &outputFilename,
+                             const ExportDecodeMetadataOptions &options,
+                             QString *errorMessage)
+{
     const QString toolPath = resolveExportDecodeMetadataPath();
     if (toolPath.isEmpty()) {
         if (errorMessage) {
@@ -250,6 +261,12 @@ bool runExportDecodeMetadata(const QString &inputFilename,
     }
 
     QStringList arguments;
+    if (options.debug) {
+        arguments << QStringLiteral("--debug");
+    }
+    if (options.quiet) {
+        arguments << QStringLiteral("--quiet");
+    }
     arguments << QStringLiteral("--input-sqlite") << normalizePathForCurrentPlatform(inputFilename)
               << QStringLiteral("--output-json") << normalizePathForCurrentPlatform(outputFilename);
 

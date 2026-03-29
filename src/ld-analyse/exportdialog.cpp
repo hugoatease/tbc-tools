@@ -372,11 +372,6 @@ bool isFfv1ProfileName(const QString &profileName)
 {
     return profileName.trimmed().compare(QStringLiteral("ffv1"), Qt::CaseInsensitive) == 0;
 }
-
-bool isFfv1CompressionProfileId(const QString &profileId)
-{
-    return profileId.trimmed().compare(QStringLiteral("ffv1_compression"), Qt::CaseInsensitive) == 0;
-}
 bool isWebProfileName(const QString &profileName)
 {
     const QString normalized = profileName.trimmed().toLower();
@@ -2017,9 +2012,9 @@ void ExportDialog::refreshProfiles()
         const QSignalBlocker blocker(ui->profileComboBox);
         ui->profileComboBox->clear();
         ui->profileComboBox->addItem(tr("FFV1"), QStringLiteral("ffv1"));
-        ui->profileComboBox->addItem(tr("FFV1 (Compression Optimized)"), QStringLiteral("ffv1_compression"));
-        ui->profileComboBox->addItem(tr("D10 MPEG-2"), QStringLiteral("d10"));
         ui->profileComboBox->addItem(tr("ProRes"), QStringLiteral("prores"));
+        ui->profileComboBox->addItem(tr("D10 MPEG-2"), QStringLiteral("d10"));
+        ui->profileComboBox->addItem(tr("V210"), QStringLiteral("v210"));
         ui->profileComboBox->addItem(tr("AVC/H.264"), QStringLiteral("avc"));
         ui->profileComboBox->addItem(tr("HEVC/H.265"), QStringLiteral("hevc"));
         ui->profileComboBox->addItem(tr("Web"), QStringLiteral("web"));
@@ -2049,8 +2044,7 @@ void ExportDialog::refreshProfiles()
 void ExportDialog::updateProfileDependentControls()
 {
     const QString mainCodecId = selectedMainCodecId();
-    const bool ffv1Selected = mainCodecId == QStringLiteral("ffv1")
-                              || isFfv1CompressionProfileId(mainCodecId);
+    const bool ffv1Selected = mainCodecId == QStringLiteral("ffv1");
     const bool proresSelected = mainCodecId == QStringLiteral("prores");
     const bool webSelected = mainCodecId == QStringLiteral("web");
     const bool avcSelected = mainCodecId == QStringLiteral("avc");
@@ -2254,7 +2248,7 @@ void ExportDialog::on_exportButton_clicked()
     appendStatus(tr("Starting export..."));
     appendLog(tr("Starting export..."));
     const QString selectedProfile = selectedExportProfileName();
-    const bool ffv1CompressionProfileSelected = isFfv1CompressionProfileId(selectedMainCodecId());
+    const bool ffv1CompressionProfileSelected = isFfv1ProfileName(selectedProfile);
     if (selectedProfile.isEmpty()) {
         appendStatus(tr("No export profile selected."));
         appendLog(tr("No export profile selected."));
@@ -2400,11 +2394,11 @@ void ExportDialog::on_exportButton_clicked()
                 }
                 ffv1Slices = compressionSlices;
                 const QString compressionMessage = isFullFrame4fscResolutionMode(resolutionMode)
-                                                       ? tr("FFV1 compression profile adjusted slices from %1 to %2 for 4fsc framing (%3 compatibility).")
+                                                       ? tr("FFV1 profile adjusted slices from %1 to %2 for 4fsc framing (%3 compatibility).")
                                                              .arg(originalSlices)
                                                              .arg(ffv1Slices)
                                                              .arg(videoSystemArg(videoSystem).toUpper())
-                                                       : tr("FFV1 compression profile adjusted slices from %1 to %2 for improved compression.")
+                                                       : tr("FFV1 profile adjusted slices from %1 to %2 for improved compression.")
                                                              .arg(originalSlices)
                                                              .arg(ffv1Slices);
                 appendStatus(compressionMessage);
@@ -3399,9 +3393,11 @@ int ExportDialog::selectedMainBitDepth() const
 QString ExportDialog::selectedExportProfileName() const
 {
     const QString mainCodecId = selectedMainCodecId();
-    if (mainCodecId == QStringLiteral("ffv1")
-        || mainCodecId == QStringLiteral("ffv1_compression")) {
+    if (mainCodecId == QStringLiteral("ffv1")) {
         return QStringLiteral("ffv1");
+    }
+    if (mainCodecId == QStringLiteral("v210")) {
+        return QStringLiteral("v210");
     }
     if (mainCodecId == QStringLiteral("d10")) {
         return QStringLiteral("d10");
@@ -3851,6 +3847,13 @@ bool ExportDialog::prepareTrimmedAudioTracks(int zeroBasedStartFrame,
 
     const QString startArg = QString::number(static_cast<double>(clampedStart) / fps, 'f', 6);
     const QString durationArg = QString::number(static_cast<double>(clampedLength) / fps, 'f', 6);
+    const double trimDurationSeconds = static_cast<double>(clampedLength) / fps;
+    const qint64 minTrimTimeoutMs = 120000LL;
+    const qint64 maxTrimTimeoutMs = 21600000LL;
+    const qint64 estimatedTrimTimeoutMs =
+        static_cast<qint64>((trimDurationSeconds + 60.0) * 4000.0);
+    const qint64 trimTimeoutMs = qMax(minTrimTimeoutMs,
+                                      qMin(estimatedTrimTimeoutMs, maxTrimTimeoutMs));
 
     QStringList trimmedTracks;
     trimmedTracks.reserve(audioTracks->size());
@@ -3882,9 +3885,9 @@ bool ExportDialog::prepareTrimmedAudioTracks(int zeroBasedStartFrame,
                    << QStringLiteral("-v") << QStringLiteral("error")
                    << QStringLiteral("-nostdin")
                    << QStringLiteral("-y")
-                   << QStringLiteral("-i") << sourceTrack
                    << QStringLiteral("-ss") << startArg
                    << QStringLiteral("-t") << durationArg
+                   << QStringLiteral("-i") << sourceTrack
                    << QStringLiteral("-map") << QStringLiteral("0:a:0")
                    << QStringLiteral("-vn")
                    << QStringLiteral("-sn")
@@ -3906,7 +3909,7 @@ bool ExportDialog::prepareTrimmedAudioTracks(int zeroBasedStartFrame,
             }
             return false;
         }
-        if (!ffmpegProcess.waitForFinished(120000)) {
+        if (!ffmpegProcess.waitForFinished(trimTimeoutMs)) {
             ffmpegProcess.kill();
             for (const QString &path : trimmedTracks) {
                 QFile::remove(path);
@@ -3914,7 +3917,8 @@ bool ExportDialog::prepareTrimmedAudioTracks(int zeroBasedStartFrame,
             trimmedTracks.clear();
             temporaryAudioTrackPaths.clear();
             if (errorMessage) {
-                *errorMessage = tr("ffmpeg timed out while trimming audio tracks.");
+                *errorMessage = tr("ffmpeg timed out while trimming audio tracks (timeout: %1 seconds).")
+                                    .arg(trimTimeoutMs / 1000);
             }
             return false;
         }
@@ -4008,6 +4012,7 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
     }
     args << QStringLiteral("--start") << QString::number(startFrameOneBased);
     args << QStringLiteral("--length") << QString::number(rangeLength);
+    args << QStringLiteral("--export-metadata");
 
     const bool usingProfileOverride = !profileOverride.trimmed().isEmpty();
     const QString profile = usingProfileOverride

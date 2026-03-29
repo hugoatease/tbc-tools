@@ -4,6 +4,10 @@
 #include <QString>
 
 namespace MetadataConverterUtil {
+struct ExportDecodeMetadataOptions {
+    bool debug = false;
+    bool quiet = false;
+};
 enum class MetadataConversionDirection {
     Unknown,
     JsonToSqlite,
@@ -28,6 +32,10 @@ bool runMetadataConverter(MetadataConversionDirection direction,
                           QString *errorMessage = nullptr);
 bool runExportDecodeMetadata(const QString &inputFilename,
                              const QString &outputFilename,
+                             QString *errorMessage = nullptr);
+bool runExportDecodeMetadata(const QString &inputFilename,
+                             const QString &outputFilename,
+                             const ExportDecodeMetadataOptions &options,
                              QString *errorMessage = nullptr);
 }
 

@@ -390,8 +390,10 @@ class WrapperFFmpeg(Wrapper):
             # metadata
             if self._state.opts.dry_run:
                 input_opts.append(("{-map_metadata", "[METADATA_INDEX]}"))
+                input_opts.append(("{-map_chapters", "[METADATA_INDEX]}"))
             elif self._state.file_helper.ffmetadata_file.is_file():
                 input_opts.append(("-map_metadata", input_count))
+                input_opts.append(("-map_chapters", input_count))
                 input_count += 1
 
         for _ in self._state.opts.metadata_file:
@@ -402,6 +404,8 @@ class WrapperFFmpeg(Wrapper):
 
     def _get_timecode_opt(self) -> FlatList:
         """Return opts for timecode."""
+        if self._state.opts.export_metadata:
+            return FlatList()
         return FlatList(("-timecode", self._state.file_helper.tbc_json.timecode))
 
     def _get_framerate(self) -> str:
