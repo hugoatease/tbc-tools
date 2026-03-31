@@ -66,6 +66,10 @@ public:
     bool getToggleChromaDuringSeek(void);
     void setGenerateProxyEnabled(bool generateProxyEnabled);
     bool getGenerateProxyEnabled(void);
+    void setExportProfileConfigEnabled(bool exportProfileConfigEnabled);
+    bool getExportProfileConfigEnabled(void);
+    void setExportProfileConfigPath(QString exportProfileConfigPath);
+    QString getExportProfileConfigPath(void);
     void setResizeFrameWithWindow(bool resizeFrameWithWindow);
     bool getResizeFrameWithWindow(void);
     void setShowExportBoundary(bool showExportBoundary);
@@ -106,6 +110,8 @@ private:
     struct ViewOptions {
         bool toggleChromaDuringSeek;
         bool generateProxyEnabled;
+        bool exportProfileConfigEnabled;
+        QString exportProfileConfigPath;
         bool resizeFrameWithWindow;
         bool showExportBoundary;
         qint32 exportBoundaryThickness;

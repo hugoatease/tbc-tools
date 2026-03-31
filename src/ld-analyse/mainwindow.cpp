@@ -823,12 +823,20 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     exportDialog = new ExportDialog(this);
     ui->mainTabWidget->addTab(exportDialog, tr("Export"));
     exportDialog->setGenerateProxyEnabledPreference(configuration.getGenerateProxyEnabled());
+    exportDialog->setExportProfileConfigPreference(configuration.getExportProfileConfigEnabled(),
+                                                   configuration.getExportProfileConfigPath());
     connect(exportDialog, &ExportDialog::userEditRangeSelectionChanged,
             this, &MainWindow::exportRangeSelectionChangedSignalHandler);
     connect(exportDialog, &ExportDialog::proxyGenerationPreferenceChanged, this, [this](bool enabled) {
         configuration.setGenerateProxyEnabled(enabled);
         configuration.writeConfiguration();
     });
+    connect(exportDialog, &ExportDialog::exportProfileConfigPreferenceChanged, this,
+            [this](bool enabled, const QString &configPath) {
+                configuration.setExportProfileConfigEnabled(enabled);
+                configuration.setExportProfileConfigPath(configPath);
+                configuration.writeConfiguration();
+            });
 
     // Add a status bar to show the state of the source video file
     ui->statusBar->addWidget(&sourceVideoStatus);

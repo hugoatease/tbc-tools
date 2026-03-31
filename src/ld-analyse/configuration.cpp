@@ -73,6 +73,8 @@ void Configuration::writeConfiguration(void)
     configuration->beginGroup("viewOptions");
     configuration->setValue("toggleChromaDuringSeek", settings.viewOptions.toggleChromaDuringSeek);
     configuration->setValue("generateProxyEnabled", settings.viewOptions.generateProxyEnabled);
+    configuration->setValue("exportProfileConfigEnabled", settings.viewOptions.exportProfileConfigEnabled);
+    configuration->setValue("exportProfileConfigPath", settings.viewOptions.exportProfileConfigPath);
     configuration->setValue("resizeFrameWithWindow", settings.viewOptions.resizeFrameWithWindow);
     configuration->setValue("showExportBoundary", settings.viewOptions.showExportBoundary);
     configuration->setValue("exportBoundaryThickness", settings.viewOptions.exportBoundaryThickness);
@@ -116,6 +118,8 @@ void Configuration::readConfiguration(void)
     configuration->beginGroup("viewOptions");
     settings.viewOptions.toggleChromaDuringSeek = configuration->value("toggleChromaDuringSeek", false).toBool();
     settings.viewOptions.generateProxyEnabled = configuration->value("generateProxyEnabled", false).toBool();
+    settings.viewOptions.exportProfileConfigEnabled = configuration->value("exportProfileConfigEnabled", false).toBool();
+    settings.viewOptions.exportProfileConfigPath = configuration->value("exportProfileConfigPath", QString()).toString();
     settings.viewOptions.resizeFrameWithWindow = configuration->value("resizeFrameWithWindow", true).toBool();
     settings.viewOptions.showExportBoundary = configuration->value("showExportBoundary", true).toBool();
     settings.viewOptions.exportBoundaryThickness = configuration->value("exportBoundaryThickness", 4).toInt();
@@ -150,6 +154,8 @@ void Configuration::setDefault(void)
     // View options
     settings.viewOptions.toggleChromaDuringSeek = false;
     settings.viewOptions.generateProxyEnabled = false;
+    settings.viewOptions.exportProfileConfigEnabled = false;
+    settings.viewOptions.exportProfileConfigPath = QString();
     settings.viewOptions.resizeFrameWithWindow = true;
     settings.viewOptions.showExportBoundary = true;
     settings.viewOptions.exportBoundaryThickness = 4;
@@ -321,6 +327,25 @@ void Configuration::setGenerateProxyEnabled(bool generateProxyEnabled)
 bool Configuration::getGenerateProxyEnabled(void)
 {
     return settings.viewOptions.generateProxyEnabled;
+}
+void Configuration::setExportProfileConfigEnabled(bool exportProfileConfigEnabled)
+{
+    settings.viewOptions.exportProfileConfigEnabled = exportProfileConfigEnabled;
+}
+
+bool Configuration::getExportProfileConfigEnabled(void)
+{
+    return settings.viewOptions.exportProfileConfigEnabled;
+}
+
+void Configuration::setExportProfileConfigPath(QString exportProfileConfigPath)
+{
+    settings.viewOptions.exportProfileConfigPath = exportProfileConfigPath;
+}
+
+QString Configuration::getExportProfileConfigPath(void)
+{
+    return settings.viewOptions.exportProfileConfigPath;
 }
 
 void Configuration::setResizeFrameWithWindow(bool resizeFrameWithWindow)

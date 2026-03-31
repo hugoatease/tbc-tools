@@ -142,6 +142,23 @@ QString runOpenFileDialog(QWidget *parent,
     return dialog.selectedFiles().constFirst();
 }
 
+QString runSaveFileDialog(QWidget *parent,
+                          const QString &title,
+                          const QString &startPath,
+                          const QString &filters)
+{
+    QFileDialog dialog(dialogParentWidget(parent), title, startPath);
+    dialog.setAcceptMode(QFileDialog::AcceptSave);
+    dialog.setFileMode(QFileDialog::AnyFile);
+    dialog.setNameFilters(dialogNameFilters(filters));
+    dialog.setDefaultSuffix(QStringLiteral("json"));
+    applyCommonFileDialogOptions(&dialog);
+    if (dialog.exec() != QDialog::Accepted || dialog.selectedFiles().isEmpty()) {
+        return QString();
+    }
+    return dialog.selectedFiles().constFirst();
+}
+
 QString runDirectoryDialog(QWidget *parent,
                            const QString &title,
                            const QString &startPath)
@@ -1330,6 +1347,22 @@ ExportDialog::ExportDialog(QWidget *parent) :
             emit proxyGenerationPreferenceChanged(checked);
         });
     }
+    if (ui->exportProfileConfigCheckBox) {
+        ui->exportProfileConfigCheckBox->setChecked(false);
+    }
+    if (ui->exportProfileConfigLineEdit) {
+        ui->exportProfileConfigLineEdit->setReadOnly(true);
+        ui->exportProfileConfigLineEdit->setPlaceholderText(tr("Default tbc-video-export profile set"));
+    }
+    if (ui->exportProfileConfigLoadButton) {
+        ui->exportProfileConfigLoadButton->setToolTip(
+            tr("Load a custom tbc-video-export JSON profile set."));
+    }
+    if (ui->exportProfileConfigEjectButton) {
+        ui->exportProfileConfigEjectButton->setToolTip(
+            tr("Eject the default tbc-video-export profile set to an editable JSON file."));
+    }
+    updateExportProfileConfigPathUi();
     if (ui->metadataTargetLabel) {
         ui->metadataTargetLabel->setToolTip(
             tr("Select which metadata/VITC export source is injected into the output container."));
@@ -1574,6 +1607,52 @@ void ExportDialog::setGenerateProxyEnabledPreference(bool enabled)
     const QSignalBlocker blocker(ui->generateProxyCheckBox);
     ui->generateProxyCheckBox->setChecked(enabled);
     updateProfileDependentControls();
+}
+
+void ExportDialog::setExportProfileConfigPreference(bool enabled, const QString &configPath)
+{
+    exportProfileConfigPath = configPath.trimmed();
+    if (!exportProfileConfigPath.isEmpty()) {
+        exportProfileConfigPath = QFileInfo(exportProfileConfigPath).absoluteFilePath();
+    }
+
+    if (ui && ui->exportProfileConfigCheckBox) {
+        const QSignalBlocker blocker(ui->exportProfileConfigCheckBox);
+        ui->exportProfileConfigCheckBox->setChecked(enabled && !exportProfileConfigPath.isEmpty());
+    }
+
+    updateExportProfileConfigPathUi();
+    updateProfileDependentControls();
+}
+
+void ExportDialog::updateExportProfileConfigPathUi()
+{
+    if (!ui || !ui->exportProfileConfigLineEdit) {
+        return;
+    }
+
+    const QString nativePath = exportProfileConfigPath.isEmpty()
+                                   ? QString()
+                                   : QDir::toNativeSeparators(exportProfileConfigPath);
+    ui->exportProfileConfigLineEdit->setText(nativePath);
+    ui->exportProfileConfigLineEdit->setCursorPosition(0);
+
+    const QString tooltip = nativePath.isEmpty()
+                                ? tr("Using the default built-in tbc-video-export profile set.")
+                                : tr("Loaded JSON profile set: %1").arg(nativePath);
+    ui->exportProfileConfigLineEdit->setToolTip(tooltip);
+    if (ui->exportProfileConfigCheckBox) {
+        ui->exportProfileConfigCheckBox->setToolTip(tooltip);
+    }
+}
+
+void ExportDialog::emitExportProfileConfigPreferenceChanged()
+{
+    const bool enabled = ui
+                         && ui->exportProfileConfigCheckBox
+                         && ui->exportProfileConfigCheckBox->isChecked()
+                         && !exportProfileConfigPath.trimmed().isEmpty();
+    emit exportProfileConfigPreferenceChanged(enabled, exportProfileConfigPath.trimmed());
 }
 
 void ExportDialog::setInPoint(int frameNumber)
@@ -2196,6 +2275,23 @@ void ExportDialog::updateProfileDependentControls()
         ui->proxyCodecComboBox->setVisible(proxyRequested);
         ui->proxyCodecComboBox->setEnabled(canEdit && proxyRequested);
     }
+    const bool hasProfileConfigPath = !exportProfileConfigPath.trimmed().isEmpty();
+    if (ui->exportProfileConfigCheckBox) {
+        if (!hasProfileConfigPath && ui->exportProfileConfigCheckBox->isChecked()) {
+            const QSignalBlocker blocker(ui->exportProfileConfigCheckBox);
+            ui->exportProfileConfigCheckBox->setChecked(false);
+        }
+        ui->exportProfileConfigCheckBox->setEnabled(canEdit);
+    }
+    if (ui->exportProfileConfigLineEdit) {
+        ui->exportProfileConfigLineEdit->setEnabled(canEdit);
+    }
+    if (ui->exportProfileConfigLoadButton) {
+        ui->exportProfileConfigLoadButton->setEnabled(canEdit);
+    }
+    if (ui->exportProfileConfigEjectButton) {
+        ui->exportProfileConfigEjectButton->setEnabled(canEdit);
+    }
     const QString resolutionMode = effectiveResolutionMode(tbcSource, ui ? ui->resolutionModeComboBox : nullptr);
     const bool letterboxCropAllowed = resolutionMode == QStringLiteral("active_area");
     if (ui->letterboxCropCheckBox && !letterboxCropAllowed && ui->letterboxCropCheckBox->isChecked()) {
@@ -2305,6 +2401,202 @@ void ExportDialog::on_audio4BrowseButton_clicked()
         ui->audio4LineEdit->setText(selected);
     }
 }
+
+void ExportDialog::on_exportProfileConfigCheckBox_toggled(bool checked)
+{
+    if (checked && exportProfileConfigPath.trimmed().isEmpty()) {
+        on_exportProfileConfigLoadButton_clicked();
+        return;
+    }
+    updateExportProfileConfigPathUi();
+    updateProfileDependentControls();
+    emitExportProfileConfigPreferenceChanged();
+}
+
+void ExportDialog::on_exportProfileConfigLoadButton_clicked()
+{
+    if (!ui) {
+        return;
+    }
+
+    QString startPath = exportProfileConfigPath.trimmed();
+    if (!startPath.isEmpty()) {
+        startPath = QFileInfo(startPath).absolutePath();
+    } else if (!currentInputFile.isEmpty()) {
+        startPath = QFileInfo(currentInputFile).absolutePath();
+    } else {
+        startPath = QDir::homePath();
+    }
+
+    const QString selectedPath = runOpenFileDialog(this,
+                                                   tr("Select custom tbc-video-export JSON profile set"),
+                                                   startPath,
+                                                   tr("JSON Files (*.json);;All Files (*)"));
+    if (selectedPath.isEmpty()) {
+        if (ui->exportProfileConfigCheckBox
+            && ui->exportProfileConfigCheckBox->isChecked()
+            && exportProfileConfigPath.trimmed().isEmpty()) {
+            const QSignalBlocker blocker(ui->exportProfileConfigCheckBox);
+            ui->exportProfileConfigCheckBox->setChecked(false);
+            emitExportProfileConfigPreferenceChanged();
+        }
+        updateProfileDependentControls();
+        return;
+    }
+
+    const QFileInfo selectedInfo(selectedPath);
+    if (!selectedInfo.exists() || !selectedInfo.isFile() || !selectedInfo.isReadable()) {
+        const QString errorText = tr("Selected JSON profile set is not readable: %1")
+                                      .arg(QDir::toNativeSeparators(selectedPath));
+        appendStatus(errorText);
+        appendLog(errorText);
+        QMessageBox::warning(this, tr("Error"), errorText);
+        updateProfileDependentControls();
+        return;
+    }
+
+    exportProfileConfigPath = selectedInfo.absoluteFilePath();
+    if (ui->exportProfileConfigCheckBox) {
+        const QSignalBlocker blocker(ui->exportProfileConfigCheckBox);
+        ui->exportProfileConfigCheckBox->setChecked(true);
+    }
+    updateExportProfileConfigPathUi();
+    updateProfileDependentControls();
+    emitExportProfileConfigPreferenceChanged();
+}
+
+void ExportDialog::on_exportProfileConfigEjectButton_clicked()
+{
+    if (!ui) {
+        return;
+    }
+
+    QString startPath = exportProfileConfigPath.trimmed();
+    if (startPath.isEmpty() && !currentInputFile.isEmpty()) {
+        startPath = QDir(QFileInfo(currentInputFile).absolutePath())
+                        .filePath(QStringLiteral("tbc-video-export.json"));
+    }
+    if (startPath.isEmpty()) {
+        startPath = QDir(QDir::homePath()).filePath(QStringLiteral("tbc-video-export.json"));
+    }
+
+    QString selectedPath = runSaveFileDialog(this,
+                                             tr("Eject default tbc-video-export profile set"),
+                                             startPath,
+                                             tr("JSON Files (*.json);;All Files (*)"));
+    if (selectedPath.isEmpty()) {
+        updateProfileDependentControls();
+        return;
+    }
+    if (QFileInfo(selectedPath).suffix().isEmpty()) {
+        selectedPath += QStringLiteral(".json");
+    }
+    selectedPath = QFileInfo(selectedPath).absoluteFilePath();
+
+    const QString exportPath = resolveVideoExportPath();
+    if (exportPath.isEmpty()) {
+        const QString errorText = tr("tbc-video-export not found.");
+        appendStatus(errorText);
+        appendLog(errorText);
+        QMessageBox::warning(this, tr("Error"), errorText);
+        return;
+    }
+
+    QString dumpDirPath = QDir::temp().filePath(
+        QStringLiteral("ld-analyse-export-config-dump-%1")
+            .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+    const auto cleanupDumpDir = [&dumpDirPath]() {
+        if (dumpDirPath.isEmpty()) {
+            return;
+        }
+        QDir dumpDir(dumpDirPath);
+        if (dumpDir.exists()) {
+            dumpDir.removeRecursively();
+        }
+        dumpDirPath.clear();
+    };
+    if (!QDir().mkpath(dumpDirPath)) {
+        const QString errorText = tr("Failed to create temporary directory for default profile ejection.");
+        appendStatus(errorText);
+        appendLog(errorText);
+        QMessageBox::warning(this, tr("Error"), errorText);
+        return;
+    }
+
+    QProcess dumpProcess;
+    dumpProcess.setProcessChannelMode(QProcess::MergedChannels);
+    dumpProcess.setWorkingDirectory(dumpDirPath);
+    dumpProcess.start(exportPath, QStringList() << QStringLiteral("--dump-default-config"));
+    if (!dumpProcess.waitForStarted(3000)) {
+        cleanupDumpDir();
+        const QString errorText = tr("Failed to start default profile ejection.");
+        appendStatus(errorText);
+        appendLog(errorText);
+        QMessageBox::warning(this, tr("Error"), errorText);
+        return;
+    }
+    if (!dumpProcess.waitForFinished(15000)) {
+        dumpProcess.kill();
+        cleanupDumpDir();
+        const QString errorText = tr("Default profile ejection timed out.");
+        appendStatus(errorText);
+        appendLog(errorText);
+        QMessageBox::warning(this, tr("Error"), errorText);
+        return;
+    }
+    const QString dumpOutput = QString::fromLocal8Bit(dumpProcess.readAllStandardOutput()).trimmed();
+    if (dumpProcess.exitStatus() != QProcess::NormalExit || dumpProcess.exitCode() != 0) {
+        cleanupDumpDir();
+        const QString errorText = dumpOutput.isEmpty()
+                                      ? tr("Failed to eject default profile set.")
+                                      : dumpOutput;
+        appendStatus(errorText);
+        appendLog(errorText);
+        QMessageBox::warning(this, tr("Error"), errorText);
+        return;
+    }
+
+    const QString dumpedConfigPath = QDir(dumpDirPath).filePath(QStringLiteral("tbc-video-export.json"));
+    QFile dumpedConfigFile(dumpedConfigPath);
+    if (!dumpedConfigFile.open(QIODevice::ReadOnly)) {
+        cleanupDumpDir();
+        const QString errorText = tr("Failed to read ejected default profile set.");
+        appendStatus(errorText);
+        appendLog(errorText);
+        QMessageBox::warning(this, tr("Error"), errorText);
+        return;
+    }
+    const QByteArray configData = dumpedConfigFile.readAll();
+    dumpedConfigFile.close();
+
+    QFile outputConfigFile(selectedPath);
+    if (!outputConfigFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        cleanupDumpDir();
+        const QString errorText = tr("Failed to write ejected profile set: %1")
+                                      .arg(QDir::toNativeSeparators(selectedPath));
+        appendStatus(errorText);
+        appendLog(errorText);
+        QMessageBox::warning(this, tr("Error"), errorText);
+        return;
+    }
+    outputConfigFile.write(configData);
+    outputConfigFile.close();
+    cleanupDumpDir();
+
+    exportProfileConfigPath = QFileInfo(selectedPath).absoluteFilePath();
+    if (ui->exportProfileConfigCheckBox) {
+        const QSignalBlocker blocker(ui->exportProfileConfigCheckBox);
+        ui->exportProfileConfigCheckBox->setChecked(true);
+    }
+    updateExportProfileConfigPathUi();
+    updateProfileDependentControls();
+    emitExportProfileConfigPreferenceChanged();
+
+    const QString statusText = tr("Ejected default profile set to: %1")
+                                   .arg(QDir::toNativeSeparators(exportProfileConfigPath));
+    appendStatus(statusText);
+    appendLog(statusText);
+}
 void ExportDialog::on_resetInOutButton_clicked()
 {
     if (!ui || !ui->inPointSpinBox || !ui->outPointSpinBox) {
@@ -2367,6 +2659,18 @@ void ExportDialog::on_exportButton_clicked()
         appendLog(tr("No export profile selected."));
         QMessageBox::warning(this, tr("Error"), tr("Please select a valid export profile."));
         return;
+    }
+    QString exportProfileConfigErrorMessage;
+    const QString baseConfigOverridePath = selectedExportProfileConfigPath(&exportProfileConfigErrorMessage);
+    if (!exportProfileConfigErrorMessage.isEmpty()) {
+        appendStatus(exportProfileConfigErrorMessage);
+        appendLog(exportProfileConfigErrorMessage);
+        QMessageBox::warning(this, tr("Error"), exportProfileConfigErrorMessage);
+        return;
+    }
+    if (!baseConfigOverridePath.isEmpty()) {
+        appendLog(tr("Using custom JSON profile set: %1")
+                      .arg(QDir::toNativeSeparators(baseConfigOverridePath)));
     }
     QString snapshotErrorMessage;
     const QString metadataSnapshotPath = createTemporaryMetadataSnapshot(&snapshotErrorMessage);
@@ -2561,7 +2865,8 @@ void ExportDialog::on_exportButton_clicked()
     }
     const QString configOverridePath = createTemporaryExportConfig(&configErrorMessage,
                                                                    selectedProfile,
-                                                                   selectedAudioProfile);
+                                                                   selectedAudioProfile,
+                                                                   baseConfigOverridePath);
     if (configOverridePath.isEmpty()) {
         cleanupTemporaryMetadataSnapshot();
         const QString errorToShow = configErrorMessage.isEmpty()
@@ -3550,6 +3855,37 @@ QString ExportDialog::selectedMetadataTargetId() const
     return selectedId.isEmpty() ? QStringLiteral("all") : selectedId;
 }
 
+QString ExportDialog::selectedExportProfileConfigPath(QString *errorMessage) const
+{
+    if (errorMessage) {
+        errorMessage->clear();
+    }
+    const bool enabled = ui
+                         && ui->exportProfileConfigCheckBox
+                         && ui->exportProfileConfigCheckBox->isChecked();
+    if (!enabled) {
+        return QString();
+    }
+
+    const QString selectedPath = exportProfileConfigPath.trimmed();
+    if (selectedPath.isEmpty()) {
+        if (errorMessage) {
+            *errorMessage = tr("External profile set is enabled but no profile file is selected.");
+        }
+        return QString();
+    }
+
+    const QFileInfo selectedInfo(selectedPath);
+    if (!selectedInfo.exists() || !selectedInfo.isFile() || !selectedInfo.isReadable()) {
+        if (errorMessage) {
+            *errorMessage = tr("External profile set is not accessible: %1")
+                                .arg(QDir::toNativeSeparators(selectedPath));
+        }
+        return QString();
+    }
+    return selectedInfo.absoluteFilePath();
+}
+
 int ExportDialog::selectedMainBitDepth() const
 {
     if (!ui || !ui->mainBitDepthComboBox) {
@@ -4474,7 +4810,8 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
 }
 QString ExportDialog::createTemporaryExportConfig(QString *errorMessage,
                                                   const QString &profileName,
-                                                  const QString &audioProfileName)
+                                                  const QString &audioProfileName,
+                                                  const QString &baseConfigOverridePath)
 {
     if (errorMessage) {
         errorMessage->clear();
@@ -4494,71 +4831,92 @@ QString ExportDialog::createTemporaryExportConfig(QString *errorMessage,
         return QString();
     }
 
-    const QString exportPath = resolveVideoExportPath();
-    if (exportPath.isEmpty()) {
-        if (errorMessage) {
-            *errorMessage = tr("tbc-video-export not found.");
-        }
-        return QString();
-    }
-
-    const QString dumpDirPath = QDir::temp().filePath(
-        QStringLiteral("ld-analyse-export-config-dump-%1")
-            .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
-    if (!QDir().mkpath(dumpDirPath)) {
-        if (errorMessage) {
-            *errorMessage = tr("Failed to create temporary directory for export configuration.");
-        }
-        return QString();
-    }
+    QString dumpDirPath;
     const auto cleanupDumpDir = [&dumpDirPath]() {
+        if (dumpDirPath.isEmpty()) {
+            return;
+        }
         QDir dumpDir(dumpDirPath);
         if (dumpDir.exists()) {
             dumpDir.removeRecursively();
         }
+        dumpDirPath.clear();
     };
 
-    QProcess dumpProcess;
-    dumpProcess.setProcessChannelMode(QProcess::MergedChannels);
-    dumpProcess.setWorkingDirectory(dumpDirPath);
-    dumpProcess.start(exportPath, QStringList() << QStringLiteral("--dump-default-config"));
-    if (!dumpProcess.waitForStarted(3000)) {
-        cleanupDumpDir();
-        if (errorMessage) {
-            *errorMessage = tr("Failed to start export config generation.");
+    QByteArray configData;
+    const QString normalizedBaseConfigPath = baseConfigOverridePath.trimmed();
+    if (!normalizedBaseConfigPath.isEmpty()) {
+        QFile baseConfigFile(normalizedBaseConfigPath);
+        if (!baseConfigFile.open(QIODevice::ReadOnly)) {
+            if (errorMessage) {
+                *errorMessage = tr("Failed to read custom JSON profile set: %1")
+                                    .arg(QDir::toNativeSeparators(normalizedBaseConfigPath));
+            }
+            return QString();
         }
-        return QString();
-    }
-    if (!dumpProcess.waitForFinished(15000)) {
-        dumpProcess.kill();
-        cleanupDumpDir();
-        if (errorMessage) {
-            *errorMessage = tr("Export config generation timed out.");
+        configData = baseConfigFile.readAll();
+        baseConfigFile.close();
+    } else {
+        const QString exportPath = resolveVideoExportPath();
+        if (exportPath.isEmpty()) {
+            if (errorMessage) {
+                *errorMessage = tr("tbc-video-export not found.");
+            }
+            return QString();
         }
-        return QString();
-    }
-    const QString dumpOutput = QString::fromLocal8Bit(dumpProcess.readAllStandardOutput()).trimmed();
-    if (dumpProcess.exitStatus() != QProcess::NormalExit || dumpProcess.exitCode() != 0) {
-        cleanupDumpDir();
-        if (errorMessage) {
-            *errorMessage = dumpOutput.isEmpty()
-                                ? tr("Failed to generate default export configuration.")
-                                : dumpOutput;
-        }
-        return QString();
-    }
 
-    const QString dumpedConfigPath = QDir(dumpDirPath).filePath(QStringLiteral("tbc-video-export.json"));
-    QFile dumpedConfigFile(dumpedConfigPath);
-    if (!dumpedConfigFile.open(QIODevice::ReadOnly)) {
-        cleanupDumpDir();
-        if (errorMessage) {
-            *errorMessage = tr("Failed to read generated export configuration.");
+        dumpDirPath = QDir::temp().filePath(
+            QStringLiteral("ld-analyse-export-config-dump-%1")
+                .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+        if (!QDir().mkpath(dumpDirPath)) {
+            if (errorMessage) {
+                *errorMessage = tr("Failed to create temporary directory for export configuration.");
+            }
+            return QString();
         }
-        return QString();
+
+        QProcess dumpProcess;
+        dumpProcess.setProcessChannelMode(QProcess::MergedChannels);
+        dumpProcess.setWorkingDirectory(dumpDirPath);
+        dumpProcess.start(exportPath, QStringList() << QStringLiteral("--dump-default-config"));
+        if (!dumpProcess.waitForStarted(3000)) {
+            cleanupDumpDir();
+            if (errorMessage) {
+                *errorMessage = tr("Failed to start export config generation.");
+            }
+            return QString();
+        }
+        if (!dumpProcess.waitForFinished(15000)) {
+            dumpProcess.kill();
+            cleanupDumpDir();
+            if (errorMessage) {
+                *errorMessage = tr("Export config generation timed out.");
+            }
+            return QString();
+        }
+        const QString dumpOutput = QString::fromLocal8Bit(dumpProcess.readAllStandardOutput()).trimmed();
+        if (dumpProcess.exitStatus() != QProcess::NormalExit || dumpProcess.exitCode() != 0) {
+            cleanupDumpDir();
+            if (errorMessage) {
+                *errorMessage = dumpOutput.isEmpty()
+                                    ? tr("Failed to generate default export configuration.")
+                                    : dumpOutput;
+            }
+            return QString();
+        }
+
+        const QString dumpedConfigPath = QDir(dumpDirPath).filePath(QStringLiteral("tbc-video-export.json"));
+        QFile dumpedConfigFile(dumpedConfigPath);
+        if (!dumpedConfigFile.open(QIODevice::ReadOnly)) {
+            cleanupDumpDir();
+            if (errorMessage) {
+                *errorMessage = tr("Failed to read generated export configuration.");
+            }
+            return QString();
+        }
+        configData = dumpedConfigFile.readAll();
+        dumpedConfigFile.close();
     }
-    const QByteArray configData = dumpedConfigFile.readAll();
-    dumpedConfigFile.close();
 
     QJsonParseError parseError;
     const QJsonDocument configDoc = QJsonDocument::fromJson(configData, &parseError);

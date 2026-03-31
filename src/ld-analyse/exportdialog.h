@@ -35,6 +35,7 @@ public:
 
     void setSource(TbcSource *source);
     void setGenerateProxyEnabledPreference(bool enabled);
+    void setExportProfileConfigPreference(bool enabled, const QString &configPath);
     void setInPoint(int frameNumber);
     void setOutPoint(int frameNumber);
     void loadAudioTracksForExport(const QStringList &trackFiles,
@@ -43,6 +44,7 @@ public:
 signals:
     void userEditRangeSelectionChanged(int inPoint, int outPoint, bool clearMetadataValues);
     void proxyGenerationPreferenceChanged(bool enabled);
+    void exportProfileConfigPreferenceChanged(bool enabled, const QString &configPath);
 
 private slots:
     void on_outputBrowseButton_clicked();
@@ -50,6 +52,9 @@ private slots:
     void on_audio2BrowseButton_clicked();
     void on_audio3BrowseButton_clicked();
     void on_audio4BrowseButton_clicked();
+    void on_exportProfileConfigCheckBox_toggled(bool checked);
+    void on_exportProfileConfigLoadButton_clicked();
+    void on_exportProfileConfigEjectButton_clicked();
     void on_resetInOutButton_clicked();
     void on_exportButton_clicked();
     void on_cancelButton_clicked();
@@ -87,6 +92,7 @@ private:
     QString selectedMainCodecId() const;
     QString selectedMainContainerId() const;
     QString selectedMetadataTargetId() const;
+    QString selectedExportProfileConfigPath(QString *errorMessage = nullptr) const;
     int selectedMainBitDepth() const;
     QString selectedExportProfileName() const;
     QString proxyExportProfileName(const QString &proxyCodecId) const;
@@ -117,9 +123,12 @@ private:
                                const QString &outputBaseOverride = QString()) const;
     QString createTemporaryExportConfig(QString *errorMessage,
                                         const QString &profileName,
-                                        const QString &audioProfileName);
+                                        const QString &audioProfileName,
+                                        const QString &baseConfigOverridePath = QString());
     QString createTemporaryMetadataSnapshot(QString *errorMessage);
     void cleanupTemporaryMetadataSnapshot();
+    void updateExportProfileConfigPathUi();
+    void emitExportProfileConfigPreferenceChanged();
     void appendStatus(const QString &message);
     void appendLog(const QString &message);
     QString writeExportFailureLog(const QString &failureTitle,
@@ -150,6 +159,7 @@ private:
     QString parallelProxyStderr;
     QString pendingParallelProxyStdoutBuffer;
     QString pendingParallelProxyStderrBuffer;
+    QString exportProfileConfigPath;
     QString temporaryInputJsonPath;
     QString temporaryExportConfigPath;
     QStringList temporaryAudioTrackPaths;

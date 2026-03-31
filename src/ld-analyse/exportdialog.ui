@@ -658,6 +658,43 @@
       </widget>
      </item>
      <item>
+      <widget class="QCheckBox" name="exportProfileConfigCheckBox">
+       <property name="text">
+        <string>Use External Profiles</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLineEdit" name="exportProfileConfigLineEdit">
+       <property name="minimumSize">
+        <size>
+         <width>220</width>
+         <height>0</height>
+        </size>
+       </property>
+       <property name="readOnly">
+        <bool>true</bool>
+       </property>
+       <property name="placeholderText">
+        <string>Default tbc-video-export profile set</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="exportProfileConfigLoadButton">
+       <property name="text">
+        <string>Load...</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="exportProfileConfigEjectButton">
+       <property name="text">
+        <string>Eject</string>
+       </property>
+      </widget>
+     </item>
+     <item>
       <spacer name="outputOptionsSpacer">
        <property name="orientation">
         <enum>Qt::Horizontal</enum>
