@@ -6,8 +6,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODE="${1:---all}"
 
 run_actionlint() {
+  local actionlint_args=(-color -shellcheck=)
   if command -v actionlint >/dev/null 2>&1; then
-    actionlint -color
+    actionlint "${actionlint_args[@]}"
     return
   fi
 
@@ -15,7 +16,7 @@ run_actionlint() {
   local bin_dir="$tmp_root/actionlint-bin"
   mkdir -p "$bin_dir"
   curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash | bash -s -- latest "$bin_dir"
-  "$bin_dir/actionlint" -color
+  "$bin_dir/actionlint" "${actionlint_args[@]}"
 }
 
 run_guardrails() {
