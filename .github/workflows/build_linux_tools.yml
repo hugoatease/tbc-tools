@@ -32,7 +32,7 @@ jobs:
     steps:
       - name: Set up DNF download cache
         id: dnf-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /var/cache/dnf
           key: dnfcache-${{ runner.os }}-${{ runner.arch }}-${{ env.DNF_CACHE_VERSION }}
@@ -433,7 +433,7 @@ jobs:
         run: tar -cvJSf tbc-tools_linux_x86_64.tar.xz --transform s/release/tbc-tools/ release/
 
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tbc-tools_linux_x86_64
           path: tbc-tools_linux_x86_64.tar.xz
@@ -744,7 +744,7 @@ jobs:
         run: tar -cvJf tbc-tools_linux_arm64.tar.xz --transform s/release/tbc-tools/ release/
 
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tbc-tools_linux_arm64
           path: tbc-tools_linux_arm64.tar.xz

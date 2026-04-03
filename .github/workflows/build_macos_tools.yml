@@ -449,7 +449,7 @@ jobs:
           tar -C dist -czf "tbc-tools_${{ matrix.arch }}.app.tgz" tbc-tools.app
 
       - name: Upload app bundle artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: internal_tbc-tools_macos_${{ matrix.arch }}_app
           path: tbc-tools_${{ matrix.arch }}.app.tgz
@@ -473,7 +473,7 @@ jobs:
             "dist/tbc-tools.app"
 
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tbc-tools_macos_${{ matrix.arch }}
           path: tbc-tools_${{ matrix.arch }}.dmg
@@ -484,13 +484,13 @@ jobs:
     needs: build-tbc-tools
     steps:
       - name: Download arm64 app artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: internal_tbc-tools_macos_arm64_app
           path: universal/arm64-artifact
 
       - name: Download x86_64 app artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: internal_tbc-tools_macos_x86_64_app
           path: universal/x86_64-artifact
@@ -579,7 +579,7 @@ jobs:
 
 
       - name: Upload universal DMG artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tbc-tools_macos_universal
           path: tbc-tools_universal.dmg

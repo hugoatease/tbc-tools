@@ -57,7 +57,7 @@ jobs:
           submodules: true
           ref: ${{ inputs.checkout_ref || github.ref }}
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: "pip"
@@ -70,7 +70,7 @@ jobs:
           cmake-version: "3.31.6" # Need to pin to CMake 3.x until fftw3 is updated to support CMake 4.x.
       - name: Restore vcpkg binary cache
         id: vcpkg-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: ${{ env.VCPKG_BINARY_CACHE_ROOT }}\\${{ matrix.cache_subdir }}
           key: ${{ runner.os }}-${{ matrix.vcpkg_triplet }}-vcpkg-binary-cache-${{ env.VCPKG_COMMIT }}-${{ hashFiles('vcpkg.json') }}-${{ hashFiles('**/vcpkg-configuration.json') }}
@@ -80,11 +80,18 @@ jobs:
             ${{ runner.os }}-${{ matrix.vcpkg_triplet }}-vcpkg-binary-cache-
 
       - name: Setup vcpkg
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: "${{ env.VCPKG_COMMIT }}"
-          # Prevent false-positive "File not found" warnings from broad default log regexes.
-          logCollectionRegExps: "a^"
+        shell: pwsh
+        run: |
+          if (-not (Test-Path ".\\vcpkg\\.git")) {
+            git clone https://github.com/microsoft/vcpkg.git vcpkg
+          }
+          Push-Location .\\vcpkg
+          git fetch --tags --force
+          git checkout "${{ env.VCPKG_COMMIT }}"
+          Pop-Location
+          .\\vcpkg\\bootstrap-vcpkg.bat -disableMetrics
+          "VCPKG_ROOT=${{ github.workspace }}\\vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RUNVCPKG_VCPKG_ROOT=${{ github.workspace }}\\vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Initialize repository-contained vcpkg cache
         run: |
           $cachePath = "${{ env.VCPKG_BINARY_CACHE_ROOT }}\${{ matrix.cache_subdir }}"
@@ -215,7 +222,7 @@ jobs:
         run: Copy-Item -Path .\\LICENSE -Destination release\\LICENSES\\copyright-tbc-tools
       - name: Save vcpkg binary cache
         if: success() && steps.vcpkg-cache.outputs.cache-primary-key != '' && steps.vcpkg-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: ${{ env.VCPKG_BINARY_CACHE_ROOT }}\\${{ matrix.cache_subdir }}
           key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
@@ -283,7 +290,7 @@ jobs:
           }
 
       - name: Upload release artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
           path: release
