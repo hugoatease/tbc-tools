@@ -44,6 +44,8 @@ public:
     ~MetadataExportDialog();
 
     void setSourceDirectory(const QString &directory);
+    void setDefaultInputFile(const QString &inputFile);
+    void setExportExecutablePath(const QString &executablePath);
     void setInitialOptions(const InitialOptions &options);
 
 protected:
@@ -65,6 +67,7 @@ private:
 
     Ui::MetadataExportDialog *ui;
     QString sourceDirectory;
+    QString exportExecutablePath;
 };
 
 #endif // METADATAEXPORTDIALOG_H

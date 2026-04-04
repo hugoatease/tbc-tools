@@ -80,6 +80,7 @@ MetadataExportDialog::MetadataExportDialog(QWidget *parent) :
     ui(new Ui::MetadataExportDialog)
 {
     ui->setupUi(this);
+    exportExecutablePath = QCoreApplication::applicationFilePath();
     setAcceptDrops(true);
 
     if (ui->debugCheckBox && ui->quietCheckBox) {
@@ -148,6 +149,29 @@ void MetadataExportDialog::setSourceDirectory(const QString &directory)
 {
     if (!directory.isEmpty()) {
         sourceDirectory = directory;
+    }
+}
+void MetadataExportDialog::setDefaultInputFile(const QString &inputFile)
+{
+    const QString normalizedInput = normalizedPath(inputFile);
+    if (normalizedInput.isEmpty()) {
+        return;
+    }
+    ui->inputLineEdit->setText(normalizedInput);
+    if (ui->statusLabel) {
+        ui->statusLabel->clear();
+    }
+    const QFileInfo inputInfo(normalizedInput);
+    if (inputInfo.exists() && inputInfo.isFile()) {
+        sourceDirectory = inputInfo.absolutePath();
+    }
+}
+
+void MetadataExportDialog::setExportExecutablePath(const QString &executablePath)
+{
+    const QString trimmedPath = executablePath.trimmed();
+    if (!trimmedPath.isEmpty()) {
+        exportExecutablePath = trimmedPath;
     }
 }
 
@@ -388,7 +412,10 @@ void MetadataExportDialog::on_exportButton_clicked()
     WaitCursorGuard waitCursor;
     QProcess process;
     process.setProcessChannelMode(QProcess::MergedChannels);
-    process.start(QCoreApplication::applicationFilePath(), arguments);
+    const QString processProgram = exportExecutablePath.isEmpty()
+                                       ? QCoreApplication::applicationFilePath()
+                                       : exportExecutablePath;
+    process.start(processProgram, arguments);
     if (!process.waitForStarted(5000)) {
         ui->statusLabel->setText(tr("Failed to start export process."));
         QMessageBox::warning(this, tr("Export failed"),

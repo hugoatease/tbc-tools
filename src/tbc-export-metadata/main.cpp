@@ -30,6 +30,7 @@
 #include <QStyleFactory>
 #include <QWindow>
 #include <QProcess>
+#include <memory>
 
 #include "audacity.h"
 #include "csv.h"
@@ -316,25 +317,21 @@ int main(int argc, char *argv[])
         parsePositiveOption(parser, options.ffmetadataLengthOption, &initialOptions.ffmetadataLength, nullptr);
         initialOptions.debug = parser.isSet(QStringLiteral("debug"));
         initialOptions.quiet = parser.isSet(QStringLiteral("quiet")) && !initialOptions.debug;
-#if defined(Q_OS_WIN)
-        QWindow *transientParentWindow = nullptr;
+        std::unique_ptr<QWindow> transientParentWindow;
         if (parser.isSet(options.parentWindowIdOption)) {
             bool ok = false;
             const qulonglong parentWindowId = parser.value(options.parentWindowIdOption).toULongLong(&ok, 0);
             if (ok && parentWindowId != 0) {
-                transientParentWindow = QWindow::fromWinId(static_cast<WId>(parentWindowId));
+                transientParentWindow.reset(QWindow::fromWinId(static_cast<WId>(parentWindowId)));
             }
         }
-#endif
 
         MetadataExportDialog dialog;
         dialog.setInitialOptions(initialOptions);
         dialog.show();
-#if defined(Q_OS_WIN)
         if (transientParentWindow && dialog.windowHandle()) {
-            dialog.windowHandle()->setTransientParent(transientParentWindow);
+            dialog.windowHandle()->setTransientParent(transientParentWindow.get());
         }
-#endif
         dialog.raise();
         dialog.activateWindow();
 

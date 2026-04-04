@@ -65,6 +65,7 @@
 
 #include "metadataconverterutil.h"
 #include "../audio-align/audioalignmentdialog.h"
+#include "../tbc-export-metadata/metadataexportdialog.h"
 #include "../ld-process-vits/processingpool.h"
 namespace {
 QString chromaDecoderNameFromConfig(VideoSystem system,
@@ -3365,34 +3366,45 @@ void MainWindow::on_actionExport_Decode_Metadata_triggered()
                              tr("tbc-export-metadata was not found in PATH or alongside the application."));
         return;
     }
-    QStringList arguments = {QStringLiteral("--gui")};
-#if defined(Q_OS_WIN)
-    if (windowHandle()) {
-        arguments << QStringLiteral("--parent-window-id")
-                  << QString::number(static_cast<qulonglong>(windowHandle()->winId()));
+
+    if (!metadataExportDialog) {
+        metadataExportDialog = new MetadataExportDialog(this);
+        metadataExportDialog->setModal(false);
+        metadataExportDialog->setWindowModality(Qt::NonModal);
+        metadataExportDialog->setWindowFlags(Qt::Window
+                                             | Qt::CustomizeWindowHint
+                                             | Qt::WindowTitleHint
+                                             | Qt::WindowSystemMenuHint
+                                             | Qt::WindowMinimizeButtonHint
+                                             | Qt::WindowCloseButtonHint);
+        metadataExportDialog->setAttribute(Qt::WA_TranslucentBackground, false);
+        metadataExportDialog->setAttribute(Qt::WA_NoSystemBackground, false);
+        metadataExportDialog->setAutoFillBackground(true);
+        metadataExportDialog->setWindowOpacity(1.0);
+        connect(metadataExportDialog, &QObject::destroyed, this, [this]() {
+            metadataExportDialog = nullptr;
+        });
     }
-    const QPalette currentPalette = QApplication::palette();
-    if (currentPalette.color(QPalette::Window).lightness()
-        < currentPalette.color(QPalette::WindowText).lightness()) {
-        arguments << QStringLiteral("--force-dark-theme");
+
+    metadataExportDialog->setModal(false);
+    metadataExportDialog->setWindowModality(Qt::NonModal);
+    metadataExportDialog->setWindowOpacity(1.0);
+    metadataExportDialog->setExportExecutablePath(toolPath);
+
+    const QString sourceDirectory = configuration.getSourceDirectory();
+    if (!sourceDirectory.isEmpty()) {
+        metadataExportDialog->setSourceDirectory(sourceDirectory);
     }
-#endif
     if (!defaultInput.isEmpty()) {
-        arguments << QStringLiteral("--input") << defaultInput;
+        metadataExportDialog->setDefaultInputFile(defaultInput);
     }
-    QProcess metadataExportProcess;
-    metadataExportProcess.setProgram(toolPath);
-    metadataExportProcess.setArguments(arguments);
-#if defined(Q_OS_WIN)
-    metadataExportProcess.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *createArgs) {
-        createArgs->flags |= CREATE_NO_WINDOW;
-    });
-#endif
-    if (!metadataExportProcess.startDetached()) {
-        QMessageBox::warning(this, tr("Launch failed"),
-                             tr("Unable to start tbc-export-metadata GUI."));
-        return;
+
+    metadataExportDialog->show();
+    if (metadataExportDialog->windowHandle() && windowHandle()) {
+        metadataExportDialog->windowHandle()->setTransientParent(windowHandle());
     }
+    metadataExportDialog->raise();
+    metadataExportDialog->activateWindow();
 
     if (!defaultInput.isEmpty()) {
         statusBar()->showMessage(tr("Opened Metadata Export GUI with %1").arg(defaultInput), 5000);

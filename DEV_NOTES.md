@@ -97,3 +97,64 @@ If AppImage improvements are needed, they must be made by:
 2. Starting from a completely different workflow file structure
 3. Testing incrementally at each change
 4. **Never** modifying the working 36973ee file
+
+## HARD DEV NOTE - RELEASE WORKFLOW/UI CONTRACT (2026-04-04)
+
+This repository now depends on a strict release workflow UI and run-order contract. Do not change this behavior without explicit confirmation.
+
+### Required workflow files and entry points
+- `.github/workflows/prepare_release.yml` is the release preparation entry point.
+- `.github/workflows/release.yml` is the artifact build/publish workflow.
+
+### Required `Release` manual UI fields
+`release.yml` must keep `workflow_dispatch` with these inputs:
+- `create_release` (boolean)
+  - Description: `Create a GitHub release and upload built assets`
+- `tag_name` (string)
+  - Description: `Tag to release when manually dispatched (example: v0.6.0)`
+
+Removing or renaming these inputs breaks the expected Actions modal and causes operator error.
+
+### Required behavior
+- If `create_release=false`: manual run is a build/sanity run only (no release upload).
+- If `create_release=true`: `tag_name` is required, must normalize to `vMAJOR.MINOR.PATCH`, and must already exist on origin.
+- Tag push matching `v*` must continue to run the release publish path automatically.
+
+### Required release sequence (full release)
+1. Run `Prepare Release Draft` with a version (`3.0.0` or `v3.0.0`).
+2. Workflow updates version files, commits, creates/pushes tag, and creates draft release.
+3. Tag push triggers `Release` workflow to build artifacts and upload release assets.
+
+### Verification checklist after any release-workflow edit
+1. In Actions → `Release` → `Run workflow`, verify checkbox and tag input appear exactly as above.
+2. Run manual `Release` with checkbox off and confirm build-only path.
+3. Run full path via `Prepare Release Draft` and confirm artifact upload into the draft release.
+
+## HARD DEV NOTE - LD-ANALYSE METADATA EXPORT WINDOWING FIX (2026-04-04)
+
+The `Tools -> Export Decode Metadata` action in `ld-analyse` must behave as an integrated sub-window (same app/session behavior as Auto Audio Align), not as a separate detached application window.
+
+### Root cause
+- `ld-analyse` launched `tbc-export-metadata` GUI with `QProcess::startDetached()`, which creates a separate app window/process lifecycle.
+
+### Required behavior
+- Metadata export UI is opened in-process from `ld-analyse` and reused as a non-modal child window.
+- It must show/raise/activate consistently and stay tied to the main app window behavior.
+
+### Implementation now in place
+- `src/ld-analyse/mainwindow.cpp`:
+  - Replaced detached process GUI launch with an owned/reused `MetadataExportDialog` instance.
+  - Configures non-modal window flags consistent with other tool sub-windows.
+  - Applies source directory/default metadata input before showing.
+- `src/ld-analyse/mainwindow.h`:
+  - Added `MetadataExportDialog` forward declaration and member pointer.
+- `src/ld-analyse/CMakeLists.txt`:
+  - Added `../tbc-export-metadata/metadataexportdialog.cpp/.h/.ui` to `ld-analyse` target.
+- `src/tbc-export-metadata/metadataexportdialog.cpp/.h`:
+  - Added setters used by `ld-analyse` integration:
+    - `setDefaultInputFile(...)`
+    - `setExportExecutablePath(...)`
+
+### Validation
+- Build verification passed for `ld-analyse` and `tbc-export-metadata`.
+- User confirmed real-world GUI behavior is fixed.

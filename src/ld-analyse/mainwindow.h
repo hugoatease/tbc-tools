@@ -54,6 +54,7 @@ namespace Ui {
 class MainWindow;
 }
 class AudioAlignmentDialog;
+class MetadataExportDialog;
 
 class MainWindow : public QMainWindow
 {
@@ -207,6 +208,7 @@ private:
     MetadataStatusDialog *metadataStatusDialog;
     ExportDialog *exportDialog;
     AudioAlignmentDialog *audioAlignmentDialog = nullptr;
+    MetadataExportDialog *metadataExportDialog = nullptr;
 
     // Class globals
     Configuration configuration;

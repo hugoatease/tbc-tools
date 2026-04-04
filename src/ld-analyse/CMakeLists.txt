@@ -13,6 +13,7 @@ set(ld-analyse_SOURCES
     main.cpp
     mainwindow.cpp mainwindow.ui
     metadataconverterutil.cpp
+    ../tbc-export-metadata/metadataexportdialog.cpp ../tbc-export-metadata/metadataexportdialog.h ../tbc-export-metadata/metadataexportdialog.ui
     oscilloscopedialog.cpp oscilloscopedialog.ui
     vectorscopedialog.cpp vectorscopedialog.ui
     fieldtimingdialog.cpp fieldtimingdialog.h
