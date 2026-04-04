@@ -59,7 +59,16 @@ jobs:
               echo "Invalid tag '$RELEASE_TAG'. Expected vMAJOR.MINOR.PATCH"
               exit 1
             fi
-            if ! git ls-remote --exit-code --tags "https://github.com/${{ github.repository }}.git" "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            TAG_READY="false"
+            for attempt in $(seq 1 12); do
+              if git ls-remote --exit-code --tags "https://github.com/${{ github.repository }}.git" "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+                TAG_READY="true"
+                break
+              fi
+              echo "Tag refs/tags/${RELEASE_TAG} not visible on origin yet (attempt ${attempt}/12); waiting 5s..."
+              sleep 5
+            done
+            if [ "$TAG_READY" != "true" ]; then
               echo "Tag refs/tags/${RELEASE_TAG} does not exist on origin."
               echo "Create it first via Prepare Release Draft, then re-run Release for that tag."
               exit 1

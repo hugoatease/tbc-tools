@@ -127,3 +127,14 @@ jobs:
             --title "${TAG_NAME}" \
             --draft \
             --generate-notes
+
+      - name: Dispatch Release workflow for artifact build/upload
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          TAG_NAME="${{ steps.version.outputs.tag }}"
+          gh workflow run release.yml \
+            --repo "${{ github.repository }}" \
+            --ref "${{ github.ref_name }}" \
+            -f create_release=true \
+            -f tag_name="${TAG_NAME}"
