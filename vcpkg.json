@@ -6,7 +6,9 @@
   "dependencies": [
     {
       "name": "qtbase",
-      "features": ["concurrent"]
+      "features": [
+        "concurrent"
+      ]
     },
     "qtsvg",
     "fftw3",
