@@ -1,4 +1,4 @@
-name: "Prepare Release Tag"
+name: "Prepare Release Draft"
 
 on:
   workflow_dispatch:
@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: prepare-release-${{ github.ref }}
@@ -115,7 +116,14 @@ jobs:
           TAG_NAME="${{ steps.version.outputs.tag }}"
           git tag -a "${TAG_NAME}" -m "Release ${TAG_NAME}"
           git push origin "${TAG_NAME}"
-      - name: Release pipeline handoff
+
+      - name: Create draft release
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          echo "Created and pushed ${{ steps.version.outputs.tag }}."
-          echo "The Release workflow will build artifacts and publish/upload the release assets."
+          TAG_NAME="${{ steps.version.outputs.tag }}"
+          gh release create "${TAG_NAME}" \
+            --repo "${{ github.repository }}" \
+            --title "${TAG_NAME}" \
+            --draft \
+            --generate-notes

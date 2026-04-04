@@ -7,12 +7,6 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
-    inputs:
-      tag_name:
-        description: "Tag name for release (example: v7.3.0)"
-        required: true
-        type: string
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
@@ -27,11 +21,7 @@ jobs:
       - name: Resolve and validate release tag
         id: resolve
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            RAW_TAG="${{ github.event.inputs.tag_name }}"
-          else
-            RAW_TAG="${{ github.ref_name }}"
-          fi
+          RAW_TAG="${{ github.ref_name }}"
           RELEASE_TAG="${RAW_TAG#refs/tags/}"
           if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Invalid tag '$RELEASE_TAG'. Expected vMAJOR.MINOR.PATCH"
