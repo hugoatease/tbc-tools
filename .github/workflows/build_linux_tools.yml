@@ -298,7 +298,7 @@ jobs:
           ensure_needed_runtime_libs() {
             local elf="$1"
             [ -f "$elf" ] || return 0
-            while IFS= read -r needed; do
+            readelf -d "$elf" 2>/dev/null | awk -F'[][]' '/NEEDED/ { print $2 }' | while IFS= read -r needed; do
               [ -n "$needed" ] || continue
               [ -e "AppDir/usr/lib/$needed" ] && continue
               case "$needed" in
@@ -312,7 +312,7 @@ jobs:
                 cp -Lf "$src" "AppDir/usr/lib/$needed"
                 echo "Bundled transitive runtime lib: $needed <- $src"
               fi
-            done < <(readelf -d "$elf" 2>/dev/null | awk -F'[][]' '/NEEDED/ { print $2 }')
+            done
           }
           for elf in AppDir/usr/plugins/*/*.so AppDir/usr/lib/*.so*; do
             [ -f "$elf" ] || continue
@@ -666,7 +666,7 @@ jobs:
           ensure_needed_runtime_libs() {
             local elf="$1"
             [ -f "$elf" ] || return 0
-            while IFS= read -r needed; do
+            readelf -d "$elf" 2>/dev/null | awk -F'[][]' '/NEEDED/ { print $2 }' | while IFS= read -r needed; do
               [ -n "$needed" ] || continue
               [ -e "release/lib/$needed" ] && continue
               case "$needed" in
@@ -680,7 +680,7 @@ jobs:
                 cp -Lf "$src" "release/lib/$needed"
                 echo "Bundled transitive runtime lib: $needed <- $src"
               fi
-            done < <(readelf -d "$elf" 2>/dev/null | awk -F'[][]' '/NEEDED/ { print $2 }')
+            done
           }
           for elf in release/plugins/*/*.so release/lib/*.so*; do
             [ -f "$elf" ] || continue
