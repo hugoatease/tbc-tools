@@ -328,10 +328,15 @@ int main(int argc, char *argv[])
 
         MetadataExportDialog dialog;
         dialog.setInitialOptions(initialOptions);
-        dialog.show();
-        if (transientParentWindow && dialog.windowHandle()) {
-            dialog.windowHandle()->setTransientParent(transientParentWindow.get());
+        if (transientParentWindow) {
+            if (!dialog.windowHandle()) {
+                dialog.winId();
+            }
+            if (dialog.windowHandle()) {
+                dialog.windowHandle()->setTransientParent(transientParentWindow.get());
+            }
         }
+        dialog.show();
         dialog.raise();
         dialog.activateWindow();
 

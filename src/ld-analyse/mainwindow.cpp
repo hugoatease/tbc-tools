@@ -3403,16 +3403,9 @@ void MainWindow::on_actionExport_Decode_Metadata_triggered()
         metadataExportDialog = new MetadataExportDialog(this);
         metadataExportDialog->setModal(false);
         metadataExportDialog->setWindowModality(Qt::NonModal);
-        metadataExportDialog->setWindowFlags(Qt::Window
-                                             | Qt::CustomizeWindowHint
-                                             | Qt::WindowTitleHint
-                                             | Qt::WindowSystemMenuHint
-                                             | Qt::WindowMinimizeButtonHint
-                                             | Qt::WindowCloseButtonHint);
-        metadataExportDialog->setAttribute(Qt::WA_TranslucentBackground, false);
-        metadataExportDialog->setAttribute(Qt::WA_NoSystemBackground, false);
-        metadataExportDialog->setAutoFillBackground(true);
-        metadataExportDialog->setWindowOpacity(1.0);
+        metadataExportDialog->setWindowFlag(Qt::Dialog, true);
+        metadataExportDialog->setWindowFlag(Qt::WindowContextHelpButtonHint, false);
+        metadataExportDialog->setWindowFlag(Qt::WindowMinimizeButtonHint, false);
         connect(metadataExportDialog, &QObject::destroyed, this, [this]() {
             metadataExportDialog = nullptr;
         });
@@ -3420,7 +3413,6 @@ void MainWindow::on_actionExport_Decode_Metadata_triggered()
 
     metadataExportDialog->setModal(false);
     metadataExportDialog->setWindowModality(Qt::NonModal);
-    metadataExportDialog->setWindowOpacity(1.0);
     metadataExportDialog->setExportExecutablePath(toolPath);
 
     const QString sourceDirectory = configuration.getSourceDirectory();
@@ -3431,10 +3423,13 @@ void MainWindow::on_actionExport_Decode_Metadata_triggered()
         metadataExportDialog->setDefaultInputFile(defaultInput);
     }
 
-    metadataExportDialog->show();
+    if (!metadataExportDialog->windowHandle()) {
+        metadataExportDialog->winId();
+    }
     if (metadataExportDialog->windowHandle() && windowHandle()) {
         metadataExportDialog->windowHandle()->setTransientParent(windowHandle());
     }
+    metadataExportDialog->show();
     metadataExportDialog->raise();
     metadataExportDialog->activateWindow();
 
