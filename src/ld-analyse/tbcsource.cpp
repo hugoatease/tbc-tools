@@ -1358,10 +1358,15 @@ QImage TbcSource::generateQImage()
             auto startOffset = getStretchField() ? inputOffset : (frameHeight / 4) + (inputOffset / 2);
             auto height = getStretchField() ? inputHeight : fieldHeight;
             auto fieldY = loadedFieldNumber % 2 ? 0 : 1;
+            qint32 maxFieldY = inputHeight - 1;
+            if (maxFieldY >= 0 && (maxFieldY % 2) != (fieldY % 2)) {
+                maxFieldY -= 1;
+            }
 
             for (auto y = 0; y < height; y++) {
                 auto *outputLine = reinterpret_cast<QRgb*>(outputImage.scanLine(y + startOffset));
-                std::copy_n(&rgbData[fieldY * inputWidth], inputWidth, &outputLine[outputOffset]);
+                const qint32 clampedFieldY = qBound<qint32>(0, fieldY, qMax<qint32>(0, maxFieldY));
+                std::copy_n(&rgbData[clampedFieldY * inputWidth], inputWidth, &outputLine[outputOffset]);
 
                 // Only increment fieldY every other iteration, or if field stretch disabled
                 if (!getStretchField() || y % 2 != 0) {
