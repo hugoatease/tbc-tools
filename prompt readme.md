@@ -1485,6 +1485,19 @@ fi
   No /nix/store refs in Frameworks
   ```
 
+## 2026-04-04T09:33:56Z
+User input: "okay make a hard dev note for this locally and in the repo dev notes"
+
+### HARD DEV NOTE (LOCAL)
+- Release workflow UI must keep:
+  - Checkbox: `Create a GitHub release and upload built assets`
+  - Tag input: `Tag to release when manually dispatched (example: v0.6.0)`
+- Full release flow is:
+  1. Run `Prepare Release Draft` first (creates/pushes tag + draft release).
+  2. Let tag-triggered `Release` run build/upload artifacts.
+- Manual `Release` publish mode requires an existing origin tag; otherwise it must fail with a clear message.
+- Do not remove `workflow_dispatch` from `release.yml`; doing so removes required operator controls in the UI.
+
 ## Update (UTC): 2026-03-09T04:07:21Z
 
 ## User Input
