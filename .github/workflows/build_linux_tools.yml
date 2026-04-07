@@ -134,8 +134,20 @@ jobs:
               local first_line
               first_line="$(head -n 1 "$candidate" 2>/dev/null || true)"
               case "$first_line" in
-                '#!/nix/store/'*'/bin/bash'|'#!/nix/store/'*'/bin/sh')
+                '#!/nix/store/'*'/bin/bash'*)
                   sed -i '1s@^#!.*@#!/usr/bin/env bash@' "$candidate"
+                  ;;
+                '#!/nix/store/'*'/bin/sh'*)
+                  sed -i '1s@^#!.*@#!/usr/bin/env sh@' "$candidate"
+                  ;;
+                '#!/nix/store/'*'/bin/env bash'*)
+                  sed -i '1s@^#!.*@#!/usr/bin/env bash@' "$candidate"
+                  ;;
+                '#!/nix/store/'*'/bin/env sh'*)
+                  sed -i '1s@^#!.*@#!/usr/bin/env sh@' "$candidate"
+                  ;;
+                '#!/nix/store/'*'/bin/python'*|'#!/nix/store/'*'/bin/env python'*)
+                  sed -i '1s@^#!.*@#!/usr/bin/env python3@' "$candidate"
                   ;;
               esac
             done
@@ -377,7 +389,7 @@ jobs:
               real="$bin_dir/.${name}.real"
               mv "$exe" "$real"
               cat > "$exe" <<EOF
-          #!/bin/bash
+          #!/usr/bin/env bash
           set -e
           SELF_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
           ROOT_DIR="\$(cd "\${SELF_DIR}/.." && pwd)"
@@ -396,7 +408,7 @@ jobs:
           # Keep loader/glibc binaries intact; stripping these can break startup.
           export NO_STRIP=1
           cat > AppDir/AppRun <<'EOF'
-          #!/bin/bash
+          #!/usr/bin/env bash
           set -e
           APPDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
           LOADER=""
@@ -413,11 +425,72 @@ jobs:
           export QT_QPA_PLATFORM_PLUGIN_PATH="$APPDIR/usr/plugins/platforms"
           export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
           unset LD_LIBRARY_PATH
+          run_nix_store_script_with_host_interpreter() {
+            local target="$1"
+            shift
+            local first_line
+            local interpreter
+            local env_args
+            local -a env_tokens
+            local requested
+            first_line="$(head -n 1 "$target" 2>/dev/null || true)"
+            interpreter="${first_line#\#!}"
+            interpreter="${interpreter%% *}"
+            case "$interpreter" in
+              /nix/store/*/bin/bash)
+                exec /usr/bin/env bash "$target" "$@"
+                ;;
+              /nix/store/*/bin/sh)
+                exec /usr/bin/env sh "$target" "$@"
+                ;;
+              /nix/store/*/bin/python*)
+                if command -v python3 >/dev/null 2>&1; then
+                  exec "$(command -v python3)" "$target" "$@"
+                fi
+                if command -v python >/dev/null 2>&1; then
+                  exec "$(command -v python)" "$target" "$@"
+                fi
+                ;;
+              /nix/store/*/bin/env)
+                env_args="${first_line#"$interpreter"}"
+                env_args="${env_args# }"
+                read -r -a env_tokens <<< "$env_args"
+                [ "${#env_tokens[@]}" -gt 0 ] || return 1
+                requested="${env_tokens[0]}"
+                if [ "$requested" = "-S" ]; then
+                  [ "${#env_tokens[@]}" -gt 1 ] || return 1
+                  requested="${env_tokens[1]}"
+                fi
+                case "$requested" in
+                  bash|sh)
+                    exec /usr/bin/env "$requested" "$target" "$@"
+                    ;;
+                  python|python3)
+                    if command -v python3 >/dev/null 2>&1; then
+                      exec "$(command -v python3)" "$target" "$@"
+                    fi
+                    if [ "$requested" = "python" ] && command -v python >/dev/null 2>&1; then
+                      exec "$(command -v python)" "$target" "$@"
+                    fi
+                    ;;
+                esac
+                ;;
+            esac
+            return 1
+          }
           run_target() {
             local target="$1"
             shift
             if head -c 4 "$target" 2>/dev/null | grep -q $'\177ELF'; then
               exec "$LOADER" --library-path "$APPDIR/usr/lib" "$target" "$@"
+            fi
+            local first_line
+            first_line="$(head -n 1 "$target" 2>/dev/null || true)"
+            if [[ "$first_line" == '#!/nix/store/'* ]]; then
+              run_nix_store_script_with_host_interpreter "$target" "$@" || {
+                echo "Unable to resolve Nix-store shebang for $target: $first_line" >&2
+                exit 127
+              }
             fi
             exec "$target" "$@"
           }
@@ -546,8 +619,20 @@ jobs:
               local first_line
               first_line="$(head -n 1 "$candidate" 2>/dev/null || true)"
               case "$first_line" in
-                '#!/nix/store/'*'/bin/bash'|'#!/nix/store/'*'/bin/sh')
+                '#!/nix/store/'*'/bin/bash'*)
                   sed -i '1s@^#!.*@#!/usr/bin/env bash@' "$candidate"
+                  ;;
+                '#!/nix/store/'*'/bin/sh'*)
+                  sed -i '1s@^#!.*@#!/usr/bin/env sh@' "$candidate"
+                  ;;
+                '#!/nix/store/'*'/bin/env bash'*)
+                  sed -i '1s@^#!.*@#!/usr/bin/env bash@' "$candidate"
+                  ;;
+                '#!/nix/store/'*'/bin/env sh'*)
+                  sed -i '1s@^#!.*@#!/usr/bin/env sh@' "$candidate"
+                  ;;
+                '#!/nix/store/'*'/bin/python'*|'#!/nix/store/'*'/bin/env python'*)
+                  sed -i '1s@^#!.*@#!/usr/bin/env python3@' "$candidate"
                   ;;
               esac
             done
@@ -748,7 +833,7 @@ jobs:
               real="$bin_dir/.${name}.real"
               mv "$exe" "$real"
               cat > "$exe" <<EOF
-          #!/bin/bash
+          #!/usr/bin/env bash
           set -e
           SELF_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
           ROOT_DIR="\$(cd "\${SELF_DIR}/.." && pwd)"
@@ -761,7 +846,7 @@ jobs:
           }
           wrap_elf_tools_with_loader release/bin ld-linux-aarch64.so.1
           cat > release/tbc-tools-run <<'EOF'
-          #!/bin/bash
+          #!/usr/bin/env bash
           set -e
           SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
           LOADER=""
@@ -778,11 +863,72 @@ jobs:
           export QT_QPA_PLATFORM_PLUGIN_PATH="$SELF_DIR/plugins/platforms"
           export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
           unset LD_LIBRARY_PATH
+          run_nix_store_script_with_host_interpreter() {
+            local target="$1"
+            shift
+            local first_line
+            local interpreter
+            local env_args
+            local -a env_tokens
+            local requested
+            first_line="$(head -n 1 "$target" 2>/dev/null || true)"
+            interpreter="${first_line#\#!}"
+            interpreter="${interpreter%% *}"
+            case "$interpreter" in
+              /nix/store/*/bin/bash)
+                exec /usr/bin/env bash "$target" "$@"
+                ;;
+              /nix/store/*/bin/sh)
+                exec /usr/bin/env sh "$target" "$@"
+                ;;
+              /nix/store/*/bin/python*)
+                if command -v python3 >/dev/null 2>&1; then
+                  exec "$(command -v python3)" "$target" "$@"
+                fi
+                if command -v python >/dev/null 2>&1; then
+                  exec "$(command -v python)" "$target" "$@"
+                fi
+                ;;
+              /nix/store/*/bin/env)
+                env_args="${first_line#"$interpreter"}"
+                env_args="${env_args# }"
+                read -r -a env_tokens <<< "$env_args"
+                [ "${#env_tokens[@]}" -gt 0 ] || return 1
+                requested="${env_tokens[0]}"
+                if [ "$requested" = "-S" ]; then
+                  [ "${#env_tokens[@]}" -gt 1 ] || return 1
+                  requested="${env_tokens[1]}"
+                fi
+                case "$requested" in
+                  bash|sh)
+                    exec /usr/bin/env "$requested" "$target" "$@"
+                    ;;
+                  python|python3)
+                    if command -v python3 >/dev/null 2>&1; then
+                      exec "$(command -v python3)" "$target" "$@"
+                    fi
+                    if [ "$requested" = "python" ] && command -v python >/dev/null 2>&1; then
+                      exec "$(command -v python)" "$target" "$@"
+                    fi
+                    ;;
+                esac
+                ;;
+            esac
+            return 1
+          }
           run_target() {
             local target="$1"
             shift
             if head -c 4 "$target" 2>/dev/null | grep -q $'\177ELF'; then
               exec "$LOADER" --library-path "$SELF_DIR/lib" "$target" "$@"
+            fi
+            local first_line
+            first_line="$(head -n 1 "$target" 2>/dev/null || true)"
+            if [[ "$first_line" == '#!/nix/store/'* ]]; then
+              run_nix_store_script_with_host_interpreter "$target" "$@" || {
+                echo "Unable to resolve Nix-store shebang for $target: $first_line" >&2
+                exit 127
+              }
             fi
             exec "$target" "$@"
           }

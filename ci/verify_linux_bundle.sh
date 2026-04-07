@@ -43,6 +43,18 @@ require_non_nix_rpath() {
     exit 1
   fi
 }
+require_no_nix_store_shebang() {
+  local path="$1"
+  if [ ! -f "$path" ]; then
+    return
+  fi
+  local first_line
+  first_line="$(head -n 1 "$path" 2>/dev/null || true)"
+  if [[ "$first_line" == '#!/nix/store/'* ]]; then
+    echo "Script shebang still points to Nix store: $path -> $first_line" >&2
+    exit 1
+  fi
+}
 
 require_needed_in_bundle() {
   local elf="$1"
@@ -144,6 +156,7 @@ case "$MODE" in
       echo "AppImage is not executable: $TARGET" >&2
       exit 1
     fi
+    run_smoke_test "x86-appimage-extract-and-run-tbc-video-export" ".smoke-x86-appimage-runtime.log" env APPIMAGE_EXTRACT_AND_RUN=1 "$TARGET" tbc-video-export --version
 
     rm -rf squashfs-root
     APPIMAGE_EXTRACT_AND_RUN=1 "$TARGET" --appimage-extract >/dev/null
@@ -155,6 +168,12 @@ case "$MODE" in
     require_path "$ROOT/usr/bin/tbc-video-export"
     require_path "$ROOT/usr/bin/qt.conf"
     require_path "$ROOT/usr/share/tbc-video-export/src/tbc_video_export/__main__.py"
+    require_no_nix_store_shebang "$ROOT/AppRun"
+    for candidate in "$ROOT"/usr/bin/*; do
+      [ -f "$candidate" ] || continue
+      [ -x "$candidate" ] || continue
+      require_no_nix_store_shebang "$candidate"
+    done
     require_non_nix_rpath "$ROOT/usr/bin/ld-analyse"
     require_non_nix_rpath "$ROOT/usr/plugins/platforms/libqxcb.so"
     require_bundled_loader_present "$ROOT/usr/lib"
@@ -169,6 +188,7 @@ case "$MODE" in
     run_smoke_test "x86-appimage-apprun-ffmpeg" "$ROOT/.smoke-x86.log" "$ROOT/AppRun" ffmpeg -version
 
     rm -rf "$ROOT"
+    rm -f .smoke-x86-appimage-runtime.log
     ;;
 
   arm64-release)
@@ -183,6 +203,12 @@ case "$MODE" in
     require_path "$TARGET/bin/tbc-video-export"
     require_path "$TARGET/bin/qt.conf"
     require_path "$TARGET/share/tbc-video-export/src/tbc_video_export/__main__.py"
+    require_no_nix_store_shebang "$TARGET/tbc-tools-run"
+    for candidate in "$TARGET"/bin/*; do
+      [ -f "$candidate" ] || continue
+      [ -x "$candidate" ] || continue
+      require_no_nix_store_shebang "$candidate"
+    done
     require_non_nix_rpath "$TARGET/bin/ld-analyse"
     require_non_nix_rpath "$TARGET/plugins/platforms/libqxcb.so"
     require_bundled_loader_present "$TARGET/lib"

@@ -23,5 +23,18 @@ fi
 export TBC_VIDEO_EXPORT_VENDOR_VERSION="@APP_VERSION@"
 export TBC_VIDEO_EXPORT_VENDOR_COMMIT="@APP_COMMIT@"
 export TBC_VIDEO_EXPORT_VENDOR_BRANCH="@APP_BRANCH@"
+PYTHON_BIN=""
+if [[ -x "${ROOT_DIR}/usr/bin/python3" ]]; then
+    PYTHON_BIN="${ROOT_DIR}/usr/bin/python3"
+elif [[ -x "${ROOT_DIR}/bin/python3" ]]; then
+    PYTHON_BIN="${ROOT_DIR}/bin/python3"
+elif command -v python3 >/dev/null 2>&1; then
+    PYTHON_BIN="$(command -v python3)"
+elif command -v python >/dev/null 2>&1; then
+    PYTHON_BIN="$(command -v python)"
+else
+    echo "python3 not found in bundle or PATH; cannot start tbc-video-export." >&2
+    exit 127
+fi
 
-exec python3 "${PYTHONPATH_ENTRY}/tbc_video_export/__main__.py" "$@"
+exec "${PYTHON_BIN}" "${PYTHONPATH_ENTRY}/tbc_video_export/__main__.py" "$@"
