@@ -148,6 +148,7 @@ run_guardrails() {
   cd "$ROOT_DIR"
   require_cmd python3
   run_actionlint
+  python3 -m unittest -v ci.tests.test_check_ci_contracts
   python3 ci/check_ci_contracts.py
   bash -n ci/verify_linux_bundle.sh
 }

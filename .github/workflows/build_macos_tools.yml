@@ -78,6 +78,14 @@ jobs:
             cp "$wrapped" "dist/bin/$base"
             chmod +x "dist/bin/$base"
           done
+          # Copy additional non-wrapped tools (including tbc-video-export)
+          for item in result/bin/*; do
+            [ -f "$item" ] || continue
+            base="$(basename "$item")"
+            [ -e "dist/bin/$base" ] && continue
+            cp "$item" "dist/bin/$base"
+            chmod +x "dist/bin/$base" 2>/dev/null || true
+          done
           # Bundle ffmpeg/ffprobe for self-contained exports
           FFMPEG_STORE="$(nix-store -q --references result 2>/dev/null | grep -E '/ffmpeg-[^/]+-bin$' | head -n 1 || true)"
           if [ -z "$FFMPEG_STORE" ]; then
@@ -106,7 +114,7 @@ jobs:
 
       - name: Create app bundle structure
         run: |
-          mkdir -p dist/tbc-tools.app/Contents/{Resources,MacOS,Frameworks,PlugIns}
+          mkdir -p dist/tbc-tools.app/Contents/{Resources,MacOS,Frameworks,PlugIns,share}
 
           # Create Info.plist with dynamic version
           cat > dist/tbc-tools.app/Contents/Info.plist << EOF
@@ -142,6 +150,11 @@ jobs:
 
           # Copy binaries to MacOS folder
           cp -r dist/bin/* dist/tbc-tools.app/Contents/MacOS/
+          
+          # Copy share payload needed by vendored tbc-video-export runtime
+          if [ -d "result/share/tbc-video-export" ]; then
+            cp -R result/share/tbc-video-export dist/tbc-tools.app/Contents/share/
+          fi
           
           # Copy scripts if they exist
           if [ -d "scripts" ]; then
@@ -412,6 +425,19 @@ jobs:
           find dist/tbc-tools.app -type f | head -20
           if [ ! -d "dist/tbc-tools.app/Contents/_CodeSignature" ]; then
             echo "Missing _CodeSignature after codesign"
+            exit 1
+          fi
+          if [ ! -f "dist/tbc-tools.app/Contents/MacOS/tbc-video-export" ]; then
+            echo "Missing vendored exporter tool: dist/tbc-tools.app/Contents/MacOS/tbc-video-export"
+            exit 1
+          fi
+          if [ ! -d "dist/tbc-tools.app/Contents/share/tbc-video-export/src/tbc_video_export" ]; then
+            echo "Missing vendored exporter package payload: dist/tbc-tools.app/Contents/share/tbc-video-export/src/tbc_video_export"
+            exit 1
+          fi
+          if ! dist/tbc-tools.app/Contents/MacOS/tbc-video-export --version >/tmp/tbc-video-export-version.log 2>&1; then
+            echo "Vendored exporter tool failed launch smoke test."
+            sed -n '1,80p' /tmp/tbc-video-export-version.log || true
             exit 1
           fi
           echo "\nMain executable dependencies:"

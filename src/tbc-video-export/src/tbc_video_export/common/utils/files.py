@@ -16,6 +16,9 @@ def get_runtime_directory() -> Path:
     When the script is built to a single executable using PyInstaller __file__ is
     somewhere in TEMP, so the executable location must be used instead.
     """
+    runtime_file = os.environ.get("TBC_VIDEO_EXPORT_RUNTIME_FILE")
+    if runtime_file:
+        return Path(runtime_file)
     return (
         Path(sys.executable)
         if getattr(sys, "frozen", False)

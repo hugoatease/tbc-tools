@@ -13,6 +13,7 @@ done
 SCRIPT_DIR="$(cd -P -- "$(dirname -- "${SCRIPT_PATH}")" && pwd)"
 ROOT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 PYTHONPATH_ENTRY="${ROOT_DIR}/share/tbc-video-export/src"
+export TBC_VIDEO_EXPORT_RUNTIME_FILE="${SCRIPT_PATH}"
 
 if [[ -n "${PYTHONPATH:-}" ]]; then
     export PYTHONPATH="${PYTHONPATH_ENTRY}:${PYTHONPATH}"
@@ -23,17 +24,61 @@ fi
 export TBC_VIDEO_EXPORT_VENDOR_VERSION="@APP_VERSION@"
 export TBC_VIDEO_EXPORT_VENDOR_COMMIT="@APP_COMMIT@"
 export TBC_VIDEO_EXPORT_VENDOR_BRANCH="@APP_BRANCH@"
+
+append_candidate_python() {
+    local candidate="${1:-}"
+    if [[ -z "${candidate}" ]]; then
+        return
+    fi
+    if [[ ! -x "${candidate}" ]]; then
+        return
+    fi
+    for existing in "${CANDIDATE_PYTHONS[@]-}"; do
+        if [[ "${existing}" == "${candidate}" ]]; then
+            return
+        fi
+    done
+    CANDIDATE_PYTHONS+=("${candidate}")
+}
+
+python_is_compatible() {
+    local candidate="${1:-}"
+    "${candidate}" - <<'PY' >/dev/null 2>&1
+import sys
+raise SystemExit(0 if sys.version_info >= (3, 10) else 1)
+PY
+}
+
+PYTHON_NAMES=(python3.13 python3.12 python3.11 python3.10 python3 python)
+CANDIDATE_DIRS=("${ROOT_DIR}/usr/bin" "${ROOT_DIR}/bin")
+if [[ -n "${HOME:-}" ]]; then
+    CANDIDATE_DIRS+=("${HOME}/.nix-profile/bin")
+fi
+CANDIDATE_DIRS+=("/nix/var/nix/profiles/default/bin" "/opt/homebrew/bin" "/usr/local/bin" "/usr/bin" "/bin")
+
+CANDIDATE_PYTHONS=()
+for dir_path in "${CANDIDATE_DIRS[@]}"; do
+    for python_name in "${PYTHON_NAMES[@]}"; do
+        append_candidate_python "${dir_path}/${python_name}"
+    done
+done
+
+for python_name in "${PYTHON_NAMES[@]}"; do
+    if command -v "${python_name}" >/dev/null 2>&1; then
+        append_candidate_python "$(command -v "${python_name}")"
+    fi
+done
+
 PYTHON_BIN=""
-if [[ -x "${ROOT_DIR}/usr/bin/python3" ]]; then
-    PYTHON_BIN="${ROOT_DIR}/usr/bin/python3"
-elif [[ -x "${ROOT_DIR}/bin/python3" ]]; then
-    PYTHON_BIN="${ROOT_DIR}/bin/python3"
-elif command -v python3 >/dev/null 2>&1; then
-    PYTHON_BIN="$(command -v python3)"
-elif command -v python >/dev/null 2>&1; then
-    PYTHON_BIN="$(command -v python)"
-else
-    echo "python3 not found in bundle or PATH; cannot start tbc-video-export." >&2
+for candidate in "${CANDIDATE_PYTHONS[@]}"; do
+    if python_is_compatible "${candidate}"; then
+        PYTHON_BIN="${candidate}"
+        break
+    fi
+done
+
+if [[ -z "${PYTHON_BIN}" ]]; then
+    echo "No compatible Python 3.10+ interpreter found in bundle or common locations; cannot start tbc-video-export." >&2
     exit 127
 fi
 

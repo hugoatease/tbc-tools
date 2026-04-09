@@ -8,6 +8,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WINDOWS_WORKFLOW = ROOT / ".github/workflows/build_windows_tools.yml"
 LINUX_WORKFLOW = ROOT / ".github/workflows/build_linux_tools.yml"
+MACOS_WORKFLOW = ROOT / ".github/workflows/build_macos_tools.yml"
+RELEASE_WORKFLOW = ROOT / ".github/workflows/release.yml"
 WINDOWS_REQUIREMENTS = ROOT / "src/tbc-video-export/pyinstaller/requirements-build-windows.txt"
 BUNDLE_VERIFY_SCRIPT = ROOT / "ci/verify_linux_bundle.sh"
 
@@ -22,15 +24,53 @@ XCB_RUNTIME_LIBS = (
 )
 
 WINDOWS_REQUIRED_SNIPPETS = (
+    "workflow_dispatch:",
+    "workflow_call:",
     'VCPKG_COMMIT:',
     'cache: "pip"',
     "requirements-build-windows.txt",
     "import pywintypes, win32file, win32pipe",
     "vcpkg-binary-cache-${{ env.VCPKG_COMMIT }}",
+    "tbc-video-export.exe --dump-default-config",
 )
 
 LINUX_REQUIRED_SNIPPETS = (
+    "workflow_dispatch:",
+    "workflow_call:",
     "gcc-c++ python3",
+    "for item in result/bin/*; do",
+    "bash ci/verify_linux_bundle.sh x86-appimage release/tbc-tools-x86_64.AppImage",
+    "bash ci/verify_linux_bundle.sh arm64-release release",
+)
+
+MACOS_REQUIRED_SNIPPETS = (
+    "workflow_dispatch:",
+    "workflow_call:",
+    "macos-15-intel",
+    "for item in result/bin/*; do",
+    "result/share/tbc-video-export",
+    "Missing vendored exporter tool: dist/tbc-tools.app/Contents/MacOS/tbc-video-export",
+    "Missing vendored exporter package payload: dist/tbc-tools.app/Contents/share/tbc-video-export/src/tbc_video_export",
+    "tbc-tools.app/Contents/MacOS/tbc-video-export --version",
+)
+
+RELEASE_REQUIRED_SNIPPETS = (
+    "push:",
+    "tags:",
+    '- "v*"',
+    "uses: ./.github/workflows/build_linux_tools.yml",
+    "uses: ./.github/workflows/build_windows_tools.yml",
+    "uses: ./.github/workflows/build_macos_tools.yml",
+)
+
+BUNDLE_VERIFY_REQUIRED_SNIPPETS = (
+    'run_smoke_test "x86-appimage-extract-and-run-tbc-video-export"',
+    'run_smoke_test "x86-appimage-apprun-tbc-video-export"',
+    'run_smoke_test "arm64-launcher-tbc-video-export"',
+    'require_path "$ROOT/usr/bin/tbc-video-export"',
+    'require_path "$TARGET/bin/tbc-video-export"',
+    'require_path "$ROOT/usr/share/tbc-video-export/src/tbc_video_export/__main__.py"',
+    'require_path "$TARGET/share/tbc-video-export/src/tbc_video_export/__main__.py"',
 )
 
 WINDOWS_REQUIRED_PACKAGES = (
@@ -62,6 +102,8 @@ def main() -> int:
     for required_file in (
         WINDOWS_WORKFLOW,
         LINUX_WORKFLOW,
+        MACOS_WORKFLOW,
+        RELEASE_WORKFLOW,
         WINDOWS_REQUIREMENTS,
         BUNDLE_VERIFY_SCRIPT,
     ):
@@ -79,6 +121,14 @@ def main() -> int:
 
     for snippet in LINUX_REQUIRED_SNIPPETS:
         check_contains(LINUX_WORKFLOW, snippet, errors)
+    for snippet in MACOS_REQUIRED_SNIPPETS:
+        check_contains(MACOS_WORKFLOW, snippet, errors)
+
+    for snippet in RELEASE_REQUIRED_SNIPPETS:
+        check_contains(RELEASE_WORKFLOW, snippet, errors)
+
+    for snippet in BUNDLE_VERIFY_REQUIRED_SNIPPETS:
+        check_contains(BUNDLE_VERIFY_SCRIPT, snippet, errors)
 
     requirements_content = WINDOWS_REQUIREMENTS.read_text(encoding="utf-8")
     requirements_lines = {

@@ -12,37 +12,34 @@ jobs:
     name: CI guardrails
     runs-on: ubuntu-22.04
     steps:
-
-    - uses: actions/checkout@v5
-      with:
+      - uses: actions/checkout@v5
+        with:
           submodules: true
           fetch-depth: 0
-
-    - name: Run CI guardrails
-      run: bash ci/run_local_ci_parity.sh --guardrails-only
+      - name: Run CI contract unit tests
+        run: python3 -m unittest -v ci.tests.test_check_ci_contracts
+      - name: Run CI guardrails
+        run: bash ci/run_local_ci_parity.sh --guardrails-only
   qt6:
     name: Build with Qt 6
     runs-on: ubuntu-22.04
     steps:
-
-    - uses: actions/checkout@v5
-      with:
+      - uses: actions/checkout@v5
+        with:
           submodules: true
           fetch-depth: 0
-
-    - name: Install Nix
-      uses: cachix/install-nix-action@v27
-      with:
-        nix_path: nixpkgs=channel:nixos-unstable
-    - name: Restore and save Nix store cache
-      uses: nix-community/cache-nix-action@v7
-      with:
-        primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock') }}
-        restore-prefixes-first-match: |
-          nix-${{ runner.os }}-${{ runner.arch }}-
-          nix-${{ runner.os }}-
-        gc-max-store-size-linux: 6G
-
-    - name: Build and test Qt6 parity flow
-      timeout-minutes: 20
-      run: bash ci/run_local_ci_parity.sh --qt6-only
+      - name: Install Nix
+        uses: cachix/install-nix-action@v27
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+      - name: Restore and save Nix store cache
+        uses: nix-community/cache-nix-action@v7
+        with:
+          primary-key: nix-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.nix', 'flake.lock') }}
+          restore-prefixes-first-match: |
+            nix-${{ runner.os }}-${{ runner.arch }}-
+            nix-${{ runner.os }}-
+          gc-max-store-size-linux: 6G
+      - name: Build and test Qt6 parity flow
+        timeout-minutes: 20
+        run: bash ci/run_local_ci_parity.sh --qt6-only
