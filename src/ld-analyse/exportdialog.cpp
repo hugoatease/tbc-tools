@@ -4568,18 +4568,19 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
     }
     args << QStringLiteral("--start") << QString::number(startFrameOneBased);
     args << QStringLiteral("--length") << QString::number(rangeLength);
-    const bool includeExportMetadata = !ui
-                                       || !ui->exportMetadataCheckBox
-                                       || ui->exportMetadataCheckBox->isChecked();
-    if (includeExportMetadata) {
-        args << QStringLiteral("--export-metadata");
-    }
-    const QString exportPath = resolveVideoExportPath();
 
     const bool usingProfileOverride = !profileOverride.trimmed().isEmpty();
     const QString profile = usingProfileOverride
                                 ? profileOverride.trimmed()
                                 : selectedExportProfileName();
+    const bool exportMetadataRequested = !ui
+                                         || !ui->exportMetadataCheckBox
+                                         || ui->exportMetadataCheckBox->isChecked();
+    const bool includeExportMetadata = exportMetadataRequested && !isWebProfileName(profile);
+    if (includeExportMetadata) {
+        args << QStringLiteral("--export-metadata");
+    }
+    const QString exportPath = resolveVideoExportPath();
     const bool deinterlacedOutputProfile = isWebProfileName(profile);
     if (!configFileOverride.isEmpty()) {
         args << QStringLiteral("--config-file") << configFileOverride;
