@@ -5,6 +5,7 @@
 #include <QString>
 #include <QStringList>
 #include <QVector>
+#include <QMap>
 #include <QtGlobal>
 
 class QLabel;
@@ -43,9 +44,11 @@ private:
     void updateGoButtons();
     void rebuildNotesTable();
     void setEditorFromSelectedRow();
+    void handleTableItemChanged(int row, int column);
     void upsertEditorNote();
     void removeSelectedNote();
     void selectNoteFrame(qint32 frameNumber);
+    void setNotesFromMap(const QMap<qint32, QString> &notesByFrame);
 
     NotesViewerState currentState_;
     bool applyingState_ = false;

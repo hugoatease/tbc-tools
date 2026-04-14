@@ -24,7 +24,7 @@ NotesViewerDialog::NotesViewerDialog(QWidget *parent)
 
     auto *mainLayout = new QVBoxLayout(this);
 
-    auto *helpLabel = new QLabel(tr("Manage In/Out markers and an unlimited list of user markers."), this);
+    auto *helpLabel = new QLabel(tr("Manage In/Out and user marker positions/notes"), this);
     helpLabel->setWordWrap(true);
     mainLayout->addWidget(helpLabel);
 
@@ -32,7 +32,7 @@ NotesViewerDialog::NotesViewerDialog(QWidget *parent)
     rangeLayout->addWidget(new QLabel(tr("Field"), this), 0, 0);
     rangeLayout->addWidget(new QLabel(tr("Frame"), this), 0, 1);
     rangeLayout->addWidget(new QLabel(tr("Timecode"), this), 0, 2);
-    rangeLayout->addWidget(new QLabel(tr("Go"), this), 0, 3);
+    rangeLayout->addWidget(new QLabel(tr("Go To"), this), 0, 3);
 
     auto configureFrameSpin = [](QSpinBox *spinBox) {
         spinBox->setRange(0, 1);
@@ -47,7 +47,7 @@ NotesViewerDialog::NotesViewerDialog(QWidget *parent)
     rangeLayout->addWidget(inFrameSpin_, 1, 1);
     inTimecodeLabel_ = new QLabel(QStringLiteral("—"), this);
     rangeLayout->addWidget(inTimecodeLabel_, 1, 2);
-    goInButton_ = new QPushButton(tr("Go"), this);
+    goInButton_ = new QPushButton(tr("Go To"), this);
     goInButton_->setAutoDefault(false);
     rangeLayout->addWidget(goInButton_, 1, 3);
 
@@ -57,7 +57,7 @@ NotesViewerDialog::NotesViewerDialog(QWidget *parent)
     rangeLayout->addWidget(outFrameSpin_, 2, 1);
     outTimecodeLabel_ = new QLabel(QStringLiteral("—"), this);
     rangeLayout->addWidget(outTimecodeLabel_, 2, 2);
-    goOutButton_ = new QPushButton(tr("Go"), this);
+    goOutButton_ = new QPushButton(tr("Go To"), this);
     goOutButton_->setAutoDefault(false);
     rangeLayout->addWidget(goOutButton_, 2, 3);
 
@@ -72,7 +72,9 @@ NotesViewerDialog::NotesViewerDialog(QWidget *parent)
     notesTable_->setHorizontalHeaderLabels({tr("Frame"), tr("Timecode"), tr("Comment")});
     notesTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
     notesTable_->setSelectionMode(QAbstractItemView::SingleSelection);
-    notesTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    notesTable_->setEditTriggers(QAbstractItemView::DoubleClicked
+                                 | QAbstractItemView::EditKeyPressed
+                                 | QAbstractItemView::SelectedClicked);
     notesTable_->setAlternatingRowColors(true);
     notesTable_->verticalHeader()->setVisible(false);
     notesTable_->horizontalHeader()->setStretchLastSection(true);
@@ -97,7 +99,7 @@ NotesViewerDialog::NotesViewerDialog(QWidget *parent)
     addOrUpdateNoteButton_->setAutoDefault(false);
     removeNoteButton_ = new QPushButton(tr("Remove Selected"), this);
     removeNoteButton_->setAutoDefault(false);
-    goSelectedNoteButton_ = new QPushButton(tr("Go Selected"), this);
+    goSelectedNoteButton_ = new QPushButton(tr("Go To Selected"), this);
     goSelectedNoteButton_->setAutoDefault(false);
     auto *addCurrentButton = new QPushButton(tr("Add Marker at Current Frame"), this);
     addCurrentButton->setAutoDefault(false);
@@ -143,6 +145,7 @@ NotesViewerDialog::NotesViewerDialog(QWidget *parent)
     });
 
     connect(notesTable_, &QTableWidget::itemSelectionChanged, this, &NotesViewerDialog::setEditorFromSelectedRow);
+    connect(notesTable_, &QTableWidget::cellChanged, this, &NotesViewerDialog::handleTableItemChanged);
     connect(notesTable_, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
         if (row < 0 || row >= noteFrames_.size()) {
             return;
@@ -164,11 +167,16 @@ NotesViewerDialog::NotesViewerDialog(QWidget *parent)
         if (currentFrame <= 0) {
             return;
         }
+        notesTable_->clearSelection();
         noteFrameSpin_->setValue(currentFrame);
         upsertEditorNote();
     });
 
     connect(applyButton, &QPushButton::clicked, this, [this]() {
+        const int selectedRow = notesTable_->currentRow();
+        if (selectedRow >= 0 && selectedRow < noteFrames_.size()) {
+            upsertEditorNote();
+        }
         qint32 inFrame = (inFrameSpin_->value() > 0) ? inFrameSpin_->value() : -1;
         qint32 outFrame = (outFrameSpin_->value() > 0) ? outFrameSpin_->value() : -1;
         if (inFrame > 0 && outFrame > 0 && outFrame < inFrame) {
@@ -212,14 +220,7 @@ void NotesViewerDialog::setState(const NotesViewerState &state)
         notesByFrame.insert(frame, comment);
     }
 
-    noteFrames_.clear();
-    noteComments_.clear();
-    noteFrames_.reserve(notesByFrame.size());
-    noteComments_.reserve(notesByFrame.size());
-    for (auto it = notesByFrame.cbegin(); it != notesByFrame.cend(); ++it) {
-        noteFrames_.append(it.key());
-        noteComments_.append(it.value());
-    }
+    setNotesFromMap(notesByFrame);
 
     rebuildNotesTable();
     noteFrameSpin_->setValue(currentFrame);
@@ -281,6 +282,7 @@ void NotesViewerDialog::updateGoButtons()
 
 void NotesViewerDialog::rebuildNotesTable()
 {
+    applyingState_ = true;
     notesTable_->setRowCount(noteFrames_.size());
     for (int row = 0; row < noteFrames_.size(); ++row) {
         auto *frameItem = new QTableWidgetItem(QString::number(noteFrames_.at(row)));
@@ -288,6 +290,7 @@ void NotesViewerDialog::rebuildNotesTable()
         auto *timecodeItem = new QTableWidgetItem(frameToTimecode(noteFrames_.at(row)));
         timecodeItem->setTextAlignment(Qt::AlignCenter);
         auto *commentItem = new QTableWidgetItem((row < noteComments_.size()) ? noteComments_.at(row) : QString());
+        timecodeItem->setFlags(timecodeItem->flags() & ~Qt::ItemIsEditable);
 
         notesTable_->setItem(row, 0, frameItem);
         notesTable_->setItem(row, 1, timecodeItem);
@@ -295,6 +298,7 @@ void NotesViewerDialog::rebuildNotesTable()
     }
     notesTable_->clearSelection();
     notesTable_->setCurrentItem(nullptr);
+    applyingState_ = false;
 }
 
 void NotesViewerDialog::setEditorFromSelectedRow()
@@ -315,6 +319,55 @@ void NotesViewerDialog::setEditorFromSelectedRow()
     updateGoButtons();
 }
 
+void NotesViewerDialog::handleTableItemChanged(int row, int column)
+{
+    if (applyingState_) {
+        return;
+    }
+    if (row < 0 || row >= noteFrames_.size()) {
+        return;
+    }
+    if (column != 0 && column != 2) {
+        return;
+    }
+
+    const qint32 originalFrame = noteFrames_.at(row);
+    const QString originalComment = (row < noteComments_.size()) ? noteComments_.at(row) : QString();
+
+    qint32 editedFrame = originalFrame;
+    QString editedComment = originalComment;
+
+    if (column == 0) {
+        bool ok = false;
+        const QString frameText = notesTable_->item(row, 0) ? notesTable_->item(row, 0)->text().trimmed() : QString();
+        editedFrame = normaliseFrameInput(frameText.toInt(&ok));
+        if (!ok || editedFrame <= 0) {
+            editedFrame = originalFrame;
+        }
+    }
+
+    if (column == 2) {
+        editedComment = notesTable_->item(row, 2) ? notesTable_->item(row, 2)->text().trimmed() : QString();
+    } else {
+        editedComment = originalComment;
+    }
+
+    QMap<qint32, QString> notesByFrame;
+    for (int i = 0; i < noteFrames_.size(); ++i) {
+        if (i == row) {
+            continue;
+        }
+        const QString comment = (i < noteComments_.size()) ? noteComments_.at(i) : QString();
+        notesByFrame.insert(noteFrames_.at(i), comment);
+    }
+    notesByFrame.insert(editedFrame, editedComment);
+
+    setNotesFromMap(notesByFrame);
+    rebuildNotesTable();
+    selectNoteFrame(editedFrame);
+    updateGoButtons();
+}
+
 void NotesViewerDialog::upsertEditorNote()
 {
     const qint32 frame = normaliseFrameInput(noteFrameSpin_->value());
@@ -322,22 +375,18 @@ void NotesViewerDialog::upsertEditorNote()
         updateGoButtons();
         return;
     }
+    const int selectedRow = notesTable_->currentRow();
 
     QMap<qint32, QString> notesByFrame;
     for (int i = 0; i < noteFrames_.size(); ++i) {
+        if (i == selectedRow) {
+            continue;
+        }
         const QString comment = (i < noteComments_.size()) ? noteComments_.at(i) : QString();
         notesByFrame.insert(noteFrames_.at(i), comment);
     }
     notesByFrame.insert(frame, noteCommentEdit_->text().trimmed());
-
-    noteFrames_.clear();
-    noteComments_.clear();
-    noteFrames_.reserve(notesByFrame.size());
-    noteComments_.reserve(notesByFrame.size());
-    for (auto it = notesByFrame.cbegin(); it != notesByFrame.cend(); ++it) {
-        noteFrames_.append(it.key());
-        noteComments_.append(it.value());
-    }
+    setNotesFromMap(notesByFrame);
 
     rebuildNotesTable();
     selectNoteFrame(frame);
@@ -374,5 +423,17 @@ void NotesViewerDialog::selectNoteFrame(qint32 frameNumber)
             notesTable_->selectRow(row);
             return;
         }
+    }
+}
+
+void NotesViewerDialog::setNotesFromMap(const QMap<qint32, QString> &notesByFrame)
+{
+    noteFrames_.clear();
+    noteComments_.clear();
+    noteFrames_.reserve(notesByFrame.size());
+    noteComments_.reserve(notesByFrame.size());
+    for (auto it = notesByFrame.cbegin(); it != notesByFrame.cend(); ++it) {
+        noteFrames_.append(it.key());
+        noteComments_.append(it.value());
     }
 }
