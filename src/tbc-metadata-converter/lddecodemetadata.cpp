@@ -338,6 +338,7 @@ void LdDecodeMetaData::VideoParameters::read(JsonReader &reader)
         else if (member == "UserEditInSelection" || member == "userEditInSelection") reader.read(userEditInSelection);
         else if (member == "UserEditOutSelection" || member == "userEditOutSelection") reader.read(userEditOutSelection);
         else if (member == "UserMarkerComment" || member == "userMarkerComment") reader.read(userMarkerComment);
+        else if (member == "UserMarkersJson" || member == "userMarkersJson") reader.read(userMarkersJson);
         else if (member == "UserMarkerSelection" || member == "userMarkerSelection") reader.read(userMarkerSelection);
         else reader.discard();
     }
@@ -405,6 +406,9 @@ void LdDecodeMetaData::VideoParameters::write(JsonWriter &writer) const
     }
     if (!userMarkerComment.isEmpty()) {
         writer.writeMember("UserMarkerComment", userMarkerComment);
+    }
+    if (!userMarkersJson.isEmpty()) {
+        writer.writeMember("UserMarkersJson", userMarkersJson);
     }
     if (userMarkerSelection > 0) {
         writer.writeMember("UserMarkerSelection", userMarkerSelection);
@@ -870,6 +874,7 @@ bool LdDecodeMetaData::readSqlite(QString fileName)
         int userEditOutSelection = -1;
         int userMarkerSelection = -1;
         QString userMarkerComment;
+        QString userMarkersJson;
         bool isMapped, isSubcarrierLocked, isWidescreen;
 
         if (!reader.readCaptureMetadata(captureId, system, decoder, gitBranch, gitCommit,
@@ -884,6 +889,7 @@ bool LdDecodeMetaData::readSqlite(QString fileName)
                                         ntscChromaWeight, ntscPhaseCompensation, palTransformThreshold,
                                         userEditInSelection, userEditOutSelection,
                                         userMarkerSelection, userMarkerComment,
+                                        userMarkersJson,
                                         captureNotes)) {
             qCritical() << "Failed to read capture metadata from SQLite file";
             return false;
@@ -925,6 +931,7 @@ bool LdDecodeMetaData::readSqlite(QString fileName)
         videoParameters.userEditOutSelection = userEditOutSelection;
         videoParameters.userMarkerSelection = userMarkerSelection;
         videoParameters.userMarkerComment = userMarkerComment;
+        videoParameters.userMarkersJson = userMarkersJson;
         videoParameters.gitBranch = gitBranch;
         videoParameters.gitCommit = gitCommit;
         videoParameters.isValid = true;

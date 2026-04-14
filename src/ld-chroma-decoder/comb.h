@@ -40,6 +40,71 @@
 #include "decoder.h"
 #include "sourcefield.h"
 
+
+#pragma once
+#include <vector>
+#include <memory>
+#include <onnxruntime_cxx_api.h>
+#include <cufft.h>
+
+// 提前声明，具体实现在 .cu 文件中
+void launch_nnTransform3D_CUDA(
+    uint16_t* d_cvbs_f0, uint16_t* d_cvbs_f1, bool pad_f0, bool pad_f1,
+    double* d_accChroma_f0, double* d_accChroma_f1, double* d_weightSum_f0, double* d_weightSum_f1,
+    cufftHandle p_fwd, cufftHandle p_inv, cufftDoubleComplex* d_in_batch, cufftDoubleComplex* d_out_batch,
+    float* d_trt_input, float* d_mask,
+    int* d_ledger_y, int* d_ledger_x, double* d_ledger_dc,
+    double* d_winX, double* d_winY, double* d_winT,
+    int num_blocks, size_t block_size, int activeStartX, int activeEndX,
+    Ort::Session* session);
+
+class nnTransform3DCUDA {
+public:
+    nnTransform3DCUDA(int activeStart, int activeEnd, const char* modelPath);
+    ~nnTransform3DCUDA();
+
+    
+    void processFrame(const uint16_t* inputFrame, double* outChromaDouble);
+
+private:
+    int activeStartX, activeEndX;
+
+    // ONNX Runtime 资源
+    std::unique_ptr<Ort::Env> env;
+    std::unique_ptr<Ort::Session> session;
+
+    // CUDA & cuFFT 资源
+    cufftHandle p_fwd, p_inv;
+    bool is_plan_created = false;
+    int cached_num_blocks = 0;
+
+    // 显存指针 (替代原有的 static 变量)
+    cufftDoubleComplex* d_in_batch = nullptr, * d_out_batch = nullptr;
+    float* d_trt_input = nullptr, * d_mask = nullptr;
+    int* d_ledger_y = nullptr, * d_ledger_x = nullptr;
+    double* d_ledger_dc = nullptr, * d_winX = nullptr, * d_winY = nullptr, * d_winT = nullptr;
+
+    // 内部帧缓冲 (管理 LookBehind 和 LookAhead)
+    struct InternalFrame {
+        bool isPadding = true;
+        std::vector<uint16_t> cvbs;
+        uint16_t* d_cvbs = nullptr;
+        double* d_accChroma = nullptr;
+        double* d_weightSum = nullptr;
+        // 宿主机端的累加缓冲
+        std::vector<double> h_accChroma;
+        std::vector<double> h_weightSum;
+    };
+
+    InternalFrame frame0, frame1;
+    bool isFirstFrame = true;
+
+    void initGPUResources(int num_blocks);
+    void freeGPUResources();
+    void allocateFrameBuffer(InternalFrame& f);
+    void resetFrameOLA(InternalFrame& f);
+};
+
 class Comb
 {
 public:
@@ -54,6 +119,7 @@ public:
         bool adaptive = true;
         bool showMap = false;
         bool phaseCompensation = false;
+        bool useNNTransform3D = false;
 
         double cNRLevel = 0.0;
         double yNRLevel = 0.0;
@@ -96,6 +162,10 @@ private:
 
         void loadFields(const SourceField &firstField, const SourceField &secondField);
         void copyRawToLuma();
+
+        const quint16* getRawBuffer() const { return rawbuffer.data(); }
+        
+        void applyGPUChroma(const double* gpuOutChromaDouble, qint32 activeStart, qint32 activeEnd, qint32 firstLine, qint32 lastLine);
 
         void split1D();
         void split2D();

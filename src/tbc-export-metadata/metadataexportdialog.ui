@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>680</width>
-    <height>390</height>
+    <height>450</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -82,55 +82,83 @@
       </widget>
      </item>
      <item row="3" column="0">
+      <widget class="QLabel" name="userMarkersTxtLabel">
+       <property name="text">
+        <string>User markers TXT</string>
+       </property>
+      </widget>
+     </item>
+     <item row="3" column="1">
+      <widget class="QCheckBox" name="userMarkersTxtCheckBox">
+       <property name="text">
+        <string>Export as _user-markers-log.txt</string>
+       </property>
+      </widget>
+     </item>
+     <item row="4" column="0">
+      <widget class="QLabel" name="userMarkersCsvLabel">
+       <property name="text">
+        <string>User markers CSV</string>
+       </property>
+      </widget>
+     </item>
+     <item row="4" column="1">
+      <widget class="QCheckBox" name="userMarkersCsvCheckBox">
+       <property name="text">
+        <string>Export as _user-markers-log.csv</string>
+       </property>
+      </widget>
+     </item>
+     <item row="5" column="0">
       <widget class="QLabel" name="audacityLabelsLabel">
        <property name="text">
         <string>Audacity labels</string>
        </property>
       </widget>
      </item>
-     <item row="3" column="1">
+     <item row="5" column="1">
       <widget class="QCheckBox" name="audacityLabelsCheckBox">
        <property name="text">
         <string>Export as _audacity-labels.txt</string>
        </property>
       </widget>
      </item>
-     <item row="4" column="0">
+     <item row="6" column="0">
       <widget class="QLabel" name="ffmetadataLabel">
        <property name="text">
         <string>FFMETADATA</string>
        </property>
       </widget>
      </item>
-     <item row="4" column="1">
+     <item row="6" column="1">
       <widget class="QCheckBox" name="ffmetadataCheckBox">
        <property name="text">
         <string>Export as _ffmetadata.txt</string>
        </property>
       </widget>
      </item>
-     <item row="5" column="0">
+     <item row="7" column="0">
       <widget class="QLabel" name="ffmpegVitcLabel">
        <property name="text">
         <string>VITC Text (FFmpeg)</string>
        </property>
       </widget>
      </item>
-     <item row="5" column="1">
+     <item row="7" column="1">
       <widget class="QCheckBox" name="ffmpegVitcCheckBox">
        <property name="text">
         <string>Export as _FFmpeg_VITC.txt</string>
        </property>
       </widget>
      </item>
-     <item row="6" column="0">
+     <item row="8" column="0">
       <widget class="QLabel" name="ffmetadataVitcTimecodeLabel">
        <property name="text">
         <string>FFMETADATA VITC</string>
        </property>
       </widget>
      </item>
-     <item row="6" column="1">
+     <item row="8" column="1">
       <widget class="QCheckBox" name="ffmetadataVitcTimecodeCheckBox">
        <property name="text">
         <string>Include timecode= line in _ffmetadata.txt</string>
@@ -140,14 +168,14 @@
        </property>
       </widget>
      </item>
-     <item row="7" column="0">
+     <item row="9" column="0">
       <widget class="QLabel" name="ffmetadataRangeLabel">
        <property name="text">
         <string>FFMETADATA range</string>
        </property>
       </widget>
      </item>
-     <item row="7" column="1">
+     <item row="9" column="1">
       <layout class="QHBoxLayout" name="ffmetadataRangeLayout">
        <item>
         <widget class="QLineEdit" name="ffmetadataStartLineEdit">
@@ -165,28 +193,28 @@
        </item>
       </layout>
      </item>
-     <item row="8" column="0">
+     <item row="10" column="0">
       <widget class="QLabel" name="closedCaptionsLabel">
        <property name="text">
         <string>Closed captions</string>
        </property>
       </widget>
      </item>
-     <item row="8" column="1">
+     <item row="10" column="1">
       <widget class="QCheckBox" name="closedCaptionsCheckBox">
        <property name="text">
         <string>Export as _closed-captions.scc</string>
        </property>
       </widget>
      </item>
-     <item row="9" column="0">
+     <item row="11" column="0">
       <widget class="QLabel" name="commonOptionsLabel">
        <property name="text">
         <string>Common options</string>
        </property>
       </widget>
      </item>
-     <item row="9" column="1">
+     <item row="11" column="1">
       <layout class="QHBoxLayout" name="commonOptionsLayout">
        <item>
         <widget class="QCheckBox" name="debugCheckBox">

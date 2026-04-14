@@ -43,4 +43,18 @@ bool writeVitsCsv(LdDecodeMetaData &metaData, const QString &fileName);
 */
 bool writeVbiCsv(LdDecodeMetaData &metaData, const QString &fileName);
 
+/*!
+    Write user markers as a CSV log file.
+
+    Returns true on success, false on failure.
+*/
+bool writeUserMarkersCsv(LdDecodeMetaData &metaData, const QString &fileName);
+
+/*!
+    Write user markers as a plain text log file.
+
+    Returns true on success, false on failure.
+*/
+bool writeUserMarkersTxt(LdDecodeMetaData &metaData, const QString &fileName);
+
 #endif

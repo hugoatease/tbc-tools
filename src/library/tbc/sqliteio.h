@@ -62,6 +62,7 @@ public:
                            int &ntscPhaseCompensation, double &palTransformThreshold,
                            int &userEditInSelection, int &userEditOutSelection,
                            int &userMarkerSelection, QString &userMarkerComment,
+                           QString &userMarkersJson,
                            QString &captureNotes);
 
     // Read PCM audio parameters
@@ -129,6 +130,7 @@ public:
                            int ntscPhaseCompensation, double palTransformThreshold,
                            int userEditInSelection, int userEditOutSelection,
                            int userMarkerSelection, const QString &userMarkerComment,
+                           const QString &userMarkersJson,
                            const QString &captureNotes);
 
     // Update existing capture metadata  
@@ -146,6 +148,7 @@ public:
                              int ntscPhaseCompensation, double palTransformThreshold,
                              int userEditInSelection, int userEditOutSelection,
                              int userMarkerSelection, const QString &userMarkerComment,
+                             const QString &userMarkersJson,
                              const QString &captureNotes);
 
     // Write PCM audio parameters

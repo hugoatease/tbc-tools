@@ -92,6 +92,7 @@ public:
         qint32 userEditOutSelection = -1;
         qint32 userMarkerSelection = -1;
         QString userMarkerComment;
+        QString userMarkersJson;
 
         // -- Members set by the library --
 

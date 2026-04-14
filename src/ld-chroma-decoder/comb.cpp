@@ -50,6 +50,14 @@
 #include "chroma_net_v2_onnx_data.h"
 #include "tbc/logging.h"
 
+
+#include <iostream>
+#include <cuda_runtime.h>
+// 常量定义保持不变
+const int FRAME_WIDTH = 910;
+const int FRAME_HEIGHT = 526;
+const int Nx = 16, Ny = 16, Nt = 4;
+
 // Indexes for the candidates considered in 3D adaptive mode
 enum CandidateIndex : qint32 {
     CAND_LEFT,
@@ -357,8 +365,8 @@ void Comb::updateConfiguration(const LdDecodeMetaData::VideoParameters &_videoPa
     configurationSet = true;
 }
 
-void Comb::decodeFrames(const QVector<SourceField> &inputFields, qint32 startIndex, qint32 endIndex,
-                        QVector<ComponentFrame> &componentFrames)
+void Comb::decodeFrames(const QVector<SourceField>& inputFields, qint32 startIndex, qint32 endIndex,
+    QVector<ComponentFrame>& componentFrames)
 {
     assert(configurationSet);
     assert((componentFrames.size() * 2) == (endIndex - startIndex));
@@ -426,15 +434,25 @@ void Comb::decodeFrames(const QVector<SourceField> &inputFields, qint32 startInd
     auto currentFrameBuffer = std::make_unique<FrameBuffer>(videoParameters, configuration);
     auto previousFrameBuffer = std::make_unique<FrameBuffer>(videoParameters, configuration);
 
-    // Decode each pair of fields into a frame.
-    // To support 3D operation, where we need to see three input frames at a time,
-    // each iteration of the loop loads and 1D/2D-filters frame N + 1, then
-    // 3D-filters and outputs frame N.
+    // ================= 1. 初始化 GPU 滤镜引擎 =================
+    std::unique_ptr<nnTransform3DCUDA> gpuFilter;
+    std::vector<double> gpuOutChromaDouble;
+
+    if (configuration.useNNTransform3D) {
+        gpuFilter = std::make_unique<nnTransform3DCUDA>(
+            videoParameters.activeVideoStart,
+            videoParameters.activeVideoEnd,
+            "chroma_net.onnx"
+        );
+        gpuOutChromaDouble.resize(910 * 526);
+    }
+    // ==========================================================
+
     const qint32 preStartIndex = (configuration.dimensions == 3) ? startIndex - 4 : startIndex - 2;
     for (qint32 fieldIndex = preStartIndex; fieldIndex < endIndex; fieldIndex += 2) {
         const qint32 frameIndex = (fieldIndex - startIndex) / 2;
 
-        // Rotate the buffers
+        // 轮转缓冲区
         {
             auto recycle = std::move(previousFrameBuffer);
             previousFrameBuffer = std::move(currentFrameBuffer);
@@ -442,57 +460,58 @@ void Comb::decodeFrames(const QVector<SourceField> &inputFields, qint32 startInd
             nextFrameBuffer = std::move(recycle);
         }
 
-        // If there's another input field, bring it into nextFrameBuffer
         if (fieldIndex + 3 < inputFields.size()) {
-            // Load fields into the buffer
             nextFrameBuffer->loadFields(inputFields[fieldIndex + 2], inputFields[fieldIndex + 3]);
 
-            // Extract chroma using 1D filter
-            nextFrameBuffer->split1D();
-
-            // Extract chroma using 2D filter
-            nextFrameBuffer->split2D();
+            // ================= 2. 数据喂给 GPU =================
+            if (configuration.useNNTransform3D) {
+                gpuFilter->processFrame(nextFrameBuffer->getRawBuffer(), gpuOutChromaDouble.data());
+            }
+            else {
+                nextFrameBuffer->split1D();
+                nextFrameBuffer->split2D();
+            }
+            // ===================================================
+        }
+        else if (configuration.useNNTransform3D) {
+            // 走到文件末尾时，传入 nullptr 触发 GPU 的 Padding 排空机制
+            gpuFilter->processFrame(nullptr, gpuOutChromaDouble.data());
         }
 
         if (fieldIndex < startIndex) {
-            // This is a look-behind frame; no further decoding needed.
-            continue;
+            continue; // LookBehind 阶段，跳过后续写入
         }
 
-        if (configuration.dimensions == 3) {
-            // Extract chroma using 3D filter
+        // ================= 3. 收割 3D 色度结果 =================
+        if (configuration.useNNTransform3D) {
+            currentFrameBuffer->applyGPUChroma(gpuOutChromaDouble.data(), videoParameters.activeVideoStart, videoParameters.activeVideoEnd, videoParameters.firstActiveFrameLine, videoParameters.lastActiveFrameLine);
+        }
+        else if (configuration.dimensions == 3) {
             currentFrameBuffer->split3D(*previousFrameBuffer, *nextFrameBuffer);
         }
+        // =======================================================
 
-        // Initialise and clear the component frame
         componentFrames[frameIndex].init(videoParameters);
         currentFrameBuffer->setComponentFrame(componentFrames[frameIndex]);
         currentFrameBuffer->copyRawToLuma();
 
-        // Demodulate chroma giving I/Q
         if (configuration.phaseCompensation) {
             currentFrameBuffer->splitIQlocked();
-        } else {
+        }
+        else {
             currentFrameBuffer->splitIQ();
-            // Extract Y from baseband and I/Q
             currentFrameBuffer->adjustY();
         }
         currentFrameBuffer->filterIQ();
-
-        // Apply noise reduction
         currentFrameBuffer->doCNR();
         currentFrameBuffer->doYNR();
-
-        // Transform I/Q to U/V
         currentFrameBuffer->transformIQ(configuration.chromaGain, configuration.chromaPhase);
 
-        // Overlay the map if required
         if (configuration.dimensions == 3 && configuration.showMap) {
             currentFrameBuffer->overlayMap(*previousFrameBuffer, *nextFrameBuffer);
         }
     }
 }
-
 // Private methods ----------------------------------------------------------------------------------------------------
 
 Comb::FrameBuffer::FrameBuffer(const LdDecodeMetaData::VideoParameters &videoParameters_,
@@ -1206,6 +1225,186 @@ namespace {
         return info;
     }
 }
+
+
+void Comb::FrameBuffer::applyGPUChroma(const double* gpuOutChromaDouble, qint32 activeStart, qint32 activeEnd, qint32 firstLine, qint32 lastLine) {
+    for (qint32 lineNumber = firstLine; lineNumber < lastLine; lineNumber++) {
+        for (qint32 h = activeStart; h < activeEnd; h++) {
+            clpbuffer[2].pixel[lineNumber][h] = gpuOutChromaDouble[lineNumber * 910 + h];
+        }
+    }
+}
+
+
+nnTransform3DCUDA::nnTransform3DCUDA(int activeStart, int activeEnd, const char* modelPath)
+    : activeStartX(activeStart), activeEndX(activeEnd) {
+
+    // 1. 初始化 ONNX Runtime (TensorRT + CUDA Fallback)
+    
+    env = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_ERROR, "NTSC3D");
+    Ort::SessionOptions session_options;
+
+    try {
+        OrtTensorRTProviderOptions trt_options{};
+        trt_options.device_id = 0;
+        trt_options.trt_fp16_enable = 1;
+        trt_options.trt_engine_cache_enable = 1;
+        trt_options.trt_engine_cache_path = "./trt_cache";
+        session_options.AppendExecutionProvider_TensorRT(trt_options);
+
+        OrtCUDAProviderOptions cuda_options;
+        cuda_options.device_id = 0;
+        session_options.AppendExecutionProvider_CUDA(cuda_options);
+    }
+    catch (...) {
+        std::cerr << "Fallback to CPU or basic CUDA.\n";
+    }
+
+    session = std::make_unique<Ort::Session>(*env, ORT_TSTR("chroma_net.onnx"), session_options);
+
+    // 2. 为前后两帧分配持久显存
+    allocateFrameBuffer(frame0);
+    allocateFrameBuffer(frame1);
+}
+
+nnTransform3DCUDA::~nnTransform3DCUDA() {
+    freeGPUResources();
+    // 释放 FrameBuffer 显存
+    if (frame0.d_cvbs) { cudaFree(frame0.d_cvbs); cudaFree(frame0.d_accChroma); cudaFree(frame0.d_weightSum); }
+    if (frame1.d_cvbs) { cudaFree(frame1.d_cvbs); cudaFree(frame1.d_accChroma); cudaFree(frame1.d_weightSum); }
+}
+
+void nnTransform3DCUDA::allocateFrameBuffer(InternalFrame& f) {
+    size_t pixels = FRAME_WIDTH * FRAME_HEIGHT;
+    f.cvbs.resize(pixels, 0);
+    f.h_accChroma.resize(pixels, 0.0);
+    f.h_weightSum.resize(pixels, 0.0);
+    cudaMalloc((void**)&f.d_cvbs, pixels * sizeof(uint16_t));
+    cudaMalloc((void**)&f.d_accChroma, pixels * sizeof(double));
+    cudaMalloc((void**)&f.d_weightSum, pixels * sizeof(double));
+}
+
+void nnTransform3DCUDA::resetFrameOLA(InternalFrame& f) {
+    f.isPadding = false;
+    size_t bytes = FRAME_WIDTH * FRAME_HEIGHT * sizeof(double);
+    cudaMemset(f.d_accChroma, 0, bytes);
+    cudaMemset(f.d_weightSum, 0, bytes);
+}
+
+void nnTransform3DCUDA::initGPUResources(int num_blocks) {
+    if (cached_num_blocks == num_blocks) return;
+    freeGPUResources();
+
+    size_t block_size = Nt * Ny * Nx;
+    size_t bytes = sizeof(cufftDoubleComplex) * num_blocks * block_size;
+
+    cudaMalloc((void**)&d_in_batch, bytes);
+    cudaMalloc((void**)&d_out_batch, bytes);
+
+    int n[] = { Nt, Ny, Nx };
+    cufftPlanMany(&p_fwd, 3, n, NULL, 1, block_size, NULL, 1, block_size, CUFFT_Z2Z, num_blocks);
+    cufftPlanMany(&p_inv, 3, n, NULL, 1, block_size, NULL, 1, block_size, CUFFT_Z2Z, num_blocks);
+    is_plan_created = true;
+
+    cudaMalloc((void**)&d_ledger_y, num_blocks * sizeof(int));
+    cudaMalloc((void**)&d_ledger_x, num_blocks * sizeof(int));
+    cudaMalloc((void**)&d_ledger_dc, num_blocks * sizeof(double));
+    cudaMalloc((void**)&d_winX, Nx * sizeof(double));
+    cudaMalloc((void**)&d_winY, Ny * sizeof(double));
+    cudaMalloc((void**)&d_winT, Nt * sizeof(double));
+
+    cudaMalloc((void**)&d_trt_input, num_blocks * 2 * block_size * sizeof(float));
+    cudaMalloc((void**)&d_mask, num_blocks * block_size * sizeof(float));
+
+    cached_num_blocks = num_blocks;
+
+    // 初始化窗函数并拷贝到 GPU
+    std::vector<double> winX(Nx), winY(Ny), winT(Nt);
+    for (int i = 0; i < Nx; ++i) winX[i] = sin(M_PI * (i + 0.5) / Nx);
+    for (int i = 0; i < Ny; ++i) winY[i] = sin(M_PI * (i + 0.5) / Ny);
+    for (int i = 0; i < Nt; ++i) winT[i] = sin(M_PI * (i + 0.5) / Nt);
+    cudaMemcpy(d_winX, winX.data(), Nx * sizeof(double), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_winY, winY.data(), Ny * sizeof(double), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_winT, winT.data(), Nt * sizeof(double), cudaMemcpyHostToDevice);
+}
+
+void nnTransform3DCUDA::freeGPUResources() {
+    if (d_in_batch) { cudaFree(d_in_batch); d_in_batch = nullptr; }
+    if (d_out_batch) { cudaFree(d_out_batch); d_out_batch = nullptr; }
+    if (d_trt_input) { cudaFree(d_trt_input); d_trt_input = nullptr; }
+    if (d_mask) { cudaFree(d_mask); d_mask = nullptr; }
+    if (d_ledger_y) { cudaFree(d_ledger_y); cudaFree(d_ledger_x); cudaFree(d_ledger_dc); }
+    if (d_winX) { cudaFree(d_winX); cudaFree(d_winY); cudaFree(d_winT); }
+    if (is_plan_created) { cufftDestroy(p_fwd); cufftDestroy(p_inv); is_plan_created = false; }
+    cached_num_blocks = 0;
+}
+
+// 供视频管线每帧调用的函数
+void nnTransform3DCUDA::processFrame(const uint16_t* inputFrame, double* outChromaDouble) {
+    size_t frameBytes = FRAME_WIDTH * FRAME_HEIGHT * sizeof(uint16_t);
+
+    if (inputFrame == nullptr) {
+        std::swap(frame0, frame1);
+        resetFrameOLA(frame1);
+        frame1.isPadding = true; // 强制将下一帧设为 Padding 0 帧
+    }
+    
+    else if (isFirstFrame) {
+        frame0.isPadding = true;
+        cudaMemcpy(frame1.d_cvbs, inputFrame, frameBytes, cudaMemcpyHostToDevice);
+        frame1.isPadding = false;
+
+        // 首次计算 Block 数量并初始化资源
+        int startY_loop = 40 - (Ny / 2);
+        int startX_loop = activeStartX - (Nx / 2);
+        int num_blocks = 0;
+        std::vector<int> h_ledger_y, h_ledger_x;
+        for (int y = startY_loop; y < 525; y += 8) {
+            for (int x = startX_loop; x < activeEndX; x += 8) {
+                h_ledger_y.push_back(y); h_ledger_x.push_back(x);
+                num_blocks++;
+            }
+        }
+        initGPUResources(num_blocks);
+        cudaMemcpy(d_ledger_y, h_ledger_y.data(), num_blocks * sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_ledger_x, h_ledger_x.data(), num_blocks * sizeof(int), cudaMemcpyHostToDevice);
+        isFirstFrame = false;
+    }
+    else {
+        std::swap(frame0, frame1);
+        resetFrameOLA(frame1);
+        cudaMemcpy(frame1.d_cvbs, inputFrame, frameBytes, cudaMemcpyHostToDevice);
+    }
+
+    size_t block_size = Nt * Ny * Nx;
+
+    launch_nnTransform3D_CUDA(
+        frame0.d_cvbs, frame1.d_cvbs, frame0.isPadding, frame1.isPadding,
+        frame0.d_accChroma, frame1.d_accChroma, frame0.d_weightSum, frame1.d_weightSum,
+        p_fwd, p_inv, d_in_batch, d_out_batch, d_trt_input, d_mask,
+        d_ledger_y, d_ledger_x, d_ledger_dc, d_winX, d_winY, d_winT,
+        cached_num_blocks, block_size, activeStartX, activeEndX, session.get()
+    );
+
+    cudaMemcpy(frame0.h_accChroma.data(), frame0.d_accChroma, FRAME_WIDTH * FRAME_HEIGHT * sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemcpy(frame0.h_weightSum.data(), frame0.d_weightSum, FRAME_WIDTH * FRAME_HEIGHT * sizeof(double), cudaMemcpyDeviceToHost);
+
+  
+    for (int i = 0; i < FRAME_WIDTH * FRAME_HEIGHT; ++i) {
+        int x = i % FRAME_WIDTH;
+        if (x < activeStartX || x >= activeEndX || frame0.isPadding) {
+            outChromaDouble[i] = 0.0; 
+        }
+        else {
+            outChromaDouble[i] = (frame0.h_weightSum[i] > 0.00001) ? (frame0.h_accChroma[i] / frame0.h_weightSum[i]) : 0.0;
+        }
+    }
+}
+
+
+
+
+
 
 // Split I and Q, taking burst phase into account.
 void Comb::FrameBuffer::splitIQlocked()

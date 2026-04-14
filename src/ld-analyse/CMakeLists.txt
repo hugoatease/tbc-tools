@@ -10,8 +10,10 @@ set(ld-analyse_SOURCES
     exportdialog.cpp exportdialog.ui
     metadataconversiondialog.cpp metadataconversiondialog.ui
     metadatastatusdialog.cpp metadatastatusdialog.ui
+    notesviewerdialog.cpp notesviewerdialog.h
     main.cpp
     mainwindow.cpp mainwindow.ui
+    timelinemarkerslider.cpp timelinemarkerslider.h
     metadataconverterutil.cpp
     ../tbc-export-metadata/metadataexportdialog.cpp ../tbc-export-metadata/metadataexportdialog.h ../tbc-export-metadata/metadataexportdialog.ui
     oscilloscopedialog.cpp oscilloscopedialog.ui

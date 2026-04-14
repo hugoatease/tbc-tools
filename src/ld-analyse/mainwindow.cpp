@@ -32,6 +32,7 @@
 #include <QSignalBlocker>
 #include <QStyle>
 #include <QStyleFactory>
+#include <QStyleOptionSlider>
 #include <QSvgRenderer>
 #include <QStringList>
 #include <QTextStream>
@@ -53,6 +54,10 @@
 #include <QAbstractSpinBox>
 #include <QKeySequence>
 #include <QHBoxLayout>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QMap>
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QtConcurrent/QtConcurrent>
@@ -65,6 +70,8 @@
 #endif
 
 #include "metadataconverterutil.h"
+#include "notesviewerdialog.h"
+#include "timelinemarkerslider.h"
 #include "../audio-align/audioalignmentdialog.h"
 #include "../tbc-export-metadata/metadataexportdialog.h"
 #include "../ld-process-vits/processingpool.h"
@@ -476,12 +483,6 @@ QString resolveExternalExecutable(const QStringList &toolNames)
         return names;
     }();
 
-    for (const QString &name : candidateToolNames) {
-        const QString toolPath = QStandardPaths::findExecutable(name);
-        if (!toolPath.isEmpty() && isRunnableFile(toolPath)) {
-            return toolPath;
-        }
-    }
     QStringList searchRoots;
     const auto appendRoot = [&searchRoots](const QString &rootPath) {
         appendUniqueCandidate(searchRoots, QDir::cleanPath(rootPath));
@@ -540,6 +541,13 @@ QString resolveExternalExecutable(const QStringList &toolNames)
             if (isRunnableFile(localCandidate)) {
                 return localCandidate;
             }
+        }
+    }
+
+    for (const QString &name : candidateToolNames) {
+        const QString toolPath = QStandardPaths::findExecutable(name);
+        if (!toolPath.isEmpty() && isRunnableFile(toolPath)) {
+            return toolPath;
         }
     }
 
@@ -661,6 +669,252 @@ bool sameFilePath(const QString &left, const QString &right)
     return normalizedLeft == normalizedRight;
 }
 
+struct UserNoteMarker
+{
+    qint32 frame = -1;
+    QString comment;
+};
+
+qint32 jsonValueToInt(const QJsonValue &value, bool *ok = nullptr)
+{
+    bool conversionOk = false;
+    qint32 output = -1;
+    if (value.isDouble()) {
+        const double numericValue = value.toDouble();
+        output = static_cast<qint32>(numericValue);
+        conversionOk = true;
+    } else if (value.isString()) {
+        output = value.toString().toInt(&conversionOk);
+    }
+    if (ok) {
+        *ok = conversionOk;
+    }
+    return conversionOk ? output : -1;
+}
+
+QVector<UserNoteMarker> normaliseUserNoteMarkers(const QVector<UserNoteMarker> &noteMarkers,
+                                                 qint32 totalFrames)
+{
+    QMap<qint32, QString> notesByFrame;
+    const bool clampToKnownRange = (totalFrames > 0);
+    for (const UserNoteMarker &noteMarker : noteMarkers) {
+        if (noteMarker.frame <= 0) {
+            continue;
+        }
+        qint32 frame = noteMarker.frame;
+        if (clampToKnownRange) {
+            frame = qBound<qint32>(1, frame, totalFrames);
+        }
+        if (frame <= 0) {
+            continue;
+        }
+        notesByFrame.insert(frame, noteMarker.comment.trimmed());
+    }
+
+    QVector<UserNoteMarker> normalizedMarkers;
+    normalizedMarkers.reserve(notesByFrame.size());
+    for (auto it = notesByFrame.cbegin(); it != notesByFrame.cend(); ++it) {
+        normalizedMarkers.append({it.key(), it.value()});
+    }
+    return normalizedMarkers;
+}
+
+QVector<UserNoteMarker> parseUserMarkersJson(const QString &userMarkersJson, qint32 totalFrames)
+{
+    const QByteArray jsonBytes = userMarkersJson.trimmed().toUtf8();
+    if (jsonBytes.isEmpty()) {
+        return {};
+    }
+
+    QJsonParseError parseError;
+    const QJsonDocument jsonDocument = QJsonDocument::fromJson(jsonBytes, &parseError);
+    if (parseError.error != QJsonParseError::NoError) {
+        return {};
+    }
+
+    QJsonArray markersArray;
+    if (jsonDocument.isArray()) {
+        markersArray = jsonDocument.array();
+    } else if (jsonDocument.isObject()) {
+        const QJsonObject rootObject = jsonDocument.object();
+        const QJsonValue notesValue = rootObject.value(QStringLiteral("notes"));
+        if (notesValue.isArray()) {
+            markersArray = notesValue.toArray();
+        }
+    }
+
+    QVector<UserNoteMarker> parsedMarkers;
+    parsedMarkers.reserve(markersArray.size());
+    for (const QJsonValue &markerValue : markersArray) {
+        if (!markerValue.isObject()) {
+            continue;
+        }
+        const QJsonObject markerObject = markerValue.toObject();
+        bool frameOk = false;
+        qint32 frame = -1;
+        if (markerObject.contains(QStringLiteral("frame"))) {
+            frame = jsonValueToInt(markerObject.value(QStringLiteral("frame")), &frameOk);
+        } else if (markerObject.contains(QStringLiteral("selection"))) {
+            frame = jsonValueToInt(markerObject.value(QStringLiteral("selection")), &frameOk);
+        }
+        if (!frameOk || frame <= 0) {
+            continue;
+        }
+
+        QString comment;
+        const QJsonValue commentValue = markerObject.value(QStringLiteral("comment"));
+        if (commentValue.isString()) {
+            comment = commentValue.toString();
+        } else {
+            const QJsonValue textValue = markerObject.value(QStringLiteral("text"));
+            if (textValue.isString()) {
+                comment = textValue.toString();
+            }
+        }
+
+        parsedMarkers.append({frame, comment});
+    }
+
+    return normaliseUserNoteMarkers(parsedMarkers, totalFrames);
+}
+
+QVector<UserNoteMarker> userNoteMarkersFromVideoParameters(
+    const LdDecodeMetaData::VideoParameters &videoParameters,
+    qint32 totalFrames)
+{
+    QVector<UserNoteMarker> combinedMarkers;
+    if (videoParameters.userMarkerSelection > 0) {
+        combinedMarkers.append({videoParameters.userMarkerSelection, videoParameters.userMarkerComment});
+    }
+    combinedMarkers += parseUserMarkersJson(videoParameters.userMarkersJson, totalFrames);
+    return normaliseUserNoteMarkers(combinedMarkers, totalFrames);
+}
+
+QString serializeUserNoteMarkersJson(const QVector<UserNoteMarker> &noteMarkers)
+{
+    if (noteMarkers.isEmpty()) {
+        return QString();
+    }
+
+    QJsonArray markersArray;
+    for (const UserNoteMarker &noteMarker : noteMarkers) {
+        if (noteMarker.frame <= 0) {
+            continue;
+        }
+        QJsonObject markerObject;
+        markerObject.insert(QStringLiteral("frame"), noteMarker.frame);
+        if (!noteMarker.comment.isEmpty()) {
+            markerObject.insert(QStringLiteral("comment"), noteMarker.comment);
+        }
+        markersArray.append(markerObject);
+    }
+
+    if (markersArray.isEmpty()) {
+        return QString();
+    }
+    return QString::fromUtf8(QJsonDocument(markersArray).toJson(QJsonDocument::Compact));
+}
+
+bool applyUserNoteMarkersToVideoParameters(LdDecodeMetaData::VideoParameters &videoParameters,
+                                           const QVector<UserNoteMarker> &noteMarkers)
+{
+    const QVector<UserNoteMarker> normalizedMarkers = normaliseUserNoteMarkers(noteMarkers, -1);
+    const QString userMarkersJson = serializeUserNoteMarkersJson(normalizedMarkers);
+    const qint32 legacyMarkerFrame = normalizedMarkers.isEmpty() ? -1 : normalizedMarkers.first().frame;
+    const QString legacyMarkerComment = normalizedMarkers.isEmpty() ? QString() : normalizedMarkers.first().comment;
+
+    bool changed = false;
+    if (videoParameters.userMarkersJson != userMarkersJson) {
+        videoParameters.userMarkersJson = userMarkersJson;
+        changed = true;
+    }
+    if (videoParameters.userMarkerSelection != legacyMarkerFrame) {
+        videoParameters.userMarkerSelection = legacyMarkerFrame;
+        changed = true;
+    }
+    if (videoParameters.userMarkerComment != legacyMarkerComment) {
+        videoParameters.userMarkerComment = legacyMarkerComment;
+        changed = true;
+    }
+    return changed;
+}
+
+void noteMarkerListsFromMarkers(const QVector<UserNoteMarker> &noteMarkers,
+                                QVector<qint32> &noteFrames,
+                                QStringList &noteComments)
+{
+    noteFrames.clear();
+    noteComments.clear();
+    noteFrames.reserve(noteMarkers.size());
+    noteComments.reserve(noteMarkers.size());
+    for (const UserNoteMarker &noteMarker : noteMarkers) {
+        if (noteMarker.frame <= 0) {
+            continue;
+        }
+        noteFrames.append(noteMarker.frame);
+        noteComments.append(noteMarker.comment);
+    }
+}
+
+qint32 noteMarkerIndexForFrame(const QVector<UserNoteMarker> &noteMarkers, qint32 frame)
+{
+    for (qint32 i = 0; i < noteMarkers.size(); ++i) {
+        if (noteMarkers.at(i).frame == frame) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+qint32 nearestNoteMarkerIndexForFrame(const QVector<UserNoteMarker> &noteMarkers, qint32 frame)
+{
+    if (noteMarkers.isEmpty() || frame <= 0) {
+        return -1;
+    }
+
+    qint32 nearestIndex = -1;
+    qint32 nearestDistance = std::numeric_limits<qint32>::max();
+    for (qint32 i = 0; i < noteMarkers.size(); ++i) {
+        const qint32 candidateDistance = qAbs(noteMarkers.at(i).frame - frame);
+        if (candidateDistance < nearestDistance) {
+            nearestDistance = candidateDistance;
+            nearestIndex = i;
+        }
+    }
+    return nearestIndex;
+}
+
+qint32 sliderValueForContextPoint(const QSlider *slider, const QPoint &contextPos)
+{
+    if (!slider) {
+        return 0;
+    }
+
+    QStyleOptionSlider option;
+    option.initFrom(slider);
+    option.orientation = slider->orientation();
+    option.minimum = slider->minimum();
+    option.maximum = slider->maximum();
+    option.sliderPosition = slider->sliderPosition();
+    option.sliderValue = slider->value();
+    option.upsideDown = slider->invertedAppearance();
+
+    const QRect grooveRect = slider->style()->subControlRect(QStyle::CC_Slider,
+                                                              &option,
+                                                              QStyle::SC_SliderGroove,
+                                                              slider);
+    if (!grooveRect.isValid() || grooveRect.width() <= 1) {
+        return slider->value();
+    }
+
+    const qint32 boundedX = qBound(grooveRect.left(), contextPos.x(), grooveRect.right());
+    const qint32 relativeX = boundedX - grooveRect.left();
+    return QStyle::sliderValueFromPosition(slider->minimum(),
+                                           slider->maximum(),
+                                           relativeX,
+                                           grooveRect.width() - 1,
+                                           option.upsideDown);
+}
 
 #if defined(Q_OS_MACOS)
 QString chooseFileViaAppleScript(const QString &startPath)
@@ -701,6 +955,43 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     ui(new Ui::MainWindow)
 {
     ui->setupUi(this);
+
+    if (ui->posHorizontalSlider && ui->mediaControl_frame) {
+        QSlider *existingSlider = ui->posHorizontalSlider;
+        auto *replacementSlider = new TimelineMarkerSlider(ui->mediaControl_frame);
+        replacementSlider->setObjectName(existingSlider->objectName());
+        replacementSlider->setOrientation(existingSlider->orientation());
+        replacementSlider->setMinimum(existingSlider->minimum());
+        replacementSlider->setMaximum(existingSlider->maximum());
+        replacementSlider->setSingleStep(existingSlider->singleStep());
+        replacementSlider->setPageStep(existingSlider->pageStep());
+        replacementSlider->setTracking(existingSlider->hasTracking());
+        replacementSlider->setValue(existingSlider->value());
+        replacementSlider->setEnabled(existingSlider->isEnabled());
+        replacementSlider->setMinimumSize(existingSlider->minimumSize());
+        replacementSlider->setMaximumSize(existingSlider->maximumSize());
+        replacementSlider->setSizePolicy(existingSlider->sizePolicy());
+        replacementSlider->setInvertedAppearance(existingSlider->invertedAppearance());
+        replacementSlider->setInvertedControls(existingSlider->invertedControls());
+        replacementSlider->setContextMenuPolicy(existingSlider->contextMenuPolicy());
+
+        if (QLayout *sliderLayout = ui->mediaControl_frame->layout()) {
+            sliderLayout->replaceWidget(existingSlider, replacementSlider);
+        }
+
+        existingSlider->deleteLater();
+        ui->posHorizontalSlider = replacementSlider;
+        timelineMarkerSlider = replacementSlider;
+
+        connect(timelineMarkerSlider, &QSlider::valueChanged,
+                this, &MainWindow::on_posHorizontalSlider_valueChanged);
+        connect(timelineMarkerSlider, &QSlider::sliderPressed,
+                this, &MainWindow::on_posHorizontalSlider_sliderPressed);
+        connect(timelineMarkerSlider, &QSlider::sliderReleased,
+                this, &MainWindow::on_posHorizontalSlider_sliderReleased);
+        connect(timelineMarkerSlider, &QWidget::customContextMenuRequested,
+                this, &MainWindow::on_posHorizontalSlider_customContextMenuRequested);
+    }
     copyCurrentDisplayAction = new QAction(tr("Copy current display"), this);
     copyCurrentDisplayAction->setShortcut(QKeySequence::Copy);
     copyCurrentDisplayAction->setShortcutContext(Qt::WindowShortcut);
@@ -827,6 +1118,66 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     chromaDecoderConfigDialog = new ChromaDecoderConfigDialog(this);
     metadataConversionDialog = new MetadataConversionDialog(this);
     metadataStatusDialog = new MetadataStatusDialog(this);
+    notesViewerDialog = new NotesViewerDialog(this);
+    notesViewerDialog->setWindowFlag(Qt::Window, true);
+    connect(notesViewerDialog, &NotesViewerDialog::goToFrameRequested, this, [this](qint32 frameNumber) {
+        if (!tbcSource.getIsSourceLoaded()) {
+            return;
+        }
+        setPlaybackRunning(false);
+        const qint32 clampedFrame = qBound<qint32>(1, frameNumber, qMax<qint32>(1, tbcSource.getNumberOfFrames()));
+        setCurrentFrame(clampedFrame);
+        const qint32 currentNumber = tbcSource.getFieldViewEnabled() ? currentFieldNumber : currentFrameNumber;
+        updatePositionEditorValue(currentNumber);
+        ui->posHorizontalSlider->setValue(currentNumber);
+    });
+    connect(notesViewerDialog, &NotesViewerDialog::notesUpdated, this,
+            [this](qint32 inFrame,
+                   qint32 outFrame,
+                   const QVector<qint32> &noteFrames,
+                   const QStringList &noteComments) {
+                if (!tbcSource.getIsSourceLoaded()) {
+                    return;
+                }
+
+                const qint32 totalFrames = qMax<qint32>(1, tbcSource.getNumberOfFrames());
+                qint32 clampedIn = (inFrame > 0) ? qBound<qint32>(1, inFrame, totalFrames) : -1;
+                qint32 clampedOut = (outFrame > 0) ? qBound<qint32>(1, outFrame, totalFrames) : -1;
+                if (clampedIn > 0 && clampedOut > 0 && clampedOut < clampedIn) {
+                    clampedOut = clampedIn;
+                }
+
+                QVector<UserNoteMarker> updatedMarkers;
+                updatedMarkers.reserve(noteFrames.size());
+                for (qint32 i = 0; i < noteFrames.size(); ++i) {
+                    const QString noteComment = (i < noteComments.size()) ? noteComments.at(i) : QString();
+                    updatedMarkers.append({noteFrames.at(i), noteComment});
+                }
+                updatedMarkers = normaliseUserNoteMarkers(updatedMarkers, totalFrames);
+
+                LdDecodeMetaData::VideoParameters videoParameters = tbcSource.getVideoParameters();
+                bool changed = false;
+                if (videoParameters.userEditInSelection != clampedIn) {
+                    videoParameters.userEditInSelection = clampedIn;
+                    changed = true;
+                }
+                if (videoParameters.userEditOutSelection != clampedOut) {
+                    videoParameters.userEditOutSelection = clampedOut;
+                    changed = true;
+                }
+                if (applyUserNoteMarkersToVideoParameters(videoParameters, updatedMarkers)) {
+                    changed = true;
+                }
+                if (!changed) {
+                    return;
+                }
+
+                tbcSource.setVideoParameters(videoParameters);
+                ui->actionSave_Metadata->setEnabled(true);
+                updateMetadataStatusPanel();
+                updateTimelineMarkers();
+                updateNotesViewerState();
+            });
     exportDialog = new ExportDialog(this);
     ui->mainTabWidget->addTab(exportDialog, tr("Export"));
     exportDialog->setGenerateProxyEnabledPreference(configuration.getGenerateProxyEnabled());
@@ -844,6 +1195,18 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
                 configuration.setExportProfileConfigPath(configPath);
                 configuration.writeConfiguration();
             });
+
+    notesViewerAction = new QAction(tr("Marker Viewer..."), this);
+    if (ui->menuWindow) {
+        ui->menuWindow->addSeparator();
+        ui->menuWindow->addAction(notesViewerAction);
+    }
+    connect(notesViewerAction, &QAction::triggered, this, [this]() {
+        updateNotesViewerState();
+        notesViewerDialog->show();
+        notesViewerDialog->raise();
+        notesViewerDialog->activateWindow();
+    });
 
     // Add a status bar to show the state of the source video file
     ui->statusBar->addWidget(&sourceVideoStatus);
@@ -1140,6 +1503,9 @@ void MainWindow::setGuiEnabled(bool enabled)
     ui->actionChroma_decoder_configuration->setEnabled(enabled);
     ui->actionReload_TBC->setEnabled(enabled);
     ui->actionOpen_TBC_file->setEnabled(true);
+    if (notesViewerAction) {
+        notesViewerAction->setEnabled(enabled);
+    }
 
     // "Save Metadata" should be disabled by default
     ui->actionSave_Metadata->setEnabled(false);
@@ -1510,6 +1876,8 @@ void MainWindow::updateGuiLoaded()
     } else if (autoResize) {
         resize_on_aspect();
     }
+    updateTimelineMarkers();
+    updateNotesViewerState();
 
     updateMetadataStatusPanel();
 }
@@ -1575,6 +1943,8 @@ void MainWindow::updateGuiUnloaded()
     videoParametersDialog->hide();
     chromaDecoderConfigDialog->hide();
     fieldTimingDialog->hide();
+    updateTimelineMarkers();
+    updateNotesViewerState();
 
     updateMetadataStatusPanel();
     if (exportDialog) {
@@ -2975,6 +3345,87 @@ void MainWindow::setViewValues()
             ui->posNumberSpinBoxLabel->setText(spinLabel);
         }
     }
+
+    updateTimelineMarkers();
+}
+qint32 MainWindow::sliderPositionForFrame(qint32 frameNumber) const
+{
+    if (frameNumber <= 0 || !tbcSource.getIsSourceLoaded()) {
+        return -1;
+    }
+
+    if (tbcSource.getFieldViewEnabled()) {
+        const qint32 totalFields = qMax<qint32>(1, tbcSource.getNumberOfFields());
+        const qint32 fieldPosition = (frameNumber * 2) - 1;
+        return qBound<qint32>(1, fieldPosition, totalFields);
+    }
+
+    const qint32 totalFrames = qMax<qint32>(1, tbcSource.getNumberOfFrames());
+    return qBound<qint32>(1, frameNumber, totalFrames);
+}
+
+qint32 MainWindow::frameForSliderPosition(qint32 sliderPosition) const
+{
+    if (!tbcSource.getIsSourceLoaded()) {
+        return 1;
+    }
+    if (tbcSource.getFieldViewEnabled()) {
+        const qint32 totalFields = qMax<qint32>(1, tbcSource.getNumberOfFields());
+        const qint32 clamped = qBound<qint32>(1, sliderPosition, totalFields);
+        return qBound<qint32>(1, (clamped + 1) / 2, qMax<qint32>(1, tbcSource.getNumberOfFrames()));
+    }
+    return qBound<qint32>(1, sliderPosition, qMax<qint32>(1, tbcSource.getNumberOfFrames()));
+}
+
+void MainWindow::updateTimelineMarkers()
+{
+    if (!timelineMarkerSlider) {
+        return;
+    }
+
+    if (!tbcSource.getIsSourceLoaded()) {
+        timelineMarkerSlider->setMarkerFrames(-1, -1, {});
+        return;
+    }
+    const qint32 totalFrames = qMax<qint32>(1, tbcSource.getNumberOfFrames());
+
+    const LdDecodeMetaData::VideoParameters videoParameters = tbcSource.getVideoParameters();
+    const qint32 inPosition = sliderPositionForFrame(videoParameters.userEditInSelection);
+    const qint32 outPosition = sliderPositionForFrame(videoParameters.userEditOutSelection);
+    const QVector<UserNoteMarker> noteMarkers = userNoteMarkersFromVideoParameters(videoParameters, totalFrames);
+    QVector<qint32> notePositions;
+    notePositions.reserve(noteMarkers.size());
+    for (const UserNoteMarker &noteMarker : noteMarkers) {
+        const qint32 markerPosition = sliderPositionForFrame(noteMarker.frame);
+        if (markerPosition > 0) {
+            notePositions.append(markerPosition);
+        }
+    }
+    timelineMarkerSlider->setMarkerFrames(inPosition, outPosition, notePositions);
+}
+
+void MainWindow::updateNotesViewerState()
+{
+    if (!notesViewerDialog) {
+        return;
+    }
+
+    NotesViewerState state;
+    state.frameRate = timecodeFrameRate();
+    state.frameBaseRate = timecodeFrameBaseRate();
+
+    if (tbcSource.getIsSourceLoaded()) {
+        const qint32 totalFrames = qMax<qint32>(1, tbcSource.getNumberOfFrames());
+        const LdDecodeMetaData::VideoParameters videoParameters = tbcSource.getVideoParameters();
+        state.totalFrames = totalFrames;
+        state.currentFrame = qBound<qint32>(1, currentFrameNumber, totalFrames);
+        state.inFrame = videoParameters.userEditInSelection;
+        state.outFrame = videoParameters.userEditOutSelection;
+        const QVector<UserNoteMarker> noteMarkers = userNoteMarkersFromVideoParameters(videoParameters, totalFrames);
+        noteMarkerListsFromMarkers(noteMarkers, state.noteFrames, state.noteComments);
+    }
+
+    notesViewerDialog->setState(state);
 }
 
 // Set the current frame, field is updated based on frame number
@@ -4610,20 +5061,21 @@ void MainWindow::on_posHorizontalSlider_customContextMenuRequested(const QPoint 
     if (!ui || !ui->posHorizontalSlider || !exportDialog || !tbcSource.getIsSourceLoaded()) {
         return;
     }
-    const int playbackPositionValue = tbcSource.getFieldViewEnabled() ? currentFieldNumber : currentFrameNumber;
-    int framePoint = playbackPositionValue;
-    if (tbcSource.getFieldViewEnabled()) {
-        framePoint = (playbackPositionValue + 1) / 2;
-    }
+    const int clickedSliderValue = sliderValueForContextPoint(ui->posHorizontalSlider, pos);
+    int framePoint = frameForSliderPosition(clickedSliderValue);
     const int totalFrames = qMax(1, tbcSource.getNumberOfFrames());
     framePoint = qBound(1, framePoint, totalFrames);
     const QString framePointTimecode = frameToTimecode(framePoint);
     const LdDecodeMetaData::VideoParameters currentVideoParameters = tbcSource.getVideoParameters();
-    const bool markerSet = currentVideoParameters.userMarkerSelection > 0
-                           && currentVideoParameters.userMarkerSelection <= totalFrames;
-    const int markerFrame = markerSet ? currentVideoParameters.userMarkerSelection : -1;
-    const QString markerTimecode = markerSet ? frameToTimecode(markerFrame) : QString();
-    const bool markerMetadataSet = markerSet || !currentVideoParameters.userMarkerComment.isEmpty();
+    QVector<UserNoteMarker> noteMarkers = userNoteMarkersFromVideoParameters(currentVideoParameters, totalFrames);
+    const qint32 noteIndexAtFrame = noteMarkerIndexForFrame(noteMarkers, framePoint);
+    const bool noteAtFrameSet = noteIndexAtFrame >= 0;
+    const qint32 nearestNoteIndex = nearestNoteMarkerIndexForFrame(noteMarkers, framePoint);
+    const qint32 removableNoteIndex = noteAtFrameSet ? noteIndexAtFrame : nearestNoteIndex;
+    const bool noteRemovalAvailable = removableNoteIndex >= 0;
+    const qint32 removableFrame = noteRemovalAvailable ? noteMarkers.at(removableNoteIndex).frame : 0;
+    const QString removableFrameTimecode = noteRemovalAvailable ? frameToTimecode(removableFrame) : QString();
+    const QString noteCommentAtFrame = noteAtFrameSet ? noteMarkers.at(noteIndexAtFrame).comment : QString();
 
     QMenu sliderMenu(this);
     QAction *setInPointAction = sliderMenu.addAction(tr("Set In Point (%1 | %2)")
@@ -4633,39 +5085,38 @@ void MainWindow::on_posHorizontalSlider_customContextMenuRequested(const QPoint 
                                                          .arg(framePoint)
                                                          .arg(framePointTimecode));
     sliderMenu.addSeparator();
-    QAction *setMarkerAction = sliderMenu.addAction(tr("Set Marker (%1 | %2)")
-                                                        .arg(framePoint)
-                                                        .arg(framePointTimecode));
-    QAction *setMarkerCommentAction = sliderMenu.addAction(tr("Set Marker Comment..."));
-    QAction *editMarkerCommentAction = sliderMenu.addAction(tr("Edit Existing Marker Comment..."));
-    editMarkerCommentAction->setEnabled(markerSet);
-    QAction *clearMarkerAction = sliderMenu.addAction(markerSet
-                                                          ? tr("Clear Marker (%1 | %2)")
-                                                                .arg(markerFrame)
-                                                                .arg(markerTimecode)
-                                                          : tr("Clear Marker"));
-    clearMarkerAction->setEnabled(markerMetadataSet);
+    QAction *setMarkerAction = sliderMenu.addAction(noteAtFrameSet
+                                                        ? tr("Edit Marker (%1 | %2)...")
+                                                              .arg(framePoint)
+                                                              .arg(framePointTimecode)
+                                                        : tr("Add Marker (%1 | %2)...")
+                                                              .arg(framePoint)
+                                                              .arg(framePointTimecode));
+    QAction *removeNoteAction = sliderMenu.addAction(noteRemovalAvailable
+                                                         ? (noteAtFrameSet
+                                                                ? tr("Remove Marker (%1 | %2)")
+                                                                      .arg(removableFrame)
+                                                                      .arg(removableFrameTimecode)
+                                                                : tr("Remove Nearest Marker (%1 | %2)")
+                                                                      .arg(removableFrame)
+                                                                      .arg(removableFrameTimecode))
+                                                         : tr("Remove Marker"));
+    removeNoteAction->setEnabled(noteRemovalAvailable);
+    sliderMenu.addSeparator();
+    QAction *openNotesViewerAction = sliderMenu.addAction(tr("Open Marker Viewer..."));
     QAction *selectedAction = sliderMenu.exec(ui->posHorizontalSlider->mapToGlobal(pos));
     if (!selectedAction) {
         return;
     }
-
-    auto updateMarkerMetadata = [this](qint32 markerSelection, const QString &markerComment) {
+    auto updateMarkerMetadata = [this](const QVector<UserNoteMarker> &updatedNoteMarkers) {
         LdDecodeMetaData::VideoParameters videoParameters = tbcSource.getVideoParameters();
-        bool changed = false;
-        if (videoParameters.userMarkerSelection != markerSelection) {
-            videoParameters.userMarkerSelection = markerSelection;
-            changed = true;
-        }
-        if (videoParameters.userMarkerComment != markerComment) {
-            videoParameters.userMarkerComment = markerComment;
-            changed = true;
-        }
-        if (!changed) {
+        if (!applyUserNoteMarkersToVideoParameters(videoParameters, updatedNoteMarkers)) {
             return false;
         }
         tbcSource.setVideoParameters(videoParameters);
         ui->actionSave_Metadata->setEnabled(true);
+        updateTimelineMarkers();
+        updateNotesViewerState();
         updateMetadataStatusPanel();
         return true;
     };
@@ -4680,50 +5131,47 @@ void MainWindow::on_posHorizontalSlider_customContextMenuRequested(const QPoint 
                                      .arg(framePoint)
                                      .arg(framePointTimecode), 3000);
     } else if (selectedAction == setMarkerAction) {
-        updateMarkerMetadata(framePoint, currentVideoParameters.userMarkerComment);
-        statusBar()->showMessage(tr("Marker set to frame %1 (%2)")
-                                     .arg(framePoint)
-                                     .arg(framePointTimecode), 3000);
-    } else if (selectedAction == setMarkerCommentAction) {
         bool ok = false;
-        const QString initialComment = (markerSet && markerFrame == framePoint)
-            ? currentVideoParameters.userMarkerComment
-            : QString();
         const QString markerComment = QInputDialog::getText(this,
-                                                            tr("Set Marker Comment"),
-                                                            tr("Comment for marker frame %1 (%2):")
+                                                            noteAtFrameSet ? tr("Edit Marker") : tr("Add Marker"),
+                                                            tr("Marker name/comment for frame %1 (%2):")
                                                                 .arg(framePoint)
                                                                 .arg(framePointTimecode),
                                                             QLineEdit::Normal,
-                                                            initialComment,
+                                                            noteCommentAtFrame,
                                                             &ok);
         if (!ok) {
             return;
         }
-        updateMarkerMetadata(framePoint, markerComment.trimmed());
-        statusBar()->showMessage(tr("Marker comment updated at frame %1 (%2)")
-                                     .arg(framePoint)
-                                     .arg(framePointTimecode), 3000);
-    } else if (selectedAction == editMarkerCommentAction && markerSet) {
-        bool ok = false;
-        const QString markerComment = QInputDialog::getText(this,
-                                                            tr("Edit Marker Comment"),
-                                                            tr("Comment for marker frame %1 (%2):")
-                                                                .arg(markerFrame)
-                                                                .arg(markerTimecode),
-                                                            QLineEdit::Normal,
-                                                            currentVideoParameters.userMarkerComment,
-                                                            &ok);
-        if (!ok) {
-            return;
+        const QString trimmedComment = markerComment.trimmed();
+        if (noteAtFrameSet) {
+            noteMarkers[noteIndexAtFrame].comment = trimmedComment;
+        } else {
+            noteMarkers.append({framePoint, trimmedComment});
         }
-        updateMarkerMetadata(markerFrame, markerComment.trimmed());
-        statusBar()->showMessage(tr("Marker comment updated at frame %1 (%2)")
-                                     .arg(markerFrame)
-                                     .arg(markerTimecode), 3000);
-    } else if (selectedAction == clearMarkerAction) {
-        updateMarkerMetadata(-1, QString());
-        statusBar()->showMessage(tr("Marker cleared"), 3000);
+        noteMarkers = normaliseUserNoteMarkers(noteMarkers, totalFrames);
+        if (updateMarkerMetadata(noteMarkers)) {
+            statusBar()->showMessage(tr("Marker saved at frame %1 (%2)")
+                                         .arg(framePoint)
+                                         .arg(framePointTimecode), 3000);
+        }
+    } else if (selectedAction == removeNoteAction && noteRemovalAvailable) {
+        noteMarkers.removeAt(removableNoteIndex);
+        noteMarkers = normaliseUserNoteMarkers(noteMarkers, totalFrames);
+        if (updateMarkerMetadata(noteMarkers)) {
+            statusBar()->showMessage(noteAtFrameSet
+                                         ? tr("Marker removed from frame %1 (%2)")
+                                               .arg(removableFrame)
+                                               .arg(removableFrameTimecode)
+                                         : tr("Nearest marker removed from frame %1 (%2)")
+                                               .arg(removableFrame)
+                                               .arg(removableFrameTimecode), 3000);
+        }
+    } else if (selectedAction == openNotesViewerAction) {
+        updateNotesViewerState();
+        notesViewerDialog->show();
+        notesViewerDialog->raise();
+        notesViewerDialog->activateWindow();
     }
 }
 
@@ -5169,6 +5617,80 @@ void MainWindow::vectorscopeChangedSignalHandler()
     }
 }
 
+void MainWindow::keyPressEvent(QKeyEvent *event)
+{
+    if (!event) {
+        return;
+    }
+
+    const bool markerKeyPressed = (event->key() == Qt::Key_M)
+        && (event->modifiers() == Qt::NoModifier || event->modifiers() == Qt::ShiftModifier);
+    if (!markerKeyPressed) {
+        QMainWindow::keyPressEvent(event);
+        return;
+    }
+    if (event->isAutoRepeat()) {
+        event->accept();
+        return;
+    }
+
+    QWidget *focusWidget = QApplication::focusWidget();
+    const bool typingContext = focusWidget
+        && (qobject_cast<QLineEdit *>(focusWidget)
+            || qobject_cast<QTextEdit *>(focusWidget)
+            || qobject_cast<QPlainTextEdit *>(focusWidget)
+            || qobject_cast<QAbstractSpinBox *>(focusWidget));
+    if (typingContext || !tbcSource.getIsSourceLoaded()) {
+        QMainWindow::keyPressEvent(event);
+        return;
+    }
+
+    const qint32 playbackPositionValue = tbcSource.getFieldViewEnabled() ? currentFieldNumber : currentFrameNumber;
+    const qint32 totalFrames = qMax<qint32>(1, tbcSource.getNumberOfFrames());
+    const qint32 framePoint = qBound<qint32>(1, frameForSliderPosition(playbackPositionValue), totalFrames);
+    const QString framePointTimecode = frameToTimecode(framePoint);
+
+    QVector<UserNoteMarker> noteMarkers = userNoteMarkersFromVideoParameters(tbcSource.getVideoParameters(), totalFrames);
+    const qint32 noteIndexAtFrame = noteMarkerIndexForFrame(noteMarkers, framePoint);
+    const bool noteAtFrameSet = noteIndexAtFrame >= 0;
+    const QString noteCommentAtFrame = noteAtFrameSet ? noteMarkers.at(noteIndexAtFrame).comment : QString();
+
+    bool ok = false;
+    const QString markerComment = QInputDialog::getText(this,
+                                                        noteAtFrameSet ? tr("Edit Marker") : tr("Add Marker"),
+                                                        tr("Marker name/comment for frame %1 (%2):")
+                                                            .arg(framePoint)
+                                                            .arg(framePointTimecode),
+                                                        QLineEdit::Normal,
+                                                        noteCommentAtFrame,
+                                                        &ok);
+    if (!ok) {
+        event->accept();
+        return;
+    }
+
+    const QString trimmedComment = markerComment.trimmed();
+    if (noteAtFrameSet) {
+        noteMarkers[noteIndexAtFrame].comment = trimmedComment;
+    } else {
+        noteMarkers.append({framePoint, trimmedComment});
+    }
+    noteMarkers = normaliseUserNoteMarkers(noteMarkers, totalFrames);
+
+    LdDecodeMetaData::VideoParameters videoParameters = tbcSource.getVideoParameters();
+    if (applyUserNoteMarkersToVideoParameters(videoParameters, noteMarkers)) {
+        tbcSource.setVideoParameters(videoParameters);
+        ui->actionSave_Metadata->setEnabled(true);
+        updateTimelineMarkers();
+        updateNotesViewerState();
+        updateMetadataStatusPanel();
+        statusBar()->showMessage(tr("Marker saved at frame %1 (%2)")
+                                     .arg(framePoint)
+                                     .arg(framePointTimecode), 3000);
+    }
+
+    event->accept();
+}
 // Mouse press event handler
 void MainWindow::mousePressEvent(QMouseEvent *event)
 {
@@ -5392,6 +5914,8 @@ void MainWindow::videoParametersChangedSignalHandler(const LdDecodeMetaData::Vid
     // Update the image viewer
     updateImage();
     updateVideoPushButton();
+    updateTimelineMarkers();
+    updateNotesViewerState();
 
     updateMetadataStatusPanel();
 }
@@ -5429,6 +5953,8 @@ void MainWindow::exportRangeSelectionChangedSignalHandler(int inPoint, int outPo
     tbcSource.setVideoParameters(videoParameters);
 
     ui->actionSave_Metadata->setEnabled(true);
+    updateTimelineMarkers();
+    updateNotesViewerState();
     updateMetadataStatusPanel();
 }
 

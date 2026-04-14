@@ -21,6 +21,7 @@
 #include <QDropEvent>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QHash>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QMimeData>
@@ -73,6 +74,30 @@ public:
     WaitCursorGuard() { QApplication::setOverrideCursor(Qt::WaitCursor); }
     ~WaitCursorGuard() { QApplication::restoreOverrideCursor(); }
 };
+
+QString helpOutputForExecutable(const QString &executablePath)
+{
+    static QHash<QString, QString> helpOutputCache;
+    const QString cacheKey = QDir::cleanPath(executablePath);
+    if (helpOutputCache.contains(cacheKey)) {
+        return helpOutputCache.value(cacheKey);
+    }
+
+    QProcess process;
+    process.setProcessChannelMode(QProcess::MergedChannels);
+    process.start(executablePath, {QStringLiteral("--help")});
+    QString helpOutput;
+    if (process.waitForStarted(2000)) {
+        if (!process.waitForFinished(6000)) {
+            process.kill();
+            process.waitForFinished(1000);
+        }
+        helpOutput = QString::fromLocal8Bit(process.readAllStandardOutput());
+    }
+
+    helpOutputCache.insert(cacheKey, helpOutput);
+    return helpOutput;
+}
 } // namespace
 
 MetadataExportDialog::MetadataExportDialog(QWidget *parent) :
@@ -126,6 +151,8 @@ MetadataExportDialog::MetadataExportDialog(QWidget *parent) :
     };
     connectStatusClearCheckBox(ui->vitsCsvCheckBox);
     connectStatusClearCheckBox(ui->vbiCsvCheckBox);
+    connectStatusClearCheckBox(ui->userMarkersTxtCheckBox);
+    connectStatusClearCheckBox(ui->userMarkersCsvCheckBox);
     connectStatusClearCheckBox(ui->audacityLabelsCheckBox);
     connectStatusClearCheckBox(ui->ffmetadataCheckBox);
     connectStatusClearCheckBox(ui->ffmpegVitcCheckBox);
@@ -137,6 +164,7 @@ MetadataExportDialog::MetadataExportDialog(QWidget *parent) :
             updateFfmetadataControlsEnabled();
         });
     }
+    updateOptionCompatibilityState();
     updateFfmetadataControlsEnabled();
 }
 
@@ -173,6 +201,7 @@ void MetadataExportDialog::setExportExecutablePath(const QString &executablePath
     if (!trimmedPath.isEmpty()) {
         exportExecutablePath = trimmedPath;
     }
+    updateOptionCompatibilityState();
 }
 
 void MetadataExportDialog::setInitialOptions(const InitialOptions &options)
@@ -180,6 +209,8 @@ void MetadataExportDialog::setInitialOptions(const InitialOptions &options)
     ui->inputLineEdit->setText(normalizedPath(options.inputFile));
     ui->vitsCsvCheckBox->setChecked(options.exportVitsCsv);
     ui->vbiCsvCheckBox->setChecked(options.exportVbiCsv);
+    ui->userMarkersTxtCheckBox->setChecked(options.exportUserMarkersTxt);
+    ui->userMarkersCsvCheckBox->setChecked(options.exportUserMarkersCsv);
     ui->audacityLabelsCheckBox->setChecked(options.exportAudacityLabels);
     ui->ffmetadataCheckBox->setChecked(options.exportFfmetadata);
     ui->ffmpegVitcCheckBox->setChecked(options.exportFfmpegVitc);
@@ -189,6 +220,7 @@ void MetadataExportDialog::setInitialOptions(const InitialOptions &options)
     ui->ffmetadataLengthLineEdit->setText(options.ffmetadataLength > 0 ? QString::number(options.ffmetadataLength) : QString());
     ui->debugCheckBox->setChecked(options.debug);
     ui->quietCheckBox->setChecked(options.quiet);
+    updateOptionCompatibilityState();
     updateFfmetadataControlsEnabled();
 
     const QFileInfo inputInfo(ui->inputLineEdit->text());
@@ -352,6 +384,8 @@ void MetadataExportDialog::on_exportButton_clicked()
 
     if (!addOutput(ui->vitsCsvCheckBox, QStringLiteral("--vits-csv"), QStringLiteral("_vits.csv"))
         || !addOutput(ui->vbiCsvCheckBox, QStringLiteral("--vbi-csv"), QStringLiteral("_vbi.csv"))
+        || !addOutput(ui->userMarkersTxtCheckBox, QStringLiteral("--user-markers-txt"), QStringLiteral("_user-markers-log.txt"))
+        || !addOutput(ui->userMarkersCsvCheckBox, QStringLiteral("--user-markers-csv"), QStringLiteral("_user-markers-log.csv"))
         || !addOutput(ui->audacityLabelsCheckBox, QStringLiteral("--audacity-labels"), QStringLiteral("_audacity-labels.txt"))
         || !addOutput(ui->ffmetadataCheckBox, QStringLiteral("--ffmetadata"), QStringLiteral("_ffmetadata.txt"))
         || !addOutput(ui->ffmpegVitcCheckBox, QStringLiteral("--ffmpeg-vitc"), QStringLiteral("_FFmpeg_VITC.txt"))
@@ -558,6 +592,64 @@ bool MetadataExportDialog::isSupportedInputPath(const QString &path) const
         return true;
     }
     return isJsonPath(path);
+}
+
+bool MetadataExportDialog::exportToolSupportsOption(const QString &optionName) const
+{
+    if (optionName.trimmed().isEmpty()) {
+        return false;
+    }
+    const QString executablePath = exportExecutablePath.isEmpty()
+                                       ? QCoreApplication::applicationFilePath()
+                                       : exportExecutablePath;
+    if (executablePath.isEmpty()) {
+        return false;
+    }
+    const QString helpOutput = helpOutputForExecutable(executablePath);
+    if (helpOutput.isEmpty()) {
+        return false;
+    }
+    return helpOutput.contains(optionName);
+}
+
+void MetadataExportDialog::updateOptionCompatibilityState()
+{
+    const bool supportsUserMarkersTxt = exportToolSupportsOption(QStringLiteral("--user-markers-txt"));
+    const bool supportsUserMarkersCsv = exportToolSupportsOption(QStringLiteral("--user-markers-csv"));
+
+    const auto applyCompatibility = [this](QCheckBox *checkBox,
+                                           QLabel *label,
+                                           bool supported,
+                                           const QString &optionName) {
+        if (label) {
+            label->setEnabled(supported);
+        }
+        if (!checkBox) {
+            return;
+        }
+
+        if (!supported) {
+            if (checkBox->isChecked()) {
+                const QSignalBlocker blocker(checkBox);
+                checkBox->setChecked(false);
+            }
+            checkBox->setEnabled(false);
+            checkBox->setToolTip(tr("Unavailable: selected export tool does not support %1.")
+                                     .arg(optionName));
+        } else {
+            checkBox->setEnabled(true);
+            checkBox->setToolTip(QString());
+        }
+    };
+
+    applyCompatibility(ui->userMarkersTxtCheckBox,
+                       ui->userMarkersTxtLabel,
+                       supportsUserMarkersTxt,
+                       QStringLiteral("--user-markers-txt"));
+    applyCompatibility(ui->userMarkersCsvCheckBox,
+                       ui->userMarkersCsvLabel,
+                       supportsUserMarkersCsv,
+                       QStringLiteral("--user-markers-csv"));
 }
 
 void MetadataExportDialog::updateFfmetadataControlsEnabled()

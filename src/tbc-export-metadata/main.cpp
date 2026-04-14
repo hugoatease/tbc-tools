@@ -59,6 +59,8 @@ struct ExportCommandLineOptions {
     QCommandLineOption outputJsonOption;
     QCommandLineOption writeVitsCsvOption;
     QCommandLineOption writeVbiCsvOption;
+    QCommandLineOption writeUserMarkersTxtOption;
+    QCommandLineOption writeUserMarkersCsvOption;
     QCommandLineOption writeAudacityLabelsOption;
     QCommandLineOption writeFfmetadataOption;
     QCommandLineOption writeFfmpegVitcOption;
@@ -89,6 +91,12 @@ struct ExportCommandLineOptions {
         writeVbiCsvOption("vbi-csv",
                           QCoreApplication::translate("main", "Write VBI information as CSV"),
                           QCoreApplication::translate("main", "file")),
+        writeUserMarkersTxtOption("user-markers-txt",
+                                  QCoreApplication::translate("main", "Write user markers as plain text log"),
+                                  QCoreApplication::translate("main", "file")),
+        writeUserMarkersCsvOption("user-markers-csv",
+                                  QCoreApplication::translate("main", "Write user markers as CSV log"),
+                                  QCoreApplication::translate("main", "file")),
         writeAudacityLabelsOption("audacity-labels",
                                   QCoreApplication::translate("main", "Write navigation information as Audacity labels"),
                                   QCoreApplication::translate("main", "file")),
@@ -122,6 +130,8 @@ struct ExportCommandLineOptions {
         parser.addOption(outputJsonOption);
         parser.addOption(writeVitsCsvOption);
         parser.addOption(writeVbiCsvOption);
+        parser.addOption(writeUserMarkersTxtOption);
+        parser.addOption(writeUserMarkersCsvOption);
         parser.addOption(writeAudacityLabelsOption);
         parser.addOption(writeFfmetadataOption);
         parser.addOption(writeFfmpegVitcOption);
@@ -308,6 +318,8 @@ int main(int argc, char *argv[])
         initialOptions.inputFile = resolveInputFilename(parser, options, false);
         initialOptions.exportVitsCsv = parser.isSet(options.writeVitsCsvOption);
         initialOptions.exportVbiCsv = parser.isSet(options.writeVbiCsvOption);
+        initialOptions.exportUserMarkersTxt = parser.isSet(options.writeUserMarkersTxtOption);
+        initialOptions.exportUserMarkersCsv = parser.isSet(options.writeUserMarkersCsvOption);
         initialOptions.exportAudacityLabels = parser.isSet(options.writeAudacityLabelsOption);
         initialOptions.exportFfmetadata = parser.isSet(options.writeFfmetadataOption);
         initialOptions.exportFfmpegVitc = parser.isSet(options.writeFfmpegVitcOption);
@@ -388,6 +400,8 @@ int main(int argc, char *argv[])
     const bool exportJsonRequested = parser.isSet(options.exportJsonOption) || parser.isSet(options.outputJsonOption);
     const bool hasFormatExports = parser.isSet(options.writeVitsCsvOption)
                                   || parser.isSet(options.writeVbiCsvOption)
+                                  || parser.isSet(options.writeUserMarkersTxtOption)
+                                  || parser.isSet(options.writeUserMarkersCsvOption)
                                   || parser.isSet(options.writeAudacityLabelsOption)
                                   || parser.isSet(options.writeFfmetadataOption)
                                   || parser.isSet(options.writeFfmpegVitcOption)
@@ -432,6 +446,20 @@ int main(int argc, char *argv[])
     if (parser.isSet(options.writeVbiCsvOption)) {
         const QString &fileName = parser.value(options.writeVbiCsvOption);
         if (!writeVbiCsv(metaData, fileName)) {
+            qCritical() << "Failed to write output file:" << fileName;
+            return 1;
+        }
+    }
+    if (parser.isSet(options.writeUserMarkersTxtOption)) {
+        const QString &fileName = parser.value(options.writeUserMarkersTxtOption);
+        if (!writeUserMarkersTxt(metaData, fileName)) {
+            qCritical() << "Failed to write output file:" << fileName;
+            return 1;
+        }
+    }
+    if (parser.isSet(options.writeUserMarkersCsvOption)) {
+        const QString &fileName = parser.value(options.writeUserMarkersCsvOption);
+        if (!writeUserMarkersCsv(metaData, fileName)) {
             qCritical() << "Failed to write output file:" << fileName;
             return 1;
         }

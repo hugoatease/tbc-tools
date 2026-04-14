@@ -240,7 +240,7 @@ int main(int argc, char *argv[])
 
     // Option to select which decoder to use (-f)
     QCommandLineOption decoderOption(QStringList() << "f" << "decoder",
-                                     QCoreApplication::translate("main", "Decoder to use (pal2d, transform2d, transform3d, ntsc1d, ntsc2d, ntsc3d, nntransform3d, ntsc3dnoadapt, mono; default automatic)"),
+                                     QCoreApplication::translate("main", "Decoder to use (pal2d, transform2d, transform3d, ntsc1d, ntsc2d, ntsc3d, nntransform3d, nntsc3d, nnTransform3D, ntsc3dnoadapt, mono; default automatic)"),
                                      QCoreApplication::translate("main", "decoder"));
     parser.addOption(decoderOption);
 
@@ -580,7 +580,7 @@ int main(int argc, char *argv[])
         decoderName = parser.value(decoderOption);
     } else if (!videoParameters.chromaDecoder.isEmpty()) {
         const QString metadataDecoder = videoParameters.chromaDecoder.toLower();
-        const QStringList validDecoders = { "pal2d", "transform2d", "transform3d", "ntsc1d", "ntsc2d", "ntsc3d", "nntransform3d", "nntsc3d", "mono" };
+        const QStringList validDecoders = { "pal2d", "transform2d", "transform3d", "ntsc1d", "ntsc2d", "ntsc3d", "nntransform3d", "nntsc3d", "ntsc3dnoadapt", "mono" };
         if (validDecoders.contains(metadataDecoder)) {
             decoderName = metadataDecoder;
         } else {
@@ -645,6 +645,25 @@ int main(int argc, char *argv[])
         combConfig.dimensions = 3;
         combConfig.adaptive = false;
         decoder = std::make_unique<NtscDecoder>(combConfig);
+    } else if (decoderName == "nnTransform3D") {
+        combConfig.dimensions = 3;
+        combConfig.useNNTransform3D = true; 
+        decoder = std::make_unique<NtscDecoder>(combConfig);
+        
+        
+        if (!parser.isSet(threadsOption)) {
+            qInfo() << "==========================================================";
+            qInfo() << "[Auto-Config] NNTransform3D (GPU) filter is active.";
+            qInfo() << "[Auto-Config] Automatically clamping to 1 thread to prevent VRAM overflow.";
+            qInfo() << "==========================================================";
+            maxThreads = 1; 
+        } else if (maxThreads > 3) {
+            
+            qWarning() << "[DANGER] You forced" << maxThreads << "threads with GPU acceleration.";
+            qWarning() << "[DANGER] Your VRAM will likely explode (OOM). Safe limit is 1~2.";
+        }
+        
+
     } else if (decoderName == "mono") {
         decoder = std::make_unique<MonoDecoder>(monoConfig);
     } else {

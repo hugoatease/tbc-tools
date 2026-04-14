@@ -15,6 +15,8 @@ tbc-export-metadata exports and converts metadata from TBC files into various hu
 - `--output-json <file>`: Specify decode export metadata JSON output file
 - `--vits-csv <file>`: Write VITS information as CSV
 - `--vbi-csv <file>`: Write VBI information as CSV  
+- `--user-markers-txt <file>`: Write user markers as plain text log
+- `--user-markers-csv <file>`: Write user markers as CSV log
 - `--audacity-labels <file>`: Write navigation information as Audacity labels
 - `--ffmetadata <file>`: Write navigation information as FFMETADATA1 (includes VITC `timecode` when available)
 - `--ffmpeg-vitc <file>`: Write FFmpeg readvitc filter style VITC text (`lavfi.readvitc.*`) for all frames
@@ -58,6 +60,8 @@ tbc-export-metadata [options] <input>
 - `--output-json <file>`: Specify decode export metadata JSON output file
 - `--vits-csv <file>`: Write VITS information as CSV
 - `--vbi-csv <file>`: Write VBI information as CSV
+- `--user-markers-txt <file>`: Write user markers as plain text log
+- `--user-markers-csv <file>`: Write user markers as CSV log
 - `--audacity-labels <file>`: Write navigation information as Audacity labels
 - `--ffmetadata <file>`: Write navigation information as FFMETADATA1 (includes VITC `timecode` when available)
 - `--ffmpeg-vitc <file>`: Write FFmpeg readvitc filter style VITC text (`lavfi.readvitc.*`) for all frames
@@ -87,6 +91,11 @@ tbc-export-metadata --ffmetadata chapters.txt input.tbc.sqlite
 #### Export FFmpeg-style VITC Text for Every Frame
 ```bash
 tbc-export-metadata --ffmpeg-vitc vitc.txt input.tbc
+```
+
+#### Export User Markers Logs (TXT + CSV)
+```bash
+tbc-export-metadata --user-markers-txt user-markers.txt --user-markers-csv user-markers.csv input.tbc.sqlite
 ```
 
 #### Export Closed Captions

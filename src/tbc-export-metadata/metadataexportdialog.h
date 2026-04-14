@@ -29,6 +29,8 @@ public:
         QString inputFile;
         bool exportVitsCsv = false;
         bool exportVbiCsv = false;
+        bool exportUserMarkersTxt = false;
+        bool exportUserMarkersCsv = false;
         bool exportAudacityLabels = false;
         bool exportFfmetadata = false;
         bool exportFfmpegVitc = false;
@@ -63,6 +65,8 @@ private:
     QString inputBaseName(const QString &inputPath) const;
     bool isJsonPath(const QString &path) const;
     bool isSupportedInputPath(const QString &path) const;
+    bool exportToolSupportsOption(const QString &optionName) const;
+    void updateOptionCompatibilityState();
     void updateFfmetadataControlsEnabled();
 
     Ui::MetadataExportDialog *ui;

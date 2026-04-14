@@ -25,6 +25,7 @@
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
 #include <QDropEvent>
+#include <QKeyEvent>
 #include <QRect>
 #include <QTimer>
 #include <QVector>
@@ -56,6 +57,8 @@ class MainWindow;
 }
 class AudioAlignmentDialog;
 class MetadataExportDialog;
+class NotesViewerDialog;
+class TimelineMarkerSlider;
 
 class MainWindow : public QMainWindow
 {
@@ -155,6 +158,7 @@ private slots:
 	// UI handler
 	void resize_on_aspect();
 protected:
+    void keyPressEvent(QKeyEvent *event) override;
     bool event(QEvent *event) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
     void dragEnterEvent(QDragEnterEvent *event) override;
@@ -211,6 +215,7 @@ private:
     ExportDialog *exportDialog;
     AudioAlignmentDialog *audioAlignmentDialog = nullptr;
     MetadataExportDialog *metadataExportDialog = nullptr;
+    NotesViewerDialog *notesViewerDialog = nullptr;
 
     // Class globals
     Configuration configuration;
@@ -323,11 +328,17 @@ private:
     QActionGroup *themesActionGroup = nullptr;
     QAction *saveAllModesPngAction = nullptr;
     QAction *copyCurrentDisplayAction = nullptr;
+    QAction *notesViewerAction = nullptr;
     QPushButton *vectorscopeSelectionPushButton = nullptr;
+    TimelineMarkerSlider *timelineMarkerSlider = nullptr;
     UiStateSnapshot pendingUiStateSnapshot;
     bool restoreUiStateAfterReload = false;
     QString pendingSourceOpenFilename;
     bool sourceOperationInProgress = false;
+    void updateTimelineMarkers();
+    void updateNotesViewerState();
+    qint32 sliderPositionForFrame(qint32 frameNumber) const;
+    qint32 frameForSliderPosition(qint32 sliderPosition) const;
     QFutureWatcher<QImage> asyncFrameRenderWatcher;
     bool asyncFrameRenderInProgress = false;
     bool asyncFrameRenderQueued = false;
