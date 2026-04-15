@@ -1,62 +1,81 @@
 # ==========================================
 # 1. Enable CUDA support and architecture configuration
 # ==========================================
-# Enable CUDA language in this submodule
-enable_language(CUDA)
-set(CMAKE_CUDA_RUNTIME_LIBRARY Shared)
-# NVCC 11.8 needs an older host compiler for compilation, but CMake can propagate that
-# host compiler's runtime search paths into non-CUDA executable links. This causes
-# libstdc++/libgcc symbol ABI mismatches when the rest of the project uses a newer C++ toolchain.
-# Keep CUDA-specific paths while stripping GCC 11 runtime directories from implicit CUDA link paths.
-function(_sanitize_cuda_implicit_link_dirs input_var output_var)
-    set(_sanitized)
-    foreach(_entry IN LISTS ${input_var})
-        if(_entry STREQUAL "")
-            continue()
+option(LDCHROMA_ENABLE_CUDA "Enable CUDA acceleration for ld-chroma-decoder when available" ON)
+set(LDCHROMA_HAS_CUDA OFF)
+if(LDCHROMA_ENABLE_CUDA)
+    include(CheckLanguage)
+    check_language(CUDA)
+    if(CMAKE_CUDA_COMPILER)
+        enable_language(CUDA)
+        set(LDCHROMA_HAS_CUDA ON)
+        set(CMAKE_CUDA_RUNTIME_LIBRARY Shared)
+
+        # NVCC 11.8 needs an older host compiler for compilation, but CMake can propagate that
+        # host compiler's runtime search paths into non-CUDA executable links. This causes
+        # libstdc++/libgcc symbol ABI mismatches when the rest of the project uses a newer C++ toolchain.
+        # Keep CUDA-specific paths while stripping GCC 11 runtime directories from implicit CUDA link paths.
+        function(_sanitize_cuda_implicit_link_dirs input_var output_var)
+            set(_sanitized)
+            foreach(_entry IN LISTS ${input_var})
+                if(_entry STREQUAL "")
+                    continue()
+                endif()
+
+                # Some NVCC/CMake detections return malformed combined entries like
+                # ".../lib64-L.../nvvm/lib". Split these into individual paths.
+                string(REPLACE "-L" ";" _expanded_entries "${_entry}")
+                foreach(_expanded_entry IN LISTS _expanded_entries)
+                    if(_expanded_entry STREQUAL "")
+                        continue()
+                    endif()
+                    if(_expanded_entry MATCHES "([/-])gcc-11(\\.|-)" OR
+                       _expanded_entry MATCHES "([/-])gcc-wrapper-11(\\.|-)" OR
+                       _expanded_entry MATCHES "/lib/gcc/.*/11\\.")
+                        continue()
+                    endif()
+                    if(NOT _expanded_entry IN_LIST _sanitized)
+                        list(APPEND _sanitized "${_expanded_entry}")
+                    endif()
+                endforeach()
+            endforeach()
+            set(${output_var} "${_sanitized}" PARENT_SCOPE)
+        endfunction()
+
+        _sanitize_cuda_implicit_link_dirs(CMAKE_CUDA_HOST_IMPLICIT_LINK_DIRECTORIES _cuda_host_link_dirs_sanitized)
+        if(_cuda_host_link_dirs_sanitized)
+            set(CMAKE_CUDA_HOST_IMPLICIT_LINK_DIRECTORIES "${_cuda_host_link_dirs_sanitized}")
         endif()
 
-        # Some NVCC/CMake detections return malformed combined entries like
-        # ".../lib64-L.../nvvm/lib". Split these into individual paths.
-        string(REPLACE "-L" ";" _expanded_entries "${_entry}")
-        foreach(_expanded_entry IN LISTS _expanded_entries)
-            if(_expanded_entry STREQUAL "")
-                continue()
-            endif()
-            if(_expanded_entry MATCHES "([/-])gcc-11(\\.|-)" OR
-               _expanded_entry MATCHES "([/-])gcc-wrapper-11(\\.|-)" OR
-               _expanded_entry MATCHES "/lib/gcc/.*/11\\.")
-                continue()
-            endif()
-            if(NOT _expanded_entry IN_LIST _sanitized)
-                list(APPEND _sanitized "${_expanded_entry}")
-            endif()
-        endforeach()
-    endforeach()
-    set(${output_var} "${_sanitized}" PARENT_SCOPE)
-endfunction()
+        _sanitize_cuda_implicit_link_dirs(CMAKE_CUDA_IMPLICIT_LINK_DIRECTORIES _cuda_link_dirs_sanitized)
+        if(_cuda_link_dirs_sanitized)
+            set(CMAKE_CUDA_IMPLICIT_LINK_DIRECTORIES "${_cuda_link_dirs_sanitized}")
+        endif()
 
-_sanitize_cuda_implicit_link_dirs(CMAKE_CUDA_HOST_IMPLICIT_LINK_DIRECTORIES _cuda_host_link_dirs_sanitized)
-if(_cuda_host_link_dirs_sanitized)
-    set(CMAKE_CUDA_HOST_IMPLICIT_LINK_DIRECTORIES "${_cuda_host_link_dirs_sanitized}")
+        unset(_cuda_host_link_dirs_sanitized)
+        unset(_cuda_link_dirs_sanitized)
+
+        # Set minimum GPU architecture to Pascal (61 = GTX 1000 series), while including newer architectures
+        set(CMAKE_CUDA_ARCHITECTURES 61 75 86 89)
+        set(CMAKE_CUDA_STANDARD 17)
+        set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+        find_package(CUDAToolkit REQUIRED)
+    else()
+        message(STATUS "CUDA compiler not found; building ld-chroma-decoder without CUDA kernel acceleration")
+    endif()
+else()
+    message(STATUS "LDCHROMA_ENABLE_CUDA=OFF; building ld-chroma-decoder without CUDA kernel acceleration")
 endif()
 
-_sanitize_cuda_implicit_link_dirs(CMAKE_CUDA_IMPLICIT_LINK_DIRECTORIES _cuda_link_dirs_sanitized)
-if(_cuda_link_dirs_sanitized)
-    set(CMAKE_CUDA_IMPLICIT_LINK_DIRECTORIES "${_cuda_link_dirs_sanitized}")
+if(LDCHROMA_HAS_CUDA)
+    add_compile_definitions(LDCHROMA_HAS_CUDA=1)
+else()
+    add_compile_definitions(LDCHROMA_HAS_CUDA=0)
 endif()
-
-unset(_cuda_host_link_dirs_sanitized)
-unset(_cuda_link_dirs_sanitized)
-
-# Set minimum GPU architecture to Pascal (61 = GTX 1000 series), while including newer architectures
-set(CMAKE_CUDA_ARCHITECTURES 61 75 86 89)
-set(CMAKE_CUDA_STANDARD 17)
-set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
 # ==========================================
 # 2. Locate external deep-learning and GPU dependencies
 # ==========================================
-find_package(CUDAToolkit REQUIRED)
 
 find_path(ONNXRUNTIME_INCLUDE_DIR NAMES onnxruntime_cxx_api.h PATHS ${ONNXRUNTIME_ROOT}/include $ENV{ONNXRUNTIME_ROOT}/include)
 find_library(ONNXRUNTIME_LIBRARY NAMES onnxruntime PATHS ${ONNXRUNTIME_ROOT}/lib $ENV{ONNXRUNTIME_ROOT}/lib)
@@ -92,7 +111,7 @@ file(WRITE "${_nn_model_source}"
     "const unsigned char kChromaNetV2OnnxData[] = {${_nn_model_array}};\n"
     "const std::size_t kChromaNetV2OnnxDataSize = ${_nn_model_size};\n")
 
-add_library(lddecode-chroma STATIC
+set(lddecode_chroma_sources
     decoder.cpp
     decoderpool.cpp
     comb.cpp
@@ -105,9 +124,21 @@ add_library(lddecode-chroma STATIC
     transformpal2d.cpp
     transformpal3d.cpp
     monodecoder.cpp
-    nnTransform3D_kernel.cu
+)
+if(LDCHROMA_HAS_CUDA)
+    list(APPEND lddecode_chroma_sources nnTransform3D_kernel.cu)
+endif()
+
+add_library(lddecode-chroma STATIC
+    ${lddecode_chroma_sources}
     ${_nn_model_source}
 )
+if(LDCHROMA_HAS_CUDA)
+    target_link_libraries(lddecode-chroma PRIVATE
+        CUDA::cufft
+        CUDA::cudart
+    )
+endif()
 
 target_include_directories(lddecode-chroma PUBLIC
     .
@@ -119,8 +150,6 @@ target_link_libraries(lddecode-chroma PRIVATE
     ${FFTW_LIBRARY}
     onnxruntime::onnxruntime
     lddecode-library
-    CUDA::cufft
-    CUDA::cudart
 )
 
 target_include_directories(lddecode-chroma PRIVATE ${FFTW_INCLUDE_DIR})
@@ -146,8 +175,12 @@ target_link_libraries(ld-chroma-decoder PRIVATE
     onnxruntime::onnxruntime
     lddecode-library
     lddecode-chroma
-    CUDA::cufft
-    CUDA::cudart
 )
+if(LDCHROMA_HAS_CUDA)
+    target_link_libraries(ld-chroma-decoder PRIVATE
+        CUDA::cufft
+        CUDA::cudart
+    )
+endif()
 
 install(TARGETS ld-chroma-decoder)

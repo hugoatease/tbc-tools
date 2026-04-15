@@ -58,7 +58,6 @@
           cudaPackages.libcurand
           cudaPackages.libcublas
           cudaCudnnPackage
-          pkgs.stdenv.cc.cc.lib
         ];
         runtimeLibraryPath = pkgs.lib.optionalString isLinux (pkgs.lib.makeLibraryPath ([ onnxruntimePackage ] ++ cudaRuntimeDependencies));
       in
@@ -84,7 +83,7 @@
             src = ./.;
             filter = path: type:
               let
-                base = pkgs.lib.baseNameOf path;
+                base = builtins.baseNameOf path;
               in
                 !(base == ".git" || base == "build" || base == "result");
           };

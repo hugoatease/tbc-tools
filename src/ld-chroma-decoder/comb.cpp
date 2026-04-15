@@ -35,12 +35,14 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <dlfcn.h>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <utility>
 #include <vector>
+#ifdef __linux__
+#include <dlfcn.h>
+#endif
 
 #include <fftw3.h>
 #include <onnxruntime_cxx_api.h>
@@ -53,11 +55,15 @@
 
 
 #include <iostream>
+#if LDCHROMA_HAS_CUDA
 #include <cuda_runtime.h>
+#endif
 // Constants
+#if LDCHROMA_HAS_CUDA
 const int FRAME_WIDTH = 910;
 const int FRAME_HEIGHT = 526;
 const int Nx = 16, Ny = 16, Nt = 4;
+#endif
 
 // Indexes for the candidates considered in 3D adaptive mode
 enum CandidateIndex : qint32 {
@@ -329,7 +335,6 @@ bool appendCudaExecutionProvider(Ort::SessionOptions &options, QString &errorMes
         { "tunable_op_tuning_enable", "0" },
         { "use_tf32", "0" },
         { "prefer_nhwc", "0" },
-        { "fuse_conv_bias", "0" },
     };
 
     const std::vector<std::pair<const char *, const char *>> compatibilityEntries = {
@@ -496,17 +501,29 @@ void Comb::decodeFrames(const QVector<SourceField>& inputFields, qint32 startInd
     auto previousFrameBuffer = std::make_unique<FrameBuffer>(videoParameters, configuration);
 
     // ================= 1. Initialize GPU filter engine =================
+    bool useGpuNnTransform3D = configuration.useNNTransform3D;
+#if LDCHROMA_HAS_CUDA
     std::unique_ptr<nnTransform3DCUDA> gpuFilter;
+#else
+    if (useGpuNnTransform3D) {
+        static std::once_flag gpuUnavailableWarningOnce;
+        std::call_once(gpuUnavailableWarningOnce, []() {
+            qWarning() << "nnTransform3D CUDA kernel path requested but this build does not include CUDA kernels; falling back to non-CUDA path";
+        });
+        useGpuNnTransform3D = false;
+    }
+#endif
     std::vector<double> gpuOutChromaDouble;
-
-    if (configuration.useNNTransform3D) {
+ #if LDCHROMA_HAS_CUDA
+    if (useGpuNnTransform3D) {
         gpuFilter = std::make_unique<nnTransform3DCUDA>(
             videoParameters.activeVideoStart,
             videoParameters.activeVideoEnd,
             "chroma_net.onnx"
         );
-        gpuOutChromaDouble.resize(910 * 526);
+        gpuOutChromaDouble.resize(FRAME_WIDTH * FRAME_HEIGHT);
     }
+ #endif
     // ==========================================================
 
     const qint32 preStartIndex = (configuration.dimensions == 3) ? startIndex - 4 : startIndex - 2;
@@ -525,8 +542,10 @@ void Comb::decodeFrames(const QVector<SourceField>& inputFields, qint32 startInd
             nextFrameBuffer->loadFields(inputFields[fieldIndex + 2], inputFields[fieldIndex + 3]);
 
             // ================= 2. Feed data to the GPU =================
-            if (configuration.useNNTransform3D) {
+            if (useGpuNnTransform3D) {
+#if LDCHROMA_HAS_CUDA
                 gpuFilter->processFrame(nextFrameBuffer->getRawBuffer(), gpuOutChromaDouble.data());
+#endif
             }
             else {
                 nextFrameBuffer->split1D();
@@ -534,9 +553,11 @@ void Comb::decodeFrames(const QVector<SourceField>& inputFields, qint32 startInd
             }
             // ===================================================
         }
-        else if (configuration.useNNTransform3D) {
+        else if (useGpuNnTransform3D) {
             // At end-of-file, pass nullptr to flush the GPU padding path
+#if LDCHROMA_HAS_CUDA
             gpuFilter->processFrame(nullptr, gpuOutChromaDouble.data());
+#endif
         }
 
         if (fieldIndex < startIndex) {
@@ -544,7 +565,7 @@ void Comb::decodeFrames(const QVector<SourceField>& inputFields, qint32 startInd
         }
 
         // ================= 3. Collect 3D chroma result =================
-        if (configuration.useNNTransform3D) {
+        if (useGpuNnTransform3D) {
             currentFrameBuffer->applyGPUChroma(gpuOutChromaDouble.data(), videoParameters.activeVideoStart, videoParameters.activeVideoEnd, videoParameters.firstActiveFrameLine, videoParameters.lastActiveFrameLine);
         }
         else if (configuration.dimensions == 3) {
@@ -1294,6 +1315,7 @@ void Comb::FrameBuffer::applyGPUChroma(const double* gpuOutChromaDouble, qint32 
         }
     }
 }
+#if LDCHROMA_HAS_CUDA
 
 
 nnTransform3DCUDA::nnTransform3DCUDA(int activeStart, int activeEnd, const char* modelPath)
@@ -1459,6 +1481,7 @@ void nnTransform3DCUDA::processFrame(const uint16_t* inputFrame, double* outChro
         }
     }
 }
+#endif
 
 
 

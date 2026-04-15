@@ -27,6 +27,9 @@
 
 #ifndef COMB_H
 #define COMB_H
+#ifndef LDCHROMA_HAS_CUDA
+#define LDCHROMA_HAS_CUDA 0
+#endif
 
 #include <QCoreApplication>
 #include <QDebug>
@@ -44,6 +47,7 @@
 #include <vector>
 #include <memory>
 #include <onnxruntime_cxx_api.h>
+#if LDCHROMA_HAS_CUDA
 #include <cufft.h>
 
 // Forward declaration; implementation is in the .cu file
@@ -103,6 +107,7 @@ private:
     void allocateFrameBuffer(InternalFrame& f);
     void resetFrameOLA(InternalFrame& f);
 };
+#endif
 
 class Comb
 {
