@@ -23,6 +23,7 @@
         };
         ezpwdSrc = ezpwd;
         isLinux = pkgsUnstable.stdenv.hostPlatform.isLinux;
+        isDarwin = pkgsUnstable.stdenv.hostPlatform.isDarwin;
         pkgs = if isLinux then legacyPkgs else pkgsUnstable;
         # Vendor older CUDA package sets from legacy nixpkgs for Pascal/GTX 1000 support.
         # Keep both sets available; default to CUDA 11.8 for pre-Volta compatibility.
@@ -120,7 +121,7 @@
             "-DEZPWD_DIR=${ezpwdSrc}/c++"
             "-DAPP_BRANCH=${branch}"
             "-DAPP_COMMIT=${nixCommit}"
-          ] ++ pkgs.lib.optionals (!isLinux) [
+          ] ++ pkgs.lib.optionals isDarwin [
             "-DLDCHROMA_ENABLE_CUDA=OFF"
           ] ++ pkgs.lib.optionals isLinux [
             "-DCUDAToolkit_ROOT=${cudaPackages.cudatoolkit}"
