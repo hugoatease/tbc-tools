@@ -1,7 +1,17 @@
 # ==========================================
 # 1. Enable CUDA support and architecture configuration
 # ==========================================
-option(LDCHROMA_ENABLE_CUDA "Enable CUDA acceleration for ld-chroma-decoder when available" ON)
+set(_ldchroma_enable_cuda_default ON)
+if(APPLE)
+    set(_ldchroma_enable_cuda_default OFF)
+endif()
+option(LDCHROMA_ENABLE_CUDA "Enable CUDA acceleration for ld-chroma-decoder when available" ${_ldchroma_enable_cuda_default})
+unset(_ldchroma_enable_cuda_default)
+
+if(APPLE AND LDCHROMA_ENABLE_CUDA)
+    message(STATUS "CUDA acceleration is currently unsupported on macOS; forcing LDCHROMA_ENABLE_CUDA=OFF")
+    set(LDCHROMA_ENABLE_CUDA OFF CACHE BOOL "Enable CUDA acceleration for ld-chroma-decoder when available" FORCE)
+endif()
 set(LDCHROMA_HAS_CUDA OFF)
 if(LDCHROMA_ENABLE_CUDA)
     include(CheckLanguage)

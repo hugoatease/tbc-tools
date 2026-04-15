@@ -699,7 +699,15 @@ bool Comb::FrameBuffer::split3DnnTransform(FrameBuffer &nextFrame, qint32 frameI
                 }
             };
 
+            #if defined(__APPLE__)
+            const bool allowCuda = false;
+            if (providerPreference == NnExecutionProviderPreference::Cuda) {
+                qWarning() << "Ignoring" << kNnProviderEnvVar
+                           << "=cuda on macOS; using CPU provider";
+            }
+            #else
             const bool allowCuda = providerPreference != NnExecutionProviderPreference::Cpu;
+            #endif
 
             if (allowCuda) {
                 Ort::SessionOptions cudaOptions;

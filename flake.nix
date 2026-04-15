@@ -120,6 +120,8 @@
             "-DEZPWD_DIR=${ezpwdSrc}/c++"
             "-DAPP_BRANCH=${branch}"
             "-DAPP_COMMIT=${nixCommit}"
+          ] ++ pkgs.lib.optionals (!isLinux) [
+            "-DLDCHROMA_ENABLE_CUDA=OFF"
           ] ++ pkgs.lib.optionals isLinux [
             "-DCUDAToolkit_ROOT=${cudaPackages.cudatoolkit}"
             "-DCMAKE_CUDA_HOST_COMPILER=${cudaHostCompiler}/bin/g++"
