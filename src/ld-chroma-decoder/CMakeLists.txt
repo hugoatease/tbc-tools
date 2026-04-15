@@ -1,16 +1,60 @@
 # ==========================================
-# 1. 启用 CUDA 支持与架构配置
+# 1. Enable CUDA support and architecture configuration
 # ==========================================
-# 在子模块中动态启用 CUDA 语言
+# Enable CUDA language in this submodule
 enable_language(CUDA)
+set(CMAKE_CUDA_RUNTIME_LIBRARY Shared)
+# NVCC 11.8 needs an older host compiler for compilation, but CMake can propagate that
+# host compiler's runtime search paths into non-CUDA executable links. This causes
+# libstdc++/libgcc symbol ABI mismatches when the rest of the project uses a newer C++ toolchain.
+# Keep CUDA-specific paths while stripping GCC 11 runtime directories from implicit CUDA link paths.
+function(_sanitize_cuda_implicit_link_dirs input_var output_var)
+    set(_sanitized)
+    foreach(_entry IN LISTS ${input_var})
+        if(_entry STREQUAL "")
+            continue()
+        endif()
 
-# 设定现代 GPU 架构 (75=20系, 86=30系, 89=40系)，防止 atomicAdd 报错
-set(CMAKE_CUDA_ARCHITECTURES 75 86 89)
+        # Some NVCC/CMake detections return malformed combined entries like
+        # ".../lib64-L.../nvvm/lib". Split these into individual paths.
+        string(REPLACE "-L" ";" _expanded_entries "${_entry}")
+        foreach(_expanded_entry IN LISTS _expanded_entries)
+            if(_expanded_entry STREQUAL "")
+                continue()
+            endif()
+            if(_expanded_entry MATCHES "([/-])gcc-11(\\.|-)" OR
+               _expanded_entry MATCHES "([/-])gcc-wrapper-11(\\.|-)" OR
+               _expanded_entry MATCHES "/lib/gcc/.*/11\\.")
+                continue()
+            endif()
+            if(NOT _expanded_entry IN_LIST _sanitized)
+                list(APPEND _sanitized "${_expanded_entry}")
+            endif()
+        endforeach()
+    endforeach()
+    set(${output_var} "${_sanitized}" PARENT_SCOPE)
+endfunction()
+
+_sanitize_cuda_implicit_link_dirs(CMAKE_CUDA_HOST_IMPLICIT_LINK_DIRECTORIES _cuda_host_link_dirs_sanitized)
+if(_cuda_host_link_dirs_sanitized)
+    set(CMAKE_CUDA_HOST_IMPLICIT_LINK_DIRECTORIES "${_cuda_host_link_dirs_sanitized}")
+endif()
+
+_sanitize_cuda_implicit_link_dirs(CMAKE_CUDA_IMPLICIT_LINK_DIRECTORIES _cuda_link_dirs_sanitized)
+if(_cuda_link_dirs_sanitized)
+    set(CMAKE_CUDA_IMPLICIT_LINK_DIRECTORIES "${_cuda_link_dirs_sanitized}")
+endif()
+
+unset(_cuda_host_link_dirs_sanitized)
+unset(_cuda_link_dirs_sanitized)
+
+# Set minimum GPU architecture to Pascal (61 = GTX 1000 series), while including newer architectures
+set(CMAKE_CUDA_ARCHITECTURES 61 75 86 89)
 set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
 # ==========================================
-# 2. 查找外部深度学习与 GPU 依赖
+# 2. Locate external deep-learning and GPU dependencies
 # ==========================================
 find_package(CUDAToolkit REQUIRED)
 
@@ -22,7 +66,7 @@ if(NOT ONNXRUNTIME_INCLUDE_DIR OR NOT ONNXRUNTIME_LIBRARY)
 endif()
 
 # ==========================================
-# 3. 原始构建逻辑 (融合 GPU 滤镜)
+# 3. Core build logic (integrating GPU filtering)
 # ==========================================
 # For M_PI constant
 add_compile_definitions(_USE_MATH_DEFINES)
@@ -82,7 +126,7 @@ target_link_libraries(lddecode-chroma PRIVATE
 target_include_directories(lddecode-chroma PRIVATE ${FFTW_INCLUDE_DIR})
 
 # ==========================================
-# 4. 可执行文件构建 (ld-chroma-decoder)
+# 4. Executable target (ld-chroma-decoder)
 # ==========================================
 add_executable(ld-chroma-decoder
     decoder.cpp

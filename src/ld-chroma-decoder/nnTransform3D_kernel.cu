@@ -4,12 +4,12 @@
 
 
 
-// 这是一个运行在 GPU 上的核函数
+// GPU kernel
 __global__ void applyMaskKernel(cufftDoubleComplex* d_out_batch, const float* d_mask, int total_elements) {
-    // 获取当前 GPU 线程的全局唯一 ID
+    // Compute global thread index
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     
-    // 防御性边界检查
+    // Defensive bounds check
     if (idx < total_elements) {
         float gain = d_mask[idx];
         d_out_batch[idx].x *= gain;
@@ -17,15 +17,15 @@ __global__ void applyMaskKernel(cufftDoubleComplex* d_out_batch, const float* d_
     }
 }
 
-// 运行在 GPU 上的核函数：极速计算 Magnitude 和对称特征 (RefMag)
+// GPU kernel: compute Magnitude and reflected feature map (RefMag)
 __global__ void calcMagnitudeKernel(const cufftDoubleComplex* d_out_batch, float* d_trt_input, int num_blocks, int block_size) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx >= num_blocks * block_size) return;
 
-    int b = idx / block_size;  // 当前处于第几个 block
-    int i = idx % block_size;  // 当前在 block 内的偏移量
+    int b = idx / block_size;  // Block index
+    int i = idx % block_size;  // Offset inside block
 
-    // 维度解码
+    // Decode tensor coordinates
     int Nx = 16, Ny = 16, Nt = 4;
     int t = i / (Ny * Nx);
     int rem = i % (Ny * Nx);
@@ -35,24 +35,24 @@ __global__ void calcMagnitudeKernel(const cufftDoubleComplex* d_out_batch, float
     // Channel 0: Mag
     double mag = sqrt(d_out_batch[idx].x * d_out_batch[idx].x + d_out_batch[idx].y * d_out_batch[idx].y);
 
-    // Channel 1: RefMag (处理对称翻转)
+    // Channel 1: RefMag (reflected coordinates)
     int ref_t = (2 - t) % 4; if (ref_t < 0) ref_t += 4;
     int ref_y = (16 - y) % 16;
     int ref_x = (8 - x) % 16; if (ref_x < 0) ref_x += 16;
     int idx_ref = b * block_size + (ref_t * Ny * Nx + ref_y * Nx + ref_x);
     double mag_ref = sqrt(d_out_batch[idx_ref].x * d_out_batch[idx_ref].x + d_out_batch[idx_ref].y * d_out_batch[idx_ref].y);
 
-    // 写入 TensorRT 输入张量显存
-    // 数据形状: [num_blocks, 2, Nt, Ny, Nx]
-    int out_idx_0 = b * (2 * block_size) + 0 * block_size + i; // Channel 0 偏移
-    int out_idx_1 = b * (2 * block_size) + 1 * block_size + i; // Channel 1 偏移
+    // Write into TensorRT input tensor memory
+    // Data shape: [num_blocks, 2, Nt, Ny, Nx]
+    int out_idx_0 = b * (2 * block_size) + 0 * block_size + i; // Channel 0 offset
+    int out_idx_1 = b * (2 * block_size) + 1 * block_size + i; // Channel 1 offset
 
-    // 顺手做掉除以 65536.0 的归一化操作
+    // Apply normalization
     d_trt_input[out_idx_0] = (float)(mag / 128.0);
     d_trt_input[out_idx_1] = (float)(mag_ref / 128.0);
 }
 
-// 核函数 1：让 5000 个线程各自算自己 Block 的 DC (平均值)
+// Kernel 1: each thread computes the DC (mean) for one block
 __global__ void calcDCKernel(const uint16_t* d_cvbs_f0, const uint16_t* d_cvbs_f1, bool pad_f0, bool pad_f1,
                              const int* d_ledger_y, const int* d_ledger_x, double* d_ledger_dc, 
                              int num_blocks, int activeStartX, int activeEndX) {
@@ -84,7 +84,7 @@ __global__ void calcDCKernel(const uint16_t* d_cvbs_f0, const uint16_t* d_cvbs_f
     d_ledger_dc[b] = (pixelCount > 0) ? (blockDC / pixelCount) : 0.0;
 }
 
-// 核函数 2：瞬间完成去直流、加窗、打包
+// Kernel 2: remove DC, apply window, and pack in one pass
 __global__ void packAndWindowKernel(const uint16_t* d_cvbs_f0, const uint16_t* d_cvbs_f1, bool pad_f0, bool pad_f1,
                                     cufftDoubleComplex* d_in_batch, const int* d_ledger_y, const int* d_ledger_x, const double* d_ledger_dc,
                                     const double* d_winT, const double* d_winY, const double* d_winX,
@@ -110,7 +110,7 @@ __global__ void packAndWindowKernel(const uint16_t* d_cvbs_f0, const uint16_t* d
     d_in_batch[idx].y = 0.0;
 }
 
-// 核函数 3：显存内安全叠接相加 (OLA)
+// Kernel 3: safe overlap-add accumulation (OLA) in device memory
 __global__ void olaKernel(const cufftDoubleComplex* d_in_batch, double* d_accChroma_f0, double* d_accChroma_f1,
                           double* d_weightSum_f0, double* d_weightSum_f1, bool pad_f0, bool pad_f1,
                           const int* d_ledger_y, const int* d_ledger_x, const double* d_winT, const double* d_winY, const double* d_winX,
@@ -131,7 +131,7 @@ __global__ void olaKernel(const cufftDoubleComplex* d_in_batch, double* d_accChr
         double w = d_winT[t] * d_winY[dy] * d_winX[dx];
         int frame_idx = absY * 910 + absX;
 
-        // 原子加法：防止几万个线程同时写入同一个像素发生冲突！
+        // Atomic add: prevents write conflicts when many threads target the same pixel
         atomicAdd((t < 2) ? &d_accChroma_f0[frame_idx] : &d_accChroma_f1[frame_idx], val * w);
         atomicAdd((t < 2) ? &d_weightSum_f0[frame_idx] : &d_weightSum_f1[frame_idx], w * w);
     }
@@ -148,7 +148,7 @@ __global__ void olaKernel(const cufftDoubleComplex* d_in_batch, double* d_accChr
 
 
 
-// C++ 端调用的 Wrapper
+// C++ wrapper entry point
 void launch_nnTransform3D_CUDA(
     uint16_t* d_cvbs_f0, uint16_t* d_cvbs_f1, bool pad_f0, bool pad_f1,
     double* d_accChroma_f0, double* d_accChroma_f1, double* d_weightSum_f0, double* d_weightSum_f1,
@@ -162,25 +162,25 @@ void launch_nnTransform3D_CUDA(
     int blocksForDC = (num_blocks + 255) / 256;
     int total_elements = num_blocks * block_size;
     int blocksForAll = (total_elements + 255) / 256;
-    int Nt = 4, Ny = 16, Nx = 16; // 这里保持与网络结构一致
+    int Nt = 4, Ny = 16, Nx = 16; // Keep this consistent with the network structure
 
-    // 1. 计算 DC
+    // 1. Compute DC
     calcDCKernel<<<blocksForDC, 256>>>(d_cvbs_f0, d_cvbs_f1, pad_f0, pad_f1, 
                                        d_ledger_y, d_ledger_x, d_ledger_dc, num_blocks, activeStartX, activeEndX);
 
-    // 2. 打包与加窗
+    // 2. Pack and apply window
     packAndWindowKernel<<<blocksForAll, 256>>>(d_cvbs_f0, d_cvbs_f1, pad_f0, pad_f1, d_in_batch,
                                                d_ledger_y, d_ledger_x, d_ledger_dc, d_winT, d_winY, d_winX,
                                                num_blocks, block_size, activeStartX, activeEndX);
     
-    // 3. 正向 cuFFT
+    // 3. Forward cuFFT
     cufftExecZ2Z(p_fwd, d_in_batch, d_out_batch, CUFFT_FORWARD);
 
-    // 4. 计算幅度谱与对称特征 (供给 TensorRT)
+    // 4. Compute magnitude + reflected features (for TensorRT)
     calcMagnitudeKernel<<<blocksForAll, 256>>>(d_out_batch, d_trt_input, num_blocks, block_size);
-    cudaDeviceSynchronize(); // 确保数据写入显存完毕，准备推理
+    cudaDeviceSynchronize(); // Ensure GPU writes are complete before inference
 
-    // 5. TensorRT IOBinding 推理 (完全在显存中进行)
+    // 5. TensorRT IOBinding inference (fully in device memory)
     Ort::IoBinding iobinding(*session);
     Ort::MemoryInfo mem_info_cuda("Cuda", OrtDeviceAllocator, 0, OrtMemTypeDefault);
     
@@ -194,13 +194,13 @@ void launch_nnTransform3D_CUDA(
 
     session->Run(Ort::RunOptions{ nullptr }, iobinding);
 
-    // 6. 应用掩膜
+    // 6. Apply mask
     applyMaskKernel<<<blocksForAll, 256>>>(d_out_batch, d_mask, total_elements);
 
-    // 7. 逆向 cuFFT
+    // 7. Inverse cuFFT
     cufftExecZ2Z(p_inv, d_out_batch, d_in_batch, CUFFT_INVERSE);
 
-    // 8. OLA 叠接相加
+    // 8. OLA accumulation
     olaKernel<<<blocksForAll, 256>>>(d_in_batch, d_accChroma_f0, d_accChroma_f1, d_weightSum_f0, d_weightSum_f1,
                                      pad_f0, pad_f1, d_ledger_y, d_ledger_x, d_winT, d_winY, d_winX,
                                      num_blocks, block_size, activeStartX, activeEndX);

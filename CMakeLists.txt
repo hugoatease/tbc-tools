@@ -128,7 +128,31 @@ pkg_check_modules(FFTW REQUIRED IMPORTED_TARGET fftw3)
 set(FFTW_INCLUDE_DIR ${FFTW_INCLUDE_DIRS})
 set(FFTW_LIBRARY PkgConfig::FFTW)
 
-find_package(onnxruntime CONFIG REQUIRED)
+find_package(onnxruntime CONFIG QUIET)
+if(NOT TARGET onnxruntime::onnxruntime)
+    find_path(ONNXRUNTIME_INCLUDE_DIR
+        NAMES onnxruntime_cxx_api.h
+        PATHS
+            ${ONNXRUNTIME_ROOT}/include
+            $ENV{ONNXRUNTIME_ROOT}/include
+    )
+    find_library(ONNXRUNTIME_LIBRARY
+        NAMES onnxruntime
+        PATHS
+            ${ONNXRUNTIME_ROOT}/lib
+            $ENV{ONNXRUNTIME_ROOT}/lib
+    )
+
+    if(NOT ONNXRUNTIME_INCLUDE_DIR OR NOT ONNXRUNTIME_LIBRARY)
+        message(FATAL_ERROR "Could not find ONNX Runtime. Set ONNXRUNTIME_ROOT to an SDK containing include/ and lib/, or provide onnxruntimeConfig.cmake.")
+    endif()
+
+    add_library(onnxruntime::onnxruntime SHARED IMPORTED GLOBAL)
+    set_target_properties(onnxruntime::onnxruntime PROPERTIES
+        IMPORTED_LOCATION "${ONNXRUNTIME_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_INCLUDE_DIR}"
+    )
+endif()
 
 # Build metadata (set by Nix or other build systems)
 set(APP_BRANCH "nix" CACHE STRING "Build source identifier")

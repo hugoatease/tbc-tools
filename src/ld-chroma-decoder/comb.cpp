@@ -53,7 +53,7 @@
 
 #include <iostream>
 #include <cuda_runtime.h>
-// 常量定义保持不变
+// Constants
 const int FRAME_WIDTH = 910;
 const int FRAME_HEIGHT = 526;
 const int Nx = 16, Ny = 16, Nt = 4;
@@ -163,10 +163,24 @@ bool ensureCudaDriverLoaded(QString &errorMessage)
     static QString cudaDriverError;
 
     std::call_once(cudaDriverLoadOnce, []() {
-        auto tryLoad = [](const char *path, QString &capturedError) -> bool {
+        auto tryLoad = [](const char *path, QString &capturedError, bool rejectCudaStubs = false) -> bool {
             dlerror(); // Clear any stale state first.
             void *handle = dlopen(path, RTLD_NOW | RTLD_GLOBAL);
             if (handle != nullptr) {
+                if (rejectCudaStubs) {
+                    void *cuInitSymbol = dlsym(handle, "cuInit");
+                    if (cuInitSymbol != nullptr) {
+                        Dl_info symbolInfo {};
+                        if (dladdr(cuInitSymbol, &symbolInfo) != 0 && symbolInfo.dli_fname != nullptr) {
+                            const QString loadedPath = QString::fromUtf8(symbolInfo.dli_fname);
+                            if (loadedPath.contains("/stubs/")) {
+                                capturedError = QStringLiteral("resolved to CUDA stub library: %1").arg(loadedPath);
+                                dlclose(handle);
+                                return false;
+                            }
+                        }
+                    }
+                }
                 return true;
             }
             const char *message = dlerror();
@@ -177,9 +191,9 @@ bool ensureCudaDriverLoaded(QString &errorMessage)
         };
 
         QString libcudaError;
-        if (!(tryLoad("libcuda.so.1", libcudaError) ||
-              tryLoad("/lib/x86_64-linux-gnu/libcuda.so.1", libcudaError) ||
-              tryLoad("/usr/lib/x86_64-linux-gnu/libcuda.so.1", libcudaError))) {
+        if (!(tryLoad("/lib/x86_64-linux-gnu/libcuda.so.1", libcudaError, true) ||
+              tryLoad("/usr/lib/x86_64-linux-gnu/libcuda.so.1", libcudaError, true) ||
+              tryLoad("libcuda.so.1", libcudaError, true))) {
             if (libcudaError.isEmpty()) {
                 libcudaError = QStringLiteral("unable to locate libcuda.so.1");
             }
@@ -188,9 +202,9 @@ bool ensureCudaDriverLoaded(QString &errorMessage)
         }
 
         QString ptxJitError;
-        if (!(tryLoad("libnvidia-ptxjitcompiler.so.1", ptxJitError) ||
-              tryLoad("/lib/x86_64-linux-gnu/libnvidia-ptxjitcompiler.so.1", ptxJitError) ||
-              tryLoad("/usr/lib/x86_64-linux-gnu/libnvidia-ptxjitcompiler.so.1", ptxJitError))) {
+        if (!(tryLoad("/lib/x86_64-linux-gnu/libnvidia-ptxjitcompiler.so.1", ptxJitError) ||
+              tryLoad("/usr/lib/x86_64-linux-gnu/libnvidia-ptxjitcompiler.so.1", ptxJitError) ||
+              tryLoad("libnvidia-ptxjitcompiler.so.1", ptxJitError))) {
             if (ptxJitError.isEmpty()) {
                 ptxJitError = QStringLiteral("unable to locate libnvidia-ptxjitcompiler.so.1");
             }
@@ -434,7 +448,7 @@ void Comb::decodeFrames(const QVector<SourceField>& inputFields, qint32 startInd
     auto currentFrameBuffer = std::make_unique<FrameBuffer>(videoParameters, configuration);
     auto previousFrameBuffer = std::make_unique<FrameBuffer>(videoParameters, configuration);
 
-    // ================= 1. 初始化 GPU 滤镜引擎 =================
+    // ================= 1. Initialize GPU filter engine =================
     std::unique_ptr<nnTransform3DCUDA> gpuFilter;
     std::vector<double> gpuOutChromaDouble;
 
@@ -452,7 +466,7 @@ void Comb::decodeFrames(const QVector<SourceField>& inputFields, qint32 startInd
     for (qint32 fieldIndex = preStartIndex; fieldIndex < endIndex; fieldIndex += 2) {
         const qint32 frameIndex = (fieldIndex - startIndex) / 2;
 
-        // 轮转缓冲区
+        // Rotate frame buffers
         {
             auto recycle = std::move(previousFrameBuffer);
             previousFrameBuffer = std::move(currentFrameBuffer);
@@ -463,7 +477,7 @@ void Comb::decodeFrames(const QVector<SourceField>& inputFields, qint32 startInd
         if (fieldIndex + 3 < inputFields.size()) {
             nextFrameBuffer->loadFields(inputFields[fieldIndex + 2], inputFields[fieldIndex + 3]);
 
-            // ================= 2. 数据喂给 GPU =================
+            // ================= 2. Feed data to the GPU =================
             if (configuration.useNNTransform3D) {
                 gpuFilter->processFrame(nextFrameBuffer->getRawBuffer(), gpuOutChromaDouble.data());
             }
@@ -474,15 +488,15 @@ void Comb::decodeFrames(const QVector<SourceField>& inputFields, qint32 startInd
             // ===================================================
         }
         else if (configuration.useNNTransform3D) {
-            // 走到文件末尾时，传入 nullptr 触发 GPU 的 Padding 排空机制
+            // At end-of-file, pass nullptr to flush the GPU padding path
             gpuFilter->processFrame(nullptr, gpuOutChromaDouble.data());
         }
 
         if (fieldIndex < startIndex) {
-            continue; // LookBehind 阶段，跳过后续写入
+            continue; // LookBehind phase; skip output writes for this iteration
         }
 
-        // ================= 3. 收割 3D 色度结果 =================
+        // ================= 3. Collect 3D chroma result =================
         if (configuration.useNNTransform3D) {
             currentFrameBuffer->applyGPUChroma(gpuOutChromaDouble.data(), videoParameters.activeVideoStart, videoParameters.activeVideoEnd, videoParameters.firstActiveFrameLine, videoParameters.lastActiveFrameLine);
         }
@@ -793,7 +807,6 @@ bool Comb::FrameBuffer::split3DnnTransform(FrameBuffer &nextFrame, qint32 frameI
                 qWarning() << "nnTransform3D ONNX inference failed; disabling nn session and falling back to 2D chroma:"
                            << e.what();
                 onnxReady = false;
-                ortSession.reset();
                 return false;
             }
             if (cancelEpoch.load(std::memory_order_relaxed) != decodeEpoch) {
@@ -1238,8 +1251,7 @@ void Comb::FrameBuffer::applyGPUChroma(const double* gpuOutChromaDouble, qint32 
 
 nnTransform3DCUDA::nnTransform3DCUDA(int activeStart, int activeEnd, const char* modelPath)
     : activeStartX(activeStart), activeEndX(activeEnd) {
-
-    // 1. 初始化 ONNX Runtime (TensorRT + CUDA Fallback)
+    // 1. Initialize ONNX Runtime (TensorRT + CUDA fallback)
     
     env = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_ERROR, "NTSC3D");
     Ort::SessionOptions session_options;
@@ -1262,14 +1274,14 @@ nnTransform3DCUDA::nnTransform3DCUDA(int activeStart, int activeEnd, const char*
 
     session = std::make_unique<Ort::Session>(*env, ORT_TSTR("chroma_net.onnx"), session_options);
 
-    // 2. 为前后两帧分配持久显存
+    // 2. Allocate persistent device memory for the previous/next frame buffers
     allocateFrameBuffer(frame0);
     allocateFrameBuffer(frame1);
 }
 
 nnTransform3DCUDA::~nnTransform3DCUDA() {
     freeGPUResources();
-    // 释放 FrameBuffer 显存
+    // Release frame-buffer device memory
     if (frame0.d_cvbs) { cudaFree(frame0.d_cvbs); cudaFree(frame0.d_accChroma); cudaFree(frame0.d_weightSum); }
     if (frame1.d_cvbs) { cudaFree(frame1.d_cvbs); cudaFree(frame1.d_accChroma); cudaFree(frame1.d_weightSum); }
 }
@@ -1318,7 +1330,7 @@ void nnTransform3DCUDA::initGPUResources(int num_blocks) {
 
     cached_num_blocks = num_blocks;
 
-    // 初始化窗函数并拷贝到 GPU
+    // Initialize window functions and upload them to the GPU
     std::vector<double> winX(Nx), winY(Ny), winT(Nt);
     for (int i = 0; i < Nx; ++i) winX[i] = sin(M_PI * (i + 0.5) / Nx);
     for (int i = 0; i < Ny; ++i) winY[i] = sin(M_PI * (i + 0.5) / Ny);
@@ -1339,14 +1351,14 @@ void nnTransform3DCUDA::freeGPUResources() {
     cached_num_blocks = 0;
 }
 
-// 供视频管线每帧调用的函数
+// Called once per frame by the video pipeline
 void nnTransform3DCUDA::processFrame(const uint16_t* inputFrame, double* outChromaDouble) {
     size_t frameBytes = FRAME_WIDTH * FRAME_HEIGHT * sizeof(uint16_t);
 
     if (inputFrame == nullptr) {
         std::swap(frame0, frame1);
         resetFrameOLA(frame1);
-        frame1.isPadding = true; // 强制将下一帧设为 Padding 0 帧
+        frame1.isPadding = true; // Force the next frame to be a zero-padding frame
     }
     
     else if (isFirstFrame) {
@@ -1354,7 +1366,7 @@ void nnTransform3DCUDA::processFrame(const uint16_t* inputFrame, double* outChro
         cudaMemcpy(frame1.d_cvbs, inputFrame, frameBytes, cudaMemcpyHostToDevice);
         frame1.isPadding = false;
 
-        // 首次计算 Block 数量并初始化资源
+        // Compute block count on first frame and initialize resources
         int startY_loop = 40 - (Ny / 2);
         int startX_loop = activeStartX - (Nx / 2);
         int num_blocks = 0;

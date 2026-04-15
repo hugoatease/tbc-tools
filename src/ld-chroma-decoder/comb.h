@@ -47,7 +47,7 @@
 #include <onnxruntime_cxx_api.h>
 #include <cufft.h>
 
-// 提前声明，具体实现在 .cu 文件中
+// Forward declaration; implementation is in the .cu file
 void launch_nnTransform3D_CUDA(
     uint16_t* d_cvbs_f0, uint16_t* d_cvbs_f1, bool pad_f0, bool pad_f1,
     double* d_accChroma_f0, double* d_accChroma_f1, double* d_weightSum_f0, double* d_weightSum_f1,
@@ -69,29 +69,29 @@ public:
 private:
     int activeStartX, activeEndX;
 
-    // ONNX Runtime 资源
+    // ONNX Runtime resources
     std::unique_ptr<Ort::Env> env;
     std::unique_ptr<Ort::Session> session;
 
-    // CUDA & cuFFT 资源
+    // CUDA & cuFFT resources
     cufftHandle p_fwd, p_inv;
     bool is_plan_created = false;
     int cached_num_blocks = 0;
 
-    // 显存指针 (替代原有的 static 变量)
+    // Device-memory pointers (replace the old static variables)
     cufftDoubleComplex* d_in_batch = nullptr, * d_out_batch = nullptr;
     float* d_trt_input = nullptr, * d_mask = nullptr;
     int* d_ledger_y = nullptr, * d_ledger_x = nullptr;
     double* d_ledger_dc = nullptr, * d_winX = nullptr, * d_winY = nullptr, * d_winT = nullptr;
 
-    // 内部帧缓冲 (管理 LookBehind 和 LookAhead)
+    // Internal frame buffers (manage LookBehind and LookAhead)
     struct InternalFrame {
         bool isPadding = true;
         std::vector<uint16_t> cvbs;
         uint16_t* d_cvbs = nullptr;
         double* d_accChroma = nullptr;
         double* d_weightSum = nullptr;
-        // 宿主机端的累加缓冲
+        // Host-side accumulation buffers
         std::vector<double> h_accChroma;
         std::vector<double> h_weightSum;
     };
