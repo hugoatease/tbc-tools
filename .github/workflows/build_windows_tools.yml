@@ -11,6 +11,7 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  ONNXRUNTIME_VERSION: "1.18.1"
   # External tools to be bundled
   FFMPEG_FILE: "ffmpeg-8.0.1-full_build.zip"
   FFMPEG_PATH: "ffmpeg-8.0.1-full_build"
@@ -61,6 +62,35 @@ jobs:
           cache: "pip"
           cache-dependency-path: |
             src/tbc-video-export/pyinstaller/requirements-build-windows.txt
+      - name: Download ONNX Runtime package
+        shell: pwsh
+        run: |
+          $version = "${{ env.ONNXRUNTIME_VERSION }}"
+          if ("${{ matrix.arch }}" -eq "x86_64") {
+            $onnxFile = "onnxruntime-win-x64-gpu-$version.zip"
+          } elseif ("${{ matrix.arch }}" -eq "arm64") {
+            $onnxFile = "onnxruntime-win-arm64-$version.zip"
+          } else {
+            throw "Unsupported Windows architecture '${{ matrix.arch }}' for ONNX Runtime package selection."
+          }
+
+          $downloadUrl = "https://github.com/microsoft/onnxruntime/releases/download/v$version/$onnxFile"
+          $extractRoot = Join-Path "${{ github.workspace }}" "external\\onnxruntime"
+          New-Item -ItemType Directory -Force -Path $extractRoot | Out-Null
+
+          $archivePath = Join-Path $extractRoot $onnxFile
+          Invoke-WebRequest $downloadUrl -OutFile $archivePath
+          Expand-Archive -Path $archivePath -DestinationPath $extractRoot -Force
+
+          $onnxRoot = Join-Path $extractRoot ($onnxFile -replace '\.zip$','')
+          if (-not (Test-Path "$onnxRoot\\include\\onnxruntime_cxx_api.h")) {
+            throw "ONNX Runtime headers not found in $onnxRoot\\include"
+          }
+          if (-not (Test-Path "$onnxRoot\\lib\\onnxruntime.lib")) {
+            throw "ONNX Runtime import library not found in $onnxRoot\\lib"
+          }
+
+          "ONNXRUNTIME_ROOT=$onnxRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Set up CMake
         uses: jwlawson/actions-setup-cmake@v2
@@ -125,6 +155,16 @@ jobs:
 
       - name: Copy binaries to release directory
         run: Get-ChildItem -Recurse -Path build\\bin\\* -Include *.exe, *.dll | Copy-Item -Destination release\\
+      - name: Copy ONNX Runtime DLLs to release directory
+        run: |
+          $onnxLibDir = "$env:ONNXRUNTIME_ROOT\\lib"
+          if (-not (Test-Path "$onnxLibDir\\onnxruntime.dll")) {
+            throw "onnxruntime.dll not found at $onnxLibDir\\onnxruntime.dll"
+          }
+          Copy-Item -Path "$onnxLibDir\\onnxruntime.dll" -Destination release\\
+          if ("${{ matrix.arch }}" -eq "x86_64") {
+            Get-ChildItem -Path $onnxLibDir -Filter "onnxruntime_providers_*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination release\\
+          }
 
       - name: Copy Qt plugins to release directory
         run: Copy-Item -Recurse -Exclude *.pdb -Path build\\vcpkg_installed\\${{ matrix.vcpkg_triplet }}\\Qt6\\plugins\\* -Destination release\\
@@ -154,6 +194,9 @@ jobs:
           }
           if (Test-Path release\\LICENSES\\copyright-qtbase) {
             Rename-Item -Path release\\LICENSES\\copyright-qtbase -NewName copyright-qt6
+          }
+          if (Test-Path "$env:ONNXRUNTIME_ROOT\\LICENSE") {
+            Copy-Item -Path "$env:ONNXRUNTIME_ROOT\\LICENSE" -Destination release\\LICENSES\\copyright-onnxruntime
           }
 
       - name: Copy scripts to release directory (if they exist)

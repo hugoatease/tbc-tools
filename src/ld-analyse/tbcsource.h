@@ -163,6 +163,7 @@ public:
 
     void setChromaConfiguration(const PalColour::Configuration &palConfiguration, const Comb::Configuration &ntscConfiguration,
                                 const OutputWriter::Configuration &outputConfiguration);
+    void requestNnTransform3DCancel();
     const PalColour::Configuration &getPalConfiguration() const;
     const Comb::Configuration &getNtscConfiguration() const;
     const MonoDecoder::MonoConfiguration &getMonoConfiguration() const;

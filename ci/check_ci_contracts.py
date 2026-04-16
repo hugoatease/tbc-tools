@@ -47,6 +47,7 @@ MACOS_REQUIRED_SNIPPETS = (
     "workflow_dispatch:",
     "workflow_call:",
     "macos-15-intel",
+    "LDDECODE_NNTRANSFORM3D_PROVIDER: cpu",
     "for item in result/bin/*; do",
     "result/share/tbc-video-export",
     "Missing vendored exporter tool: dist/tbc-tools.app/Contents/MacOS/tbc-video-export",

@@ -64,6 +64,7 @@ class ContractCoverageTests(unittest.TestCase):
         expected = {
             "workflow_dispatch:",
             "workflow_call:",
+            "LDDECODE_NNTRANSFORM3D_PROVIDER: cpu",
             "result/share/tbc-video-export",
             "tbc-tools.app/Contents/MacOS/tbc-video-export --version",
         }

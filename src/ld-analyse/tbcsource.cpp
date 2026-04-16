@@ -156,6 +156,7 @@ void TbcSource::loadMetadata(QString metadataFilename, QString displayFilename)
 // Method to unload a TBC source file
 void TbcSource::unloadSource()
 {
+    ntscColour.requestNnTransform3DCancel();
     sourceVideo.close();
     if (sourceMode != ONE_SOURCE) chromaSourceVideo.close();
     resetState();
@@ -216,6 +217,10 @@ void TbcSource::setHighlightDropouts(bool _state)
 // Method to set the chroma decoder mode (true = on)
 void TbcSource::setChromaDecoder(bool _state)
 {
+    if (chromaOn == _state) {
+        return;
+    }
+    ntscColour.requestNnTransform3DCancel();
     invalidateImageCache();
     chromaOn = _state;
 }
@@ -225,6 +230,7 @@ void TbcSource::setChromaDecodeMode(TbcSource::ChromaDecodeMode mode)
     if (chromaDecodeMode == mode) {
         return;
     }
+    ntscColour.requestNnTransform3DCancel();
 
     chromaDecodeMode = mode;
     switch (chromaDecodeMode) {
@@ -341,7 +347,9 @@ TbcSource::SourceMode TbcSource::getSourceMode() const
 void TbcSource::setSourceMode(TbcSource::SourceMode _sourceMode)
 {
     if (sourceMode == ONE_SOURCE) return;
+    if (sourceMode == _sourceMode) return;
 
+    ntscColour.requestNnTransform3DCancel();
     invalidateImageCache();
     sourceMode = _sourceMode;
 }
@@ -592,6 +600,7 @@ const LdDecodeMetaData::VideoParameters &TbcSource::getVideoParameters() const
 // Update the VideoParameters for the current source
 void TbcSource::setVideoParameters(const LdDecodeMetaData::VideoParameters &videoParameters)
 {
+    ntscColour.requestNnTransform3DCancel();
     invalidateImageCache();
 
     // Update the metadata
@@ -926,6 +935,7 @@ void TbcSource::setChromaConfiguration(const PalColour::Configuration &_palConfi
                                        const Comb::Configuration &_ntscConfiguration,
                                        const OutputWriter::Configuration &_outputConfiguration)
 {
+    ntscColour.requestNnTransform3DCancel();
     invalidateImageCache();
 
     palConfiguration = _palConfiguration;
@@ -940,6 +950,11 @@ void TbcSource::setChromaConfiguration(const PalColour::Configuration &_palConfi
     }
 
     configureChromaDecoder();
+}
+
+void TbcSource::requestNnTransform3DCancel()
+{
+    ntscColour.requestNnTransform3DCancel();
 }
 
 const PalColour::Configuration &TbcSource::getPalConfiguration() const
@@ -1049,7 +1064,8 @@ void TbcSource::configureChromaDecoder()
     // Configure the chroma decoder
     LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters();
     LdDecodeMetaData::VideoParameters decodeVideoParameters = videoParameters;
-    if (outputConfiguration.fullFrameDecode || chromaDecodeMode == HYBRID_CHROMA_MODE) {
+    const bool applyHybridFullFrameBounds = (chromaDecodeMode == HYBRID_CHROMA_MODE);
+    if (outputConfiguration.fullFrameDecode || applyHybridFullFrameBounds) {
         applyFullFrameDecodeBounds(decodeVideoParameters);
     }
 	
@@ -1121,12 +1137,19 @@ void TbcSource::applyChromaSettingsFromMetadata(const LdDecodeMetaData::VideoPar
         } else if (videoParameters.system == NTSC) {
             if (decoder == "ntsc1d") {
                 ntscConfiguration.dimensions = 1;
+                ntscConfiguration.nnTransform3D = false;
             } else if (decoder == "ntsc2d") {
                 ntscConfiguration.dimensions = 2;
+                ntscConfiguration.nnTransform3D = false;
             } else if (decoder == "ntsc3d") {
                 ntscConfiguration.dimensions = 3;
+                ntscConfiguration.nnTransform3D = false;
+            } else if (decoder == "nntransform3d" || decoder == "nntsc3d") {
+                ntscConfiguration.dimensions = 3;
+                ntscConfiguration.nnTransform3D = true;
             } else if (decoder == "mono") {
                 ntscConfiguration.dimensions = 0;
+                ntscConfiguration.nnTransform3D = false;
             }
         }
     }

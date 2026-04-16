@@ -28,7 +28,7 @@ ld-chroma-decoder [options] <input.tbc> <output.rgb>
 - `-t, --threads <number>`: Specify the number of concurrent threads (default number of logical CPUs)
 
 #### Decoder Selection
-- `-f, --decoder <decoder>`: Decoder to use (pal2d, transform2d, transform3d, ntsc1d, ntsc2d, ntsc3d, ntsc3dnoadapt, mono; default automatic)
+- `-f, --decoder <decoder>`: Decoder to use (pal2d, transform2d, transform3d, ntsc1d, ntsc2d, ntsc3d, nntransform3d, ntsc3dnoadapt, mono; default automatic)
 
 #### Output Control
 - `-p, --output-format <format>`: Output format (rgb, yuv, y4m; default rgb); RGB48, YUV444P16, GRAY16 pixel formats are supported

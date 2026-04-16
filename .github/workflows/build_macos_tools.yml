@@ -31,6 +31,8 @@ jobs:
 
     name: Build tbc-tools (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
+    env:
+      LDDECODE_NNTRANSFORM3D_PROVIDER: cpu
 
     steps:
       - uses: actions/checkout@v5

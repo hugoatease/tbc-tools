@@ -60,6 +60,7 @@
 #include <QMap>
 #include <QPushButton>
 #include <QVBoxLayout>
+#include <QtConcurrent/QtConcurrent>
 #include <optional>
 #if defined(Q_OS_UNIX)
 #include <signal.h>
@@ -103,7 +104,8 @@ QString chromaDecoderNameFromConfig(VideoSystem system,
         case 2:
             return QStringLiteral("ntsc2d");
         case 3:
-            return QStringLiteral("ntsc3d");
+            return ntscConfig.nnTransform3D ? QStringLiteral("nntransform3d")
+                                            : QStringLiteral("ntsc3d");
         default:
             break;
         }
@@ -1262,6 +1264,8 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     connect(&tbcSource, &TbcSource::busy, this, &MainWindow::on_busy);
     connect(&tbcSource, &TbcSource::finishedLoading, this, &MainWindow::on_finishedLoading);
     connect(&tbcSource, &TbcSource::finishedSaving, this, &MainWindow::on_finishedSaving);
+    connect(&asyncFrameRenderWatcher, &QFutureWatcher<QImage>::finished,
+            this, &MainWindow::on_asyncFrameRenderFinished);
 
     // Load the window geometry and settings from the configuration
     const QByteArray savedMainGeometry = configuration.getMainWindowGeometry();
@@ -1337,6 +1341,9 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
 
 MainWindow::~MainWindow()
 {
+    if (asyncFrameRenderInProgress) {
+        cancelInFlightAsyncFrameRender();
+    }
     // Save the window geometry and settings to the configuration
     configuration.setMainWindowGeometry(saveGeometry());
     configuration.setMainWindowScaleFactor(scaleFactor);
@@ -1648,10 +1655,13 @@ void MainWindow::updateCursorReadout(const QPoint &viewerPoint)
     }
 
     QString rawHex = QStringLiteral("----");
-    const TbcSource::ScanLineData scanLineData = tbcSource.getScanLineData(sourceY + 1);
-    if (!scanLineData.composite.isEmpty() && sourceX >= 0 && sourceX < scanLineData.composite.size()) {
-        const quint16 rawValue = static_cast<quint16>(qBound(0, scanLineData.composite[sourceX], 65535));
-        rawHex = QStringLiteral("0x%1").arg(rawValue, 4, 16, QChar('0')).toUpper();
+    const bool asyncNnRenderActive = asyncFrameRenderInProgress && shouldRenderFrameAsync();
+    if (!asyncNnRenderActive) {
+        const TbcSource::ScanLineData scanLineData = tbcSource.getScanLineData(sourceY + 1);
+        if (!scanLineData.composite.isEmpty() && sourceX >= 0 && sourceX < scanLineData.composite.size()) {
+            const quint16 rawValue = static_cast<quint16>(qBound(0, scanLineData.composite[sourceX], 65535));
+            rawHex = QStringLiteral("0x%1").arg(rawValue, 4, 16, QChar('0')).toUpper();
+        }
     }
 
     const QString rgbHex = QStringLiteral("#%1%2%3")
@@ -2087,9 +2097,100 @@ void MainWindow::updateMetadataStatusPanel()
 
 // Frame display methods ----------------------------------------------------------------------------------------------
 
+bool MainWindow::shouldRenderFrameAsync() const
+{
+    if (!tbcSource.getIsSourceLoaded() || tbcSource.getIsMetadataOnly()) {
+        return false;
+    }
+    if (!tbcSource.getChromaDecoder()) {
+        return false;
+    }
+    if (tbcSource.getSystem() != NTSC) {
+        return false;
+    }
+    return tbcSource.getNtscConfiguration().nnTransform3D;
+}
+
+void MainWindow::startAsyncFrameRender()
+{
+    if (asyncFrameRenderInProgress || !shouldRenderFrameAsync()) {
+        return;
+    }
+
+    asyncFrameRenderInProgress = true;
+    asyncFrameRenderQueued = false;
+    asyncFrameRenderFrameNumber = currentFrameNumber;
+    asyncFrameRenderFieldNumber = currentFieldNumber;
+
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+    QFuture<QImage> renderFuture = QtConcurrent::run(&tbcSource, &TbcSource::getImage);
+#else
+    QFuture<QImage> renderFuture = QtConcurrent::run(&TbcSource::getImage, &tbcSource);
+#endif
+    asyncFrameRenderWatcher.setFuture(renderFuture);
+
+    if (statusBar()) {
+        statusBar()->showMessage(tr("Rendering nnTransform3D frame..."));
+    }
+}
+
+void MainWindow::on_asyncFrameRenderFinished()
+{
+    asyncFrameRenderInProgress = false;
+    if (!tbcSource.getIsSourceLoaded() || tbcSource.getIsMetadataOnly()) {
+        asyncFrameImage = QImage();
+        asyncFrameRenderQueued = false;
+        if (statusBar()) {
+            statusBar()->clearMessage();
+        }
+        return;
+    }
+    asyncFrameImage = asyncFrameRenderWatcher.result();
+
+    if (asyncFrameRenderQueued
+        || asyncFrameRenderFrameNumber != currentFrameNumber
+        || asyncFrameRenderFieldNumber != currentFieldNumber) {
+        asyncFrameRenderQueued = false;
+        QTimer::singleShot(0, this, [this]() {
+            showImage();
+        });
+        return;
+    }
+
+    if (statusBar()) {
+        statusBar()->clearMessage();
+    }
+    updateImage();
+}
+
+void MainWindow::cancelInFlightAsyncFrameRender()
+{
+    if (!asyncFrameRenderInProgress) {
+        return;
+    }
+    tbcSource.requestNnTransform3DCancel();
+    asyncFrameRenderWatcher.waitForFinished();
+    asyncFrameRenderInProgress = false;
+    asyncFrameRenderQueued = false;
+    asyncFrameRenderFrameNumber = -1;
+    asyncFrameRenderFieldNumber = -1;
+    asyncFrameImage = QImage();
+    if (statusBar()) {
+        statusBar()->clearMessage();
+    }
+}
+
 // Update the UI and displays when currentFrameNumber or currentFieldNumber has changed
 void MainWindow::showImage()
 {
+    if (asyncFrameRenderInProgress) {
+        if (shouldRenderFrameAsync()) {
+            asyncFrameRenderQueued = true;
+            return;
+        }
+        cancelInFlightAsyncFrameRender();
+        asyncFrameImage = QImage();
+    }
     tbcSource.load(currentFrameNumber, currentFieldNumber);
 
     updateBottomStatusReadout();
@@ -2154,7 +2255,12 @@ void MainWindow::showImage()
     ui->imageViewerLabel->setAlignment(Qt::AlignCenter);
 
     // Update the field/frame image
-    updateImage();
+    if (shouldRenderFrameAsync()) {
+        startAsyncFrameRender();
+        updateImageViewer();
+    } else {
+        updateImage();
+    }
 
     // Update the closed caption dialog
     closedCaptionDialog->addData(currentFrameNumber, tbcSource.getCcData0(), tbcSource.getCcData1());
@@ -2170,6 +2276,9 @@ void MainWindow::updateImage()
 {
     // Update the image viewer
     updateImageViewer();
+    if (asyncFrameRenderInProgress && shouldRenderFrameAsync()) {
+        return;
+    }
 
     // If the scope dialogues are open, update them
     if (oscilloscopeDialog->isVisible()) {
@@ -2209,7 +2318,20 @@ bool MainWindow::isViewerTabActive() const
 
 QImage MainWindow::renderedCurrentImageForExport()
 {
-    QImage imageToSave = tbcSource.getImage();
+    const bool useAsyncRender = shouldRenderFrameAsync();
+    if (asyncFrameRenderInProgress && !useAsyncRender) {
+        cancelInFlightAsyncFrameRender();
+        asyncFrameImage = QImage();
+    }
+    QImage imageToSave;
+    if (useAsyncRender) {
+        imageToSave = asyncFrameImage;
+        if (imageToSave.isNull() && !asyncFrameRenderInProgress) {
+            startAsyncFrameRender();
+        }
+    } else {
+        imageToSave = tbcSource.getImage();
+    }
     if (imageToSave.isNull()) {
         return imageToSave;
     }
@@ -2267,13 +2389,29 @@ QString MainWindow::outputBaseNameForCurrentSource()
 // Redraw the viewer (for example, when scaleFactor has been changed)
 void MainWindow::updateImageViewer()
 {
-    QImage image = tbcSource.getImage();
+    const bool useAsyncRender = shouldRenderFrameAsync();
+    if (asyncFrameRenderInProgress && !useAsyncRender) {
+        cancelInFlightAsyncFrameRender();
+        asyncFrameImage = QImage();
+    }
+    QImage image;
+    if (useAsyncRender) {
+        image = asyncFrameImage;
+        if (image.isNull() && !asyncFrameRenderInProgress) {
+            startAsyncFrameRender();
+        }
+    } else {
+        image = tbcSource.getImage();
+        asyncFrameImage = QImage();
+    }
     cursorReadoutImage = image;
     if (image.isNull() || image.width() == 0 || image.height() == 0) {
         cursorReadoutImage = QImage();
         clearCursorReadout();
         if (tbcSource.getIsMetadataOnly()) {
             ui->imageViewerLabel->setText(tr("Metadata-only mode (no TBC image data)"));
+        } else if (useAsyncRender && asyncFrameRenderInProgress) {
+            ui->imageViewerLabel->setText(tr("Rendering nnTransform3D frame..."));
         }
     }
 
@@ -2699,6 +2837,8 @@ void MainWindow::hideImage()
     exportBoundaryDragHandle = ExportBoundaryHandle::None;
     exportBoundarySelectedHandle = ExportBoundaryHandle::None;
     updateExportBoundaryHoverCursor(QPoint(-1, -1));
+    asyncFrameImage = QImage();
+    asyncFrameRenderQueued = false;
     cursorReadoutImage = QImage();
     clearCursorReadout();
 }
@@ -2709,6 +2849,11 @@ void MainWindow::hideImage()
 void MainWindow::loadTbcFile(QString inputFileName, bool forceMetadataOnly, bool preserveStatusDuringReload)
 {
     setPlaybackRunning(false);
+    if (asyncFrameRenderInProgress) {
+        cancelInFlightAsyncFrameRender();
+    }
+    asyncFrameRenderQueued = false;
+    asyncFrameImage = QImage();
     if (preserveStatusDuringReload) {
         setGuiEnabled(false);
         sourceVideoStatus.setText(tr("Reloading metadata and analysis..."));
@@ -2820,6 +2965,9 @@ void MainWindow::cleanupTempMetadataFile()
 // Method to update the line oscilloscope based on the frame number and scan line
 void MainWindow::updateOscilloscopeDialogue()
 {
+    if (asyncFrameRenderInProgress && shouldRenderFrameAsync()) {
+        return;
+    }
     // Update the oscilloscope dialogue
     oscilloscopeDialog->showTraceImage(tbcSource.getScanLineData(lastScopeLine),
                                        lastScopeDot, lastScopeLine - 1,
@@ -2829,6 +2977,9 @@ void MainWindow::updateOscilloscopeDialogue()
 // Method to update the vectorscope
 void MainWindow::updateVectorscopeDialogue()
 {
+    if (asyncFrameRenderInProgress && shouldRenderFrameAsync()) {
+        return;
+    }
     // Update the vectorscope dialogue
     vectorscopeDialog->showTraceImage(tbcSource.getComponentFrame(), tbcSource.getVideoParameters(),
                                       tbcSource.getViewMode(), currentFieldNumber % 2);
@@ -2837,6 +2988,9 @@ void MainWindow::updateVectorscopeDialogue()
 // Method to update the field timing scope
 void MainWindow::updateFieldTimingDialogue()
 {
+    if (asyncFrameRenderInProgress && shouldRenderFrameAsync()) {
+        return;
+    }
     const TbcSource::FieldTimingData timingData = tbcSource.getFieldTimingData();
     if (!timingData.valid) {
         return;
@@ -5031,6 +5185,9 @@ void MainWindow::on_posHorizontalSlider_customContextMenuRequested(const QPoint 
 // Source/Chroma select button clicked
 void MainWindow::on_videoPushButton_clicked()
 {
+    const bool resumePlayback = playbackRunning;
+    setPlaybackRunning(false);
+    cancelInFlightAsyncFrameRender();
     if (!tbcSource.getChromaDecoder()) {
         tbcSource.setChromaDecodeMode(TbcSource::HYBRID_CHROMA_MODE);
         tbcSource.setChromaDecoder(true);
@@ -5043,9 +5200,8 @@ void MainWindow::on_videoPushButton_clicked()
 
     // Show the current image
     showImage();
-
-    if (playbackRunning) {
-        scheduleNextPlaybackTick();
+    if (resumePlayback) {
+        setPlaybackRunning(true);
     } else if (ui && ui->playPushButton) {
         ui->playPushButton->setToolTip(playbackStartToolTip());
     }
@@ -5123,7 +5279,23 @@ void MainWindow::resizeFrameToWindow()
 	}
 	
 	// Get the original image size
-	QImage originalImage = tbcSource.getImage();
+	QImage originalImage;
+	const bool useAsyncRender = shouldRenderFrameAsync();
+	if (asyncFrameRenderInProgress && !useAsyncRender) {
+		cancelInFlightAsyncFrameRender();
+		asyncFrameImage = QImage();
+	}
+	if (useAsyncRender) {
+		originalImage = asyncFrameImage;
+		if (originalImage.isNull()) {
+			if (!asyncFrameRenderInProgress) {
+				startAsyncFrameRender();
+			}
+			return;
+		}
+	} else {
+		originalImage = tbcSource.getImage();
+	}
 	if (originalImage.isNull()) {
 		return;
 	}
@@ -5210,6 +5382,9 @@ void MainWindow::on_dropoutsPushButton_clicked()
 // Source selection button clicked
 void MainWindow::on_sourcesPushButton_clicked()
 {
+    const bool resumePlayback = playbackRunning;
+    setPlaybackRunning(false);
+    cancelInFlightAsyncFrameRender();
     switch (tbcSource.getSourceMode()) {
     case TbcSource::ONE_SOURCE:
         // Do nothing - the button's disabled anyway
@@ -5230,9 +5405,8 @@ void MainWindow::on_sourcesPushButton_clicked()
 
     // Show the current image
     showImage();
-
-    if (playbackRunning) {
-        scheduleNextPlaybackTick();
+    if (resumePlayback) {
+        setPlaybackRunning(true);
     } else if (ui && ui->playPushButton) {
         ui->playPushButton->setToolTip(playbackStartToolTip());
     }
@@ -5732,6 +5906,7 @@ void MainWindow::mouseScanLineSelect(qint32 oX, qint32 oY)
 // Handle parameters changed signal from the video parameters dialogue
 void MainWindow::videoParametersChangedSignalHandler(const LdDecodeMetaData::VideoParameters &videoParameters)
 {
+    cancelInFlightAsyncFrameRender();
     // Update the VideoParameters in the source
     tbcSource.setVideoParameters(videoParameters);
     if (exportDialog) {
@@ -5817,6 +5992,9 @@ void MainWindow::exportBoundaryThicknessChangedSignalHandler(int thickness)
 // Handle configuration changed signal from the chroma decoder configuration dialogue
 void MainWindow::chromaDecoderConfigChangedSignalHandler()
 {
+    const bool resumePlayback = playbackRunning;
+    setPlaybackRunning(false);
+    cancelInFlightAsyncFrameRender();
     const PalColour::Configuration &palConfig = chromaDecoderConfigDialog->getPalConfiguration();
     const Comb::Configuration &ntscConfig = chromaDecoderConfigDialog->getNtscConfiguration();
     // Set the new configuration
@@ -5847,6 +6025,11 @@ void MainWindow::chromaDecoderConfigChangedSignalHandler()
     // Update the image viewer
     updateImage();
     updateVideoPushButton();
+    if (resumePlayback) {
+        setPlaybackRunning(true);
+    } else if (ui && ui->playPushButton) {
+        ui->playPushButton->setToolTip(playbackStartToolTip());
+    }
 
     updateMetadataStatusPanel();
 }

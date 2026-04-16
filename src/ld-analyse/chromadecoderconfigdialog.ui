@@ -560,6 +560,16 @@
         </widget>
        </item>
        <item>
+        <widget class="QRadioButton" name="ntscFilterNNTransform3DRadioButton">
+         <property name="text">
+          <string>nnTransform3D (nnNTSC)</string>
+         </property>
+         <attribute name="buttonGroup">
+          <string notr="true">ntscFilterButtonGroup</string>
+         </attribute>
+        </widget>
+       </item>
+       <item>
         <spacer name="verticalSpacer_9">
          <property name="orientation">
           <enum>Qt::Vertical</enum>

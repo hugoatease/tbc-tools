@@ -287,11 +287,13 @@ void ChromaDecoderConfigDialog::updateDialog()
 		{
 			palConfiguration.chromaFilter = PalColour::transform3DFilter;
 			ntscConfiguration.dimensions = 3;
+            ntscConfiguration.nnTransform3D = false;
 		}
 		else
 		{
 			palConfiguration.chromaFilter = PalColour::transform2DFilter;
 			ntscConfiguration.dimensions = 2;
+            ntscConfiguration.nnTransform3D = false;
 		}
         if (tbcSource) {
             const auto &videoParameters = tbcSource->getVideoParameters();
@@ -390,6 +392,7 @@ void ChromaDecoderConfigDialog::updateDialog()
     ui->ntscFilter1DRadioButton->setEnabled(isSourceNtsc);
     ui->ntscFilter2DRadioButton->setEnabled(isSourceNtsc);
     ui->ntscFilter3DRadioButton->setEnabled(isSourceNtsc);
+    ui->ntscFilterNNTransform3DRadioButton->setEnabled(isSourceNtsc);
 	
 	if(isSourceNtsc)
 	{
@@ -413,7 +416,11 @@ void ChromaDecoderConfigDialog::updateDialog()
 			ui->chromaPhaseHorizontalSlider->setEnabled(true);
 			break;
 		case 3:
-			ui->ntscFilter3DRadioButton->setChecked(true);
+            if (ntscConfiguration.nnTransform3D) {
+                ui->ntscFilterNNTransform3DRadioButton->setChecked(true);
+            } else {
+                ui->ntscFilter3DRadioButton->setChecked(true);
+            }
 			ui->phaseCompCheckBox->setEnabled(true);
 			ui->chromaGainHorizontalSlider->setEnabled(true);
 			ui->chromaPhaseHorizontalSlider->setEnabled(true);
@@ -421,22 +428,25 @@ void ChromaDecoderConfigDialog::updateDialog()
 		}
     }
 
-    ui->adaptiveCheckBox->setEnabled(isSourceNtsc && ntscConfiguration.dimensions == 3);
+    const bool isClassic3DMode = isSourceNtsc
+                                 && ntscConfiguration.dimensions == 3
+                                 && !ntscConfiguration.nnTransform3D;
+    ui->adaptiveCheckBox->setEnabled(isClassic3DMode);
     ui->adaptiveCheckBox->setChecked(ntscConfiguration.adaptive);
 
-    ui->showMapCheckBox->setEnabled(isSourceNtsc && ntscConfiguration.dimensions == 3);
+    ui->showMapCheckBox->setEnabled(isClassic3DMode);
     ui->showMapCheckBox->setChecked(ntscConfiguration.showMap);
 
-    ui->adaptThresholdLabel->setEnabled(isSourceNtsc && ntscConfiguration.dimensions == 3);
-    ui->adaptThresholdHorizontalSlider->setEnabled(isSourceNtsc && ntscConfiguration.dimensions == 3);
+    ui->adaptThresholdLabel->setEnabled(isClassic3DMode);
+    ui->adaptThresholdHorizontalSlider->setEnabled(isClassic3DMode);
     ui->adaptThresholdHorizontalSlider->setValue(static_cast<qint32>(ntscConfiguration.adaptThreshold * 100));
-    ui->adaptThresholdValueLabel->setEnabled(isSourceNtsc && ntscConfiguration.dimensions == 3);
+    ui->adaptThresholdValueLabel->setEnabled(isClassic3DMode);
     ui->adaptThresholdValueLabel->setText(QString::number(ntscConfiguration.adaptThreshold, 'f', 2));
 
-    ui->chromaWeightLabel->setEnabled(isSourceNtsc && ntscConfiguration.dimensions == 3);
-    ui->chromaWeightHorizontalSlider->setEnabled(isSourceNtsc && ntscConfiguration.dimensions == 3);
+    ui->chromaWeightLabel->setEnabled(isClassic3DMode);
+    ui->chromaWeightHorizontalSlider->setEnabled(isClassic3DMode);
     ui->chromaWeightHorizontalSlider->setValue(static_cast<qint32>(ntscConfiguration.chromaWeight * 100));
-    ui->chromaWeightValueLabel->setEnabled(isSourceNtsc && ntscConfiguration.dimensions == 3);
+    ui->chromaWeightValueLabel->setEnabled(isClassic3DMode);
     ui->chromaWeightValueLabel->setText(QString::number(ntscConfiguration.chromaWeight, 'f', 2));
 
     ui->cNRLabel->setEnabled(isSourceNtsc);
@@ -598,12 +608,19 @@ void ChromaDecoderConfigDialog::on_ntscFilterButtonGroup_buttonClicked(QAbstract
 {
 	if(button == ui->ntscMonoRadioButton){
 		ntscConfiguration.dimensions = 0;
+        ntscConfiguration.nnTransform3D = false;
 	} else if (button == ui->ntscFilter1DRadioButton) {
         ntscConfiguration.dimensions = 1;
+        ntscConfiguration.nnTransform3D = false;
     } else if (button == ui->ntscFilter2DRadioButton) {
         ntscConfiguration.dimensions = 2;
+        ntscConfiguration.nnTransform3D = false;
+    } else if (button == ui->ntscFilterNNTransform3DRadioButton) {
+        ntscConfiguration.dimensions = 3;
+        ntscConfiguration.nnTransform3D = true;
     } else {
         ntscConfiguration.dimensions = 3;
+        ntscConfiguration.nnTransform3D = false;
     }
     updateDialog();
     emit chromaDecoderConfigChanged();

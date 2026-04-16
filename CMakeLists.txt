@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
+if(POLICY CMP0144)
+    cmake_policy(SET CMP0144 NEW)
+endif()
 
 # Enforce out-of-source builds before project() to catch issues early
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
@@ -127,6 +130,60 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(FFTW REQUIRED IMPORTED_TARGET fftw3)
 set(FFTW_INCLUDE_DIR ${FFTW_INCLUDE_DIRS})
 set(FFTW_LIBRARY PkgConfig::FFTW)
+
+find_package(onnxruntime CONFIG QUIET)
+if(NOT TARGET onnxruntime::onnxruntime)
+    set(_ONNXRUNTIME_SEARCH_ROOTS
+        ${ONNXRUNTIME_ROOT}
+        $ENV{ONNXRUNTIME_ROOT}
+    )
+    find_path(ONNXRUNTIME_INCLUDE_DIR
+        NAMES onnxruntime_cxx_api.h
+        PATHS
+            ${_ONNXRUNTIME_SEARCH_ROOTS}
+        PATH_SUFFIXES
+            include
+    )
+    find_library(ONNXRUNTIME_LIBRARY
+        NAMES onnxruntime
+        PATHS
+            ${_ONNXRUNTIME_SEARCH_ROOTS}
+        PATH_SUFFIXES
+            lib
+    )
+    if(WIN32)
+        find_file(ONNXRUNTIME_DLL
+            NAMES onnxruntime.dll
+            PATHS
+                ${_ONNXRUNTIME_SEARCH_ROOTS}
+            PATH_SUFFIXES
+                bin
+                lib
+        )
+    endif()
+
+    if(NOT ONNXRUNTIME_INCLUDE_DIR OR NOT ONNXRUNTIME_LIBRARY OR (WIN32 AND NOT ONNXRUNTIME_DLL))
+        message(FATAL_ERROR "Could not find ONNX Runtime. Set ONNXRUNTIME_ROOT to an SDK containing include/ and lib/, or provide onnxruntimeConfig.cmake.")
+    endif()
+
+    add_library(onnxruntime::onnxruntime SHARED IMPORTED GLOBAL)
+    if(WIN32)
+        set_target_properties(onnxruntime::onnxruntime PROPERTIES
+            IMPORTED_IMPLIB "${ONNXRUNTIME_LIBRARY}"
+            IMPORTED_IMPLIB_RELEASE "${ONNXRUNTIME_LIBRARY}"
+            IMPORTED_LOCATION "${ONNXRUNTIME_DLL}"
+            IMPORTED_LOCATION_RELEASE "${ONNXRUNTIME_DLL}"
+            INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_INCLUDE_DIR}"
+        )
+    else()
+        set_target_properties(onnxruntime::onnxruntime PROPERTIES
+            IMPORTED_LOCATION "${ONNXRUNTIME_LIBRARY}"
+            INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_INCLUDE_DIR}"
+        )
+    endif()
+    unset(_ONNXRUNTIME_SEARCH_ROOTS)
+    unset(ONNXRUNTIME_DLL)
+endif()
 
 # Build metadata (set by Nix or other build systems)
 set(APP_BRANCH "nix" CACHE STRING "Build source identifier")
