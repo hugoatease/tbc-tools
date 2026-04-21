@@ -127,6 +127,77 @@ QString sanitizedFileToken(const QString &value)
     return token;
 }
 
+struct EfmAutoloadCandidates {
+    QStringList efmInputs;
+    QStringList pcmInputs;
+    QString ac3Input;
+};
+
+EfmAutoloadCandidates discoverEfmAutoloadCandidates(const QString &directoryPath,
+                                                    const QString &sourceBaseName)
+{
+    EfmAutoloadCandidates candidates;
+    const QString normalizedDirectory = QDir::cleanPath(directoryPath.trimmed());
+    if (normalizedDirectory.isEmpty()) {
+        return candidates;
+    }
+
+    const QDir directory(normalizedDirectory);
+    if (!directory.exists()) {
+        return candidates;
+    }
+
+    const QFileInfoList entries = directory.entryInfoList(QDir::Files | QDir::NoSymLinks,
+                                                           QDir::Name | QDir::IgnoreCase);
+    const QString sourceBaseToken = sourceBaseName.trimmed().toLower();
+    QString bestAc3Candidate;
+    int bestAc3Score = -1;
+
+    for (const QFileInfo &entry : entries) {
+        const QString suffix = entry.suffix().toLower();
+        const QString fileNameLower = entry.fileName().toLower();
+        const QString absolutePath = entry.absoluteFilePath();
+
+        if (suffix == QStringLiteral("efm")) {
+            candidates.efmInputs << absolutePath;
+        }
+        if (suffix == QStringLiteral("pcm")) {
+            candidates.pcmInputs << absolutePath;
+        }
+
+        if (!fileNameLower.contains(QStringLiteral("ac3"))) {
+            continue;
+        }
+
+        int score = 0;
+        if (!sourceBaseToken.isEmpty() && fileNameLower.contains(sourceBaseToken)) {
+            score += 2;
+        }
+        if (suffix == QStringLiteral("bin")
+            || suffix == QStringLiteral("dat")
+            || suffix == QStringLiteral("txt")
+            || suffix == QStringLiteral("sym")
+            || suffix == QStringLiteral("symbols")
+            || suffix == QStringLiteral("raw")) {
+            score += 4;
+        } else if (suffix == QStringLiteral("ac3")) {
+            score += 1;
+        }
+        if (fileNameLower.contains(QStringLiteral("symbol"))
+            || fileNameLower.contains(QStringLiteral("sym"))) {
+            score += 3;
+        }
+
+        if (score > bestAc3Score) {
+            bestAc3Score = score;
+            bestAc3Candidate = absolutePath;
+        }
+    }
+
+    candidates.ac3Input = bestAc3Candidate;
+    return candidates;
+}
+
 void ensureSvgButtonIcon(QAbstractButton *button, const QString &resourcePath)
 {
     if (!button) {
@@ -2387,6 +2458,48 @@ QString MainWindow::outputBaseNameForCurrentSource()
     return sanitizedFileToken(baseName);
 }
 
+void MainWindow::applyEfmHandlerAutoloads(const QString &directoryPath)
+{
+    if (!efmHandlerDialog) {
+        return;
+    }
+
+    const QString normalizedDirectory = QDir::cleanPath(directoryPath.trimmed());
+    const QFileInfo directoryInfo(normalizedDirectory);
+    if (normalizedDirectory.isEmpty() || !directoryInfo.exists() || !directoryInfo.isDir()) {
+        return;
+    }
+
+    QString sourceBaseName;
+    const QString sourceFilename = tbcSource.getCurrentSourceFilename();
+    if (!sourceFilename.isEmpty()) {
+        sourceBaseName = QFileInfo(sourceFilename).completeBaseName();
+    } else if (!lastFilename.isEmpty()) {
+        sourceBaseName = QFileInfo(lastFilename).completeBaseName();
+    }
+
+    const EfmAutoloadCandidates candidates =
+        discoverEfmAutoloadCandidates(normalizedDirectory, sourceBaseName);
+    for (const QString &efmInput : candidates.efmInputs) {
+        efmHandlerDialog->setDefaultEfmInput(efmInput);
+    }
+    if (!candidates.ac3Input.isEmpty()) {
+        efmHandlerDialog->setDefaultAc3Input(candidates.ac3Input);
+    }
+
+    if (exportDialog
+        && !candidates.pcmInputs.isEmpty()
+        && !exportDialog->hasAudioTracksConfigured()) {
+        const QStringList trackFiles = candidates.pcmInputs.mid(0, 4);
+        QStringList trackNames;
+        trackNames.reserve(trackFiles.size());
+        for (const QString &trackFile : trackFiles) {
+            trackNames << QFileInfo(trackFile).completeBaseName();
+        }
+        exportDialog->loadAudioTracksForExport(trackFiles, trackNames);
+    }
+}
+
 // Redraw the viewer (for example, when scaleFactor has been changed)
 void MainWindow::updateImageViewer()
 {
@@ -4443,6 +4556,7 @@ void MainWindow::on_actionEFM_Handler_triggered()
     if (!suggestedOutputBase.isEmpty()) {
         efmHandlerDialog->setSuggestedOutputBase(suggestedOutputBase);
     }
+    applyEfmHandlerAutoloads(sourceDirectory);
 
     efmHandlerDialog->show();
     if (efmHandlerDialog->windowHandle() && windowHandle()) {
@@ -6182,6 +6296,7 @@ void MainWindow::on_finishedLoading(bool success)
         configuration.setSourceDirectory(inFileInfo.absolutePath());
         tbcDebugStream() << "MainWindow::loadTbcFile(): Setting source directory to:" << inFileInfo.absolutePath();
         configuration.writeConfiguration();
+        applyEfmHandlerAutoloads(inFileInfo.absolutePath());
     } else {
         // Load failed
         updateGuiUnloaded();

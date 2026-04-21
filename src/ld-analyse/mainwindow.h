@@ -293,6 +293,7 @@ private:
     bool isViewerTabActive() const;
     QString outputRootDirectoryForCurrentSource();
     QString outputBaseNameForCurrentSource();
+    void applyEfmHandlerAutoloads(const QString &directoryPath);
     void updateImageViewer();
     bool shouldRenderFrameAsync() const;
     void startAsyncFrameRender();

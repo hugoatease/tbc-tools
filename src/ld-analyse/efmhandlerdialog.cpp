@@ -128,6 +128,47 @@ void EfmHandlerDialog::setDefaultEfmInput(const QString &efmFilename)
     }
     updateControlStates();
 }
+void EfmHandlerDialog::setDefaultAc3Input(const QString &ac3Filename)
+{
+    if (runInProgress) {
+        return;
+    }
+
+    const QString normalizedInput = normalizePath(ac3Filename);
+    if (normalizedInput.isEmpty()) {
+        return;
+    }
+
+    const QFileInfo inputInfo(normalizedInput);
+    const QString absoluteInput = inputInfo.absoluteFilePath();
+    if (!inputInfo.exists() || !inputInfo.isFile()) {
+        return;
+    }
+
+    const QString currentAc3Input = normalizePath(ac3InputLineEdit ? ac3InputLineEdit->text() : QString());
+    if (!currentAc3Input.isEmpty()) {
+        const QFileInfo currentInfo(currentAc3Input);
+        if (currentInfo.absoluteFilePath().compare(absoluteInput, Qt::CaseInsensitive) == 0) {
+            return;
+        }
+    }
+
+    if (ac3InputLineEdit && ac3InputLineEdit->text().trimmed().isEmpty()) {
+        ac3InputLineEdit->setText(absoluteInput);
+        if (decodeAc3CheckBox && !decodeAc3CheckBox->isChecked()) {
+            decodeAc3CheckBox->setChecked(true);
+        }
+        sourceDirectory = inputInfo.absolutePath();
+
+        if (ac3OutputLineEdit
+            && (!userEditedAc3Output || ac3OutputLineEdit->text().trimmed().isEmpty())) {
+            ac3OutputLineEdit->setText(
+                QDir(inputInfo.absolutePath()).filePath(inputInfo.completeBaseName() + QStringLiteral(".ac3")));
+            userEditedAc3Output = false;
+        }
+        updateControlStates();
+    }
+}
 
 void EfmHandlerDialog::setSuggestedOutputBase(const QString &outputBasePath)
 {

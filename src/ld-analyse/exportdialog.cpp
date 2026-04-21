@@ -1694,6 +1694,26 @@ void ExportDialog::setOutPoint(int frameNumber)
     syncRangeTimecodeEditors();
 }
 
+bool ExportDialog::hasAudioTracksConfigured() const
+{
+    if (!ui) {
+        return false;
+    }
+
+    const QStringList trackCandidates = {
+        ui->audio1LineEdit ? ui->audio1LineEdit->text().trimmed() : QString(),
+        ui->audio2LineEdit ? ui->audio2LineEdit->text().trimmed() : QString(),
+        ui->audio3LineEdit ? ui->audio3LineEdit->text().trimmed() : QString(),
+        ui->audio4LineEdit ? ui->audio4LineEdit->text().trimmed() : QString()
+    };
+    for (const QString &candidate : trackCandidates) {
+        if (!candidate.isEmpty()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void ExportDialog::loadAudioTracksForExport(const QStringList &trackFiles, const QStringList &trackNames)
 {
     if (!ui) {
@@ -2376,7 +2396,7 @@ void ExportDialog::on_audio1BrowseButton_clicked()
     const QString selected = runOpenFileDialog(this,
                                                tr("Select audio track 1"),
                                                currentInputFile.isEmpty() ? QString() : QFileInfo(currentInputFile).absolutePath(),
-                                               tr("Audio Files (*.wav *.flac *.aiff *.aif *.mp3 *.m4a *.aac *.ogg);;All Files (*)"));
+                                               tr("Audio Files (*.wav *.flac *.aiff *.aif *.mp3 *.m4a *.aac *.ogg *.pcm);;All Files (*)"));
     if (!selected.isEmpty()) {
         ui->audio1LineEdit->setText(selected);
     }
@@ -2387,7 +2407,7 @@ void ExportDialog::on_audio2BrowseButton_clicked()
     const QString selected = runOpenFileDialog(this,
                                                tr("Select audio track 2"),
                                                currentInputFile.isEmpty() ? QString() : QFileInfo(currentInputFile).absolutePath(),
-                                               tr("Audio Files (*.wav *.flac *.aiff *.aif *.mp3 *.m4a *.aac *.ogg);;All Files (*)"));
+                                               tr("Audio Files (*.wav *.flac *.aiff *.aif *.mp3 *.m4a *.aac *.ogg *.pcm);;All Files (*)"));
     if (!selected.isEmpty()) {
         ui->audio2LineEdit->setText(selected);
     }
@@ -2398,7 +2418,7 @@ void ExportDialog::on_audio3BrowseButton_clicked()
     const QString selected = runOpenFileDialog(this,
                                                tr("Select audio track 3"),
                                                currentInputFile.isEmpty() ? QString() : QFileInfo(currentInputFile).absolutePath(),
-                                               tr("Audio Files (*.wav *.flac *.aiff *.aif *.mp3 *.m4a *.aac *.ogg);;All Files (*)"));
+                                               tr("Audio Files (*.wav *.flac *.aiff *.aif *.mp3 *.m4a *.aac *.ogg *.pcm);;All Files (*)"));
     if (!selected.isEmpty()) {
         ui->audio3LineEdit->setText(selected);
     }
@@ -2409,7 +2429,7 @@ void ExportDialog::on_audio4BrowseButton_clicked()
     const QString selected = runOpenFileDialog(this,
                                                tr("Select audio track 4"),
                                                currentInputFile.isEmpty() ? QString() : QFileInfo(currentInputFile).absolutePath(),
-                                               tr("Audio Files (*.wav *.flac *.aiff *.aif *.mp3 *.m4a *.aac *.ogg);;All Files (*)"));
+                                               tr("Audio Files (*.wav *.flac *.aiff *.aif *.mp3 *.m4a *.aac *.ogg *.pcm);;All Files (*)"));
     if (!selected.isEmpty()) {
         ui->audio4LineEdit->setText(selected);
     }
@@ -4436,14 +4456,20 @@ bool ExportDialog::prepareTrimmedAudioTracks(int zeroBasedStartFrame,
             QStringLiteral("ld-analyse-audio-range-%1-%2.wav")
                 .arg(index + 1)
                 .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+        const bool isRawPcmTrack = sourceInfo.suffix().compare(QStringLiteral("pcm"), Qt::CaseInsensitive) == 0;
         QStringList ffmpegArgs;
         ffmpegArgs << QStringLiteral("-hide_banner")
                    << QStringLiteral("-v") << QStringLiteral("error")
                    << QStringLiteral("-nostdin")
                    << QStringLiteral("-y")
                    << QStringLiteral("-ss") << startArg
-                   << QStringLiteral("-t") << durationArg
-                   << QStringLiteral("-i") << sourceTrack
+                   << QStringLiteral("-t") << durationArg;
+        if (isRawPcmTrack) {
+            ffmpegArgs << QStringLiteral("-f") << QStringLiteral("s16le")
+                       << QStringLiteral("-ar") << QStringLiteral("44100")
+                       << QStringLiteral("-ac") << QStringLiteral("2");
+        }
+        ffmpegArgs << QStringLiteral("-i") << sourceTrack
                    << QStringLiteral("-map") << QStringLiteral("0:a:0")
                    << QStringLiteral("-vn")
                    << QStringLiteral("-sn")
@@ -4663,6 +4689,21 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
             continue;
         }
         const QString title = (i < trackTitles.size()) ? trackTitles.at(i).trimmed() : QString();
+        const bool isRawPcmTrack =
+            QFileInfo(track).suffix().compare(QStringLiteral("pcm"), Qt::CaseInsensitive) == 0;
+        if (isRawPcmTrack) {
+            QJsonArray advancedTrack;
+            advancedTrack.append(track);
+            advancedTrack.append(title.isEmpty() ? QJsonValue(QJsonValue::Null)
+                                                 : QJsonValue(title));
+            advancedTrack.append(QJsonValue(QJsonValue::Null));
+            advancedTrack.append(44100);
+            advancedTrack.append(QStringLiteral("s16le"));
+            advancedTrack.append(2);
+            args << QStringLiteral("--audio-track-advanced")
+                 << QString::fromUtf8(QJsonDocument(advancedTrack).toJson(QJsonDocument::Compact));
+            continue;
+        }
         if (!title.isEmpty()) {
             QJsonArray advancedTrack;
             advancedTrack.append(track);

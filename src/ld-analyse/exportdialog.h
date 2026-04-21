@@ -38,6 +38,7 @@ public:
     void setExportProfileConfigPreference(bool enabled, const QString &configPath);
     void setInPoint(int frameNumber);
     void setOutPoint(int frameNumber);
+    bool hasAudioTracksConfigured() const;
     void loadAudioTracksForExport(const QStringList &trackFiles,
                                   const QStringList &trackNames = QStringList());
     void refreshResolutionOptions();

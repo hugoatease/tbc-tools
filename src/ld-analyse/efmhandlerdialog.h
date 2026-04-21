@@ -34,6 +34,7 @@ public:
 
     void setSourceDirectory(const QString &directory);
     void setDefaultEfmInput(const QString &efmFilename);
+    void setDefaultAc3Input(const QString &ac3Filename);
     void setSuggestedOutputBase(const QString &outputBasePath);
 
 signals:
