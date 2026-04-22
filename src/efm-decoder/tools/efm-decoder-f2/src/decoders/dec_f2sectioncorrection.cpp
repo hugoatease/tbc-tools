@@ -464,9 +464,12 @@ void F2SectionCorrection::processInternalBuffer()
 
             // Is the gap length below the allowed maximum?
             if (gapLength > m_maximumGapSize) {
-                // The gap is too large to correct
-                qFatal("F2SectionCorrection::correctInternalBuffer(): Exiting due to gap too "
-                       "large in internal buffer.");
+                qWarning().nospace().noquote()
+                        << "F2SectionCorrection::correctInternalBuffer(): Gap length "
+                        << gapLength
+                        << " exceeds configured maximum "
+                        << m_maximumGapSize
+                        << " - attempting best-effort correction.";
             }
 
             // Can we correct the error?
@@ -500,17 +503,16 @@ void F2SectionCorrection::processInternalBuffer()
                         // calculating the current section time from it.  If the time is positive
                         // the error section is in the same track as error_end, otherwise it is in
                         // the same track as error_start
-                        SectionTime currentTime =
-                                m_internalBuffer[errorEnd].metadata.sectionTime()
+                        const qint32 currentTimeFrames =
+                                m_internalBuffer[errorEnd].metadata.sectionTime().frames()
                                 - (errorEnd - i);
 
                         // Now we can set the track number and correct the section time
-                        if (currentTime.frames() >= 0) {
+                        if (currentTimeFrames >= 0) {
                             m_internalBuffer[i].metadata.setTrackNumber(
                                     m_internalBuffer[errorEnd].metadata.trackNumber());
                             m_internalBuffer[i].metadata.setSectionTime(
-                                    m_internalBuffer[errorEnd].metadata.sectionTime()
-                                    - (errorEnd - i));
+                                    SectionTime(currentTimeFrames));
                         } else {
                             m_internalBuffer[i].metadata.setTrackNumber(
                                     m_internalBuffer[errorStart].metadata.trackNumber());
@@ -519,11 +521,9 @@ void F2SectionCorrection::processInternalBuffer()
                                     + (i - errorStart));
                         }
 
-                        // Adding a qFatal here as this functionality is untested
-                        // (I haven't found any examples of this in the test data)
-                        qFatal("F2SectionCorrection::correctInternalBuffer(): Exiting due to "
-                               "track change in internal buffer - untested functionality - please "
-                               "confirm!");
+                        qWarning("F2SectionCorrection::correctInternalBuffer(): Track change in "
+                                 "internal buffer detected - applying best-effort metadata "
+                                 "correction.");
                     } else {
                         // The track number is the same, so we can correct the track number by just
                         // copying it
@@ -556,9 +556,53 @@ void F2SectionCorrection::processInternalBuffer()
                                 << originalMetadata.absoluteSectionTime().toString();
                 }
             } else {
-                // We cannot correct the error
-                qFatal("F2SectionCorrection::correctInternalBuffer(): Exiting due to "
-                       "uncorrectable error in internal buffer.");
+                // We cannot perfectly correct the error, so fall back to a best-effort
+                // monotonic metadata reconstruction and keep processing.
+                qWarning().nospace().noquote()
+                        << "F2SectionCorrection::correctInternalBuffer(): Uncorrectable "
+                           "metadata gap detected between "
+                        << m_internalBuffer[errorStart].metadata.absoluteSectionTime().toString()
+                        << " and "
+                        << m_internalBuffer[errorEnd].metadata.absoluteSectionTime().toString()
+                        << " (gap length "
+                        << gapLength
+                        << ", time difference "
+                        << timeDifference
+                        << ") - applying fallback metadata interpolation.";
+
+                for (int i = errorStart + 1; i < errorEnd; ++i) {
+                    SectionMetadata originalMetadata = m_internalBuffer[i].metadata;
+
+                    // Start with the previous known-good section metadata as a safe baseline.
+                    m_internalBuffer[i].metadata = m_internalBuffer[errorStart].metadata;
+
+                    // Force monotonic absolute time progression.
+                    SectionTime expectedTime =
+                            m_internalBuffer[errorStart].metadata.absoluteSectionTime()
+                            + (i - errorStart);
+                    m_internalBuffer[i].metadata.setAbsoluteSectionTime(expectedTime);
+
+                    // Preserve track continuity from the start section.
+                    m_internalBuffer[i].metadata.setTrackNumber(
+                            m_internalBuffer[errorStart].metadata.trackNumber());
+                    m_internalBuffer[i].metadata.setSectionTime(
+                            m_internalBuffer[errorStart].metadata.sectionTime()
+                            + (i - errorStart));
+
+                    m_internalBuffer[i].metadata.setValid(true);
+                    m_uncorrectableSections++;
+
+                    if (m_showDebug) {
+                        tbcDebugStream().noquote().nospace()
+                                << "F2SectionCorrection::correctInternalBuffer(): Fallback "
+                                   "corrected section "
+                                << i
+                                << " to absolute time "
+                                << m_internalBuffer[i].metadata.absoluteSectionTime().toString()
+                                << " from original metadata absolute time "
+                                << originalMetadata.absoluteSectionTime().toString();
+                    }
+                }
             }
         }
     }
