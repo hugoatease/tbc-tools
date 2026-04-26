@@ -2990,10 +2990,59 @@ void ExportDialog::on_exportButton_clicked()
         QMessageBox::warning(this, tr("Error"), tr("tbc-video-export not found in PATH or alongside ld-analyse."));
         return;
     }
-    const QString commandLine = formatCommand(exportPath, arguments);
-    appendLog(tr("Command: %1").arg(commandLine));
+    const auto prepareVideoExportLaunch = [this, &exportPath](const QStringList &exportArgs,
+                                                               const QString &contextLabel,
+                                                               QString *programOut,
+                                                               QStringList *argsOut) {
+        if (!programOut || !argsOut) {
+            return;
+        }
+
+        *programOut = exportPath;
+        *argsOut = exportArgs;
+
+#if defined(Q_OS_UNIX)
+        const QString scriptPath = QStandardPaths::findExecutable(QStringLiteral("script"));
+        if (!scriptPath.isEmpty()) {
+#if defined(Q_OS_MACOS)
+            *programOut = scriptPath;
+            *argsOut = {QStringLiteral("-q"), QStringLiteral("/dev/null"), exportPath};
+            argsOut->append(exportArgs);
+            appendLog(tr("Using script (bsd) to enable ANSI progress output for %1.")
+                          .arg(contextLabel));
+#else
+            const QString scriptCommand = formatShellCommand(exportPath, exportArgs);
+            *programOut = scriptPath;
+            *argsOut = {QStringLiteral("-q"), QStringLiteral("-e"), QStringLiteral("-c"),
+                        scriptCommand, QStringLiteral("/dev/null")};
+            appendLog(tr("Using script to enable ANSI progress output for %1.")
+                          .arg(contextLabel));
+#endif
+            return;
+        }
+
+        if (!argsOut->contains(QStringLiteral("--show-process-output"))) {
+            argsOut->append(QStringLiteral("--show-process-output"));
+            appendLog(tr("script command not found; using --show-process-output for %1.")
+                          .arg(contextLabel));
+        }
+#else
+        Q_UNUSED(contextLabel);
+#endif
+    };
+
+    QString programToRun;
+    QStringList argsToRun;
+    prepareVideoExportLaunch(arguments, tr("main export"), &programToRun, &argsToRun);
+    appendLog(tr("Command: %1").arg(formatCommand(programToRun, argsToRun)));
+
+    QString proxyProgramToRun;
+    QStringList proxyArgsToRun;
     if (generateProxyRequested && !parallelProxyArguments.isEmpty()) {
-        appendLog(tr("Parallel proxy command: %1").arg(formatCommand(exportPath, parallelProxyArguments)));
+        prepareVideoExportLaunch(parallelProxyArguments, tr("parallel proxy export"),
+                                 &proxyProgramToRun, &proxyArgsToRun);
+        appendLog(tr("Parallel proxy command: %1")
+                      .arg(formatCommand(proxyProgramToRun, proxyArgsToRun)));
     }
     activeRunStage = RunStage::MainExport;
     generateProxyForCurrentRun = generateProxyRequested;
@@ -3030,25 +3079,6 @@ void ExportDialog::on_exportButton_clicked()
         }
         exportProcess->setProcessEnvironment(launchEnvironment);
     }
-    QString programToRun = exportPath;
-    QStringList argsToRun = arguments;
-#if defined(Q_OS_UNIX)
-    const QString scriptPath = QStandardPaths::findExecutable(QStringLiteral("script"));
-    if (!scriptPath.isEmpty()) {
-#if defined(Q_OS_MACOS)
-        programToRun = scriptPath;
-        argsToRun = {QStringLiteral("-q"), QStringLiteral("/dev/null"), exportPath};
-        argsToRun.append(arguments);
-        appendLog(tr("Using script (bsd) to enable ANSI progress output."));
-#else
-        const QString scriptCommand = formatShellCommand(exportPath, arguments);
-        programToRun = scriptPath;
-        argsToRun = {QStringLiteral("-q"), QStringLiteral("-e"), QStringLiteral("-c"),
-                     scriptCommand, QStringLiteral("/dev/null")};
-        appendLog(tr("Using script to enable ANSI progress output."));
-#endif
-    }
-#endif
     exportProcess->start(programToRun, argsToRun);
     if (!exportProcess->waitForStarted(5000)) {
         cleanupTemporaryMetadataSnapshot();
@@ -3070,7 +3100,7 @@ void ExportDialog::on_exportButton_clicked()
     if (generateProxyRequested && !parallelProxyArguments.isEmpty()) {
         parallelProxyProcess->setWorkingDirectory(QFileInfo(currentInputFile).absolutePath());
         parallelProxyProcess->setProcessEnvironment(launchEnvironment);
-        parallelProxyProcess->start(exportPath, parallelProxyArguments);
+        parallelProxyProcess->start(proxyProgramToRun, proxyArgsToRun);
         if (parallelProxyProcess->waitForStarted(5000)) {
             parallelProxyRunning = true;
             generateProxyForCurrentRun = false;
