@@ -9,6 +9,8 @@
  * This file is part of ld-decode-tools.
  ******************************************************************************/
 
+#include <array>
+#include <cmath>
 #include <limits>
 #include <QDir>
 #include <QDateTime>
@@ -57,6 +59,228 @@ void applyFullFrameDecodeBounds(LdDecodeMetaData::VideoParameters &videoParamete
     videoParameters.lastActiveFieldLine = videoParameters.fieldHeight;
     videoParameters.firstActiveFrameLine = 0;
     videoParameters.lastActiveFrameLine = frameHeight;
+}
+
+QImage renderRgbParadeScopeImage(const QVector<QRgb> &rgbData,
+                                 qint32 frameWidth,
+                                 qint32 frameHeight,
+                                 const LdDecodeMetaData::VideoParameters &videoParameters,
+                                 const QSize &targetSize)
+{
+    if (frameWidth <= 0 || frameHeight <= 0 || rgbData.size() < (frameWidth * frameHeight)) {
+        return QImage();
+    }
+
+    const qint32 requestedWidth = targetSize.width() > 0 ? targetSize.width() : frameWidth;
+    const qint32 requestedHeight = targetSize.height() > 0 ? targetSize.height() : frameHeight;
+    const qint32 scopeWidth = qBound<qint32>(192, requestedWidth, 2048);
+    const qint32 scopeHeight = qBound<qint32>(120, requestedHeight, 1536);
+
+    QImage scopeImage(scopeWidth, scopeHeight, QImage::Format_RGB32);
+    scopeImage.fill(Qt::black);
+
+    const qint32 leftAxisWidth = qBound<qint32>(20, scopeWidth / 11, 64);
+    const qint32 rightPadding = qBound<qint32>(4, scopeWidth / 64, 16);
+    const qint32 topPadding = qBound<qint32>(12, scopeHeight / 14, 52);
+    const qint32 bottomPadding = qBound<qint32>(10, scopeHeight / 12, 48);
+    const QRect plotRect(leftAxisWidth,
+                         topPadding,
+                         qMax<qint32>(1, scopeWidth - leftAxisWidth - rightPadding),
+                         qMax<qint32>(1, scopeHeight - topPadding - bottomPadding));
+    const qint32 plotHeight = qMax<qint32>(1, plotRect.height());
+
+    qint32 sourceXStart = qBound<qint32>(0, videoParameters.activeVideoStart, frameWidth - 1);
+    qint32 sourceXEnd = qBound<qint32>(sourceXStart + 1, videoParameters.activeVideoEnd, frameWidth);
+    qint32 sourceYStart = qBound<qint32>(0, videoParameters.firstActiveFrameLine, frameHeight - 1);
+    qint32 sourceYEnd = qBound<qint32>(sourceYStart + 1, videoParameters.lastActiveFrameLine, frameHeight);
+
+    if (sourceXEnd <= sourceXStart) {
+        sourceXStart = 0;
+        sourceXEnd = frameWidth;
+    }
+    if (sourceYEnd <= sourceYStart) {
+        sourceYStart = 0;
+        sourceYEnd = frameHeight;
+    }
+
+    const qint32 minWaveformWidth = qMax<qint32>(64, frameWidth / 8);
+    if ((sourceXEnd - sourceXStart) < minWaveformWidth) {
+        sourceXStart = 0;
+        sourceXEnd = frameWidth;
+    }
+    const qint32 minWaveformHeight = qMax<qint32>(32, frameHeight / 8);
+    if ((sourceYEnd - sourceYStart) < minWaveformHeight) {
+        sourceYStart = 0;
+        sourceYEnd = frameHeight;
+    }
+
+    const qint32 sourceWidth = qMax<qint32>(1, sourceXEnd - sourceXStart);
+    const qint32 sourceHeight = qMax<qint32>(1, sourceYEnd - sourceYStart);
+    const qint32 xDenominator = qMax<qint32>(1, sourceWidth - 1);
+    const qint32 channelRenderWidth = qMax<qint32>(1, plotRect.width() / 3);
+    const qint32 sampleStepX = qMax<qint32>(1, sourceWidth / channelRenderWidth);
+    const qint32 sampleStepY = qMax<qint32>(1, sourceHeight / qMax<qint32>(1, plotHeight * 2));
+
+    auto mapCodeValueToY = [&](qint32 value) {
+        const qint32 clamped = qBound<qint32>(0, value, 255);
+        if (plotHeight <= 1) {
+            return plotRect.top();
+        }
+        const qint32 localY = (plotHeight - 1) - ((clamped * (plotHeight - 1)) / 255);
+        return plotRect.top() + localY;
+    };
+
+    struct WaveformChannel {
+        qint32 startX = 0;
+        qint32 width = 1;
+        QVector<quint16> bins;
+    };
+    std::array<WaveformChannel, 3> waveformChannels;
+    for (qint32 channel = 0; channel < 3; ++channel) {
+        const qint32 channelStart = plotRect.left() + ((channel * plotRect.width()) / 3);
+        const qint32 channelEnd = plotRect.left() + (((channel + 1) * plotRect.width()) / 3);
+        WaveformChannel &waveformChannel = waveformChannels[static_cast<size_t>(channel)];
+        waveformChannel.startX = channelStart;
+        waveformChannel.width = qMax<qint32>(1, channelEnd - channelStart);
+        waveformChannel.bins.fill(0, waveformChannel.width * plotHeight);
+    }
+
+    auto channelValueAt = [](QRgb pixel, qint32 channel) -> qint32 {
+        switch (channel) {
+        case 0: return qRed(pixel);
+        case 1: return qGreen(pixel);
+        default: return qBlue(pixel);
+        }
+    };
+
+    for (qint32 sourceY = sourceYStart; sourceY < sourceYEnd; sourceY += sampleStepY) {
+        const qint32 lineOffset = sourceY * frameWidth;
+        for (qint32 sourceX = sourceXStart; sourceX < sourceXEnd; sourceX += sampleStepX) {
+            const QRgb sourcePixel = rgbData[lineOffset + sourceX];
+            const qint32 sourceOffsetX = sourceX - sourceXStart;
+            for (qint32 channel = 0; channel < 3; ++channel) {
+                WaveformChannel &waveformChannel = waveformChannels[static_cast<size_t>(channel)];
+                const qint32 localX = (waveformChannel.width <= 1)
+                    ? 0
+                    : ((sourceOffsetX * (waveformChannel.width - 1)) / xDenominator);
+                const qint32 value = channelValueAt(sourcePixel, channel);
+                const qint32 mappedY = mapCodeValueToY(value) - plotRect.top();
+                quint16 &binValue = waveformChannel.bins[(mappedY * waveformChannel.width) + localX];
+                if (binValue < std::numeric_limits<quint16>::max()) {
+                    ++binValue;
+                }
+            }
+        }
+    }
+
+    const std::array<QColor, 3> waveformColors = {
+        QColor(255, 96, 96),
+        QColor(96, 255, 128),
+        QColor(128, 176, 255)
+    };
+    for (qint32 channel = 0; channel < 3; ++channel) {
+        const WaveformChannel &waveformChannel = waveformChannels[static_cast<size_t>(channel)];
+        const QColor channelColor = waveformColors[static_cast<size_t>(channel)];
+        for (qint32 localY = 0; localY < plotHeight; ++localY) {
+            QRgb *scanLine = reinterpret_cast<QRgb *>(scopeImage.scanLine(plotRect.top() + localY));
+            for (qint32 localX = 0; localX < waveformChannel.width; ++localX) {
+                const quint16 density = waveformChannel.bins[(localY * waveformChannel.width) + localX];
+                if (density == 0) {
+                    continue;
+                }
+
+                qint32 intensity = static_cast<qint32>(std::sqrt(static_cast<double>(density)) * 48.0);
+                intensity = qBound<qint32>(20, intensity, 255);
+                const qint32 addRed = (channelColor.red() * intensity) / 255;
+                const qint32 addGreen = (channelColor.green() * intensity) / 255;
+                const qint32 addBlue = (channelColor.blue() * intensity) / 255;
+
+                const qint32 targetX = waveformChannel.startX + localX;
+                const QRgb current = scanLine[targetX];
+                scanLine[targetX] = qRgb(
+                    qMin<qint32>(255, qRed(current) + addRed),
+                    qMin<qint32>(255, qGreen(current) + addGreen),
+                    qMin<qint32>(255, qBlue(current) + addBlue));
+            }
+        }
+    }
+
+    QPainter scopePainter(&scopeImage);
+    scopePainter.setRenderHint(QPainter::Antialiasing, false);
+
+    scopePainter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+    scopePainter.setPen(QPen(QColor(150, 150, 150), 1));
+    scopePainter.drawRect(plotRect.adjusted(0, 0, -1, -1));
+    scopePainter.drawLine(plotRect.left() + (plotRect.width() / 3),
+                          plotRect.top(),
+                          plotRect.left() + (plotRect.width() / 3),
+                          plotRect.bottom());
+    scopePainter.drawLine(plotRect.left() + ((plotRect.width() * 2) / 3),
+                          plotRect.top(),
+                          plotRect.left() + ((plotRect.width() * 2) / 3),
+                          plotRect.bottom());
+
+    const std::array<qint32, 5> rangeGuideValues = { 0, 64, 128, 192, 255 };
+    for (const qint32 value : rangeGuideValues) {
+        const bool majorGuide = (value == 0 || value == 128 || value == 255);
+        scopePainter.setPen(QPen(majorGuide ? QColor(110, 110, 110) : QColor(80, 80, 80), 1));
+        const qint32 yPosition = mapCodeValueToY(value);
+        scopePainter.drawLine(plotRect.left(), yPosition, plotRect.right(), yPosition);
+    }
+
+    const std::array<qint32, 2> legalRangeMarkers = { 16, 235 };
+    scopePainter.setPen(QPen(QColor(150, 150, 150, 200), 1, Qt::DashLine));
+    for (const qint32 value : legalRangeMarkers) {
+        const qint32 yPosition = mapCodeValueToY(value);
+        scopePainter.drawLine(plotRect.left(), yPosition, plotRect.right(), yPosition);
+    }
+
+    QFont axisFont = scopePainter.font();
+    axisFont.setPointSize(qMax<qint32>(7, scopeHeight / 42));
+    scopePainter.setFont(axisFont);
+    const qint32 axisLabelWidth = qMax<qint32>(10, leftAxisWidth - 6);
+    for (const qint32 value : rangeGuideValues) {
+        const qint32 yPosition = mapCodeValueToY(value);
+        scopePainter.setPen(QColor(205, 205, 205));
+        scopePainter.drawText(QRect(2, yPosition - 8, axisLabelWidth, 16),
+                              Qt::AlignRight | Qt::AlignVCenter,
+                              QString::number(value));
+    }
+
+    scopePainter.setPen(QColor(170, 170, 170));
+    scopePainter.drawText(QRect(plotRect.left(),
+                                qMax<qint32>(0, scopeHeight - bottomPadding),
+                                plotRect.width(),
+                                bottomPadding),
+                          Qt::AlignLeft | Qt::AlignVCenter,
+                          QStringLiteral("8-bit range 0-255"));
+
+    QFont labelFont = scopePainter.font();
+    labelFont.setPointSize(qMax<qint32>(8, scopeHeight / 36));
+    labelFont.setBold(true);
+    scopePainter.setFont(labelFont);
+
+    const std::array<QString, 3> labels = { QStringLiteral("R"), QStringLiteral("G"), QStringLiteral("B") };
+    const std::array<QColor, 3> labelColors = {
+        QColor(255, 96, 96),
+        QColor(96, 255, 128),
+        QColor(128, 176, 255)
+    };
+
+    for (qint32 channel = 0; channel < 3; ++channel) {
+        const qint32 channelStart = plotRect.left() + ((channel * plotRect.width()) / 3);
+        const qint32 channelEnd = plotRect.left() + (((channel + 1) * plotRect.width()) / 3);
+        scopePainter.setPen(labelColors[static_cast<size_t>(channel)]);
+        scopePainter.drawText(QRect(channelStart,
+                                    2,
+                                    qMax<qint32>(8, channelEnd - channelStart),
+                                    qMax<qint32>(10, topPadding - 2)),
+                              Qt::AlignHCenter | Qt::AlignVCenter,
+                              labels[static_cast<size_t>(channel)]);
+    }
+
+    scopePainter.end();
+    return scopeImage.convertToFormat(QImage::Format_RGB32);
 }
 }
 
@@ -325,6 +549,11 @@ bool TbcSource::getSplitViewEnabled() const
     return viewMode == ViewMode::SPLIT_VIEW;
 }
 
+bool TbcSource::getRgbScopeViewEnabled() const
+{
+    return viewMode == ViewMode::RGB_SCOPE_VIEW;
+}
+
 // Method to get the state of the stretch field mode
 bool TbcSource::getStretchField() const
 {
@@ -400,10 +629,10 @@ QImage TbcSource::getImage()
     }
 
     // Get a QImage for the output
-    auto outputImage = generateQImage();
+    auto outputImage = generateQImage(viewMode);
 
     // Highlight dropouts
-    if (dropoutsOn) {
+    if (dropoutsOn && !getRgbScopeViewEnabled()) {
         // Create a painter object
         QPainter imagePainter(&outputImage);
 
@@ -466,6 +695,10 @@ QImage TbcSource::getImage()
                         }
                         break;
                     }
+
+                    case ViewMode::RGB_SCOPE_VIEW: {
+                        break;
+                    }
                 }
             }
         }
@@ -478,6 +711,22 @@ QImage TbcSource::getImage()
     cacheValid = true;
 
     return outputImage;
+}
+
+QImage TbcSource::getRgbScopeImage(const QSize &targetSize)
+{
+    if (metadataOnly) return QImage();
+    if (loadedFrameNumber == -1 && loadedFieldNumber == -1) return QImage();
+
+    const QSize normalizedTargetSize = targetSize.expandedTo(QSize(1, 1));
+    if (rgbScopeCacheValid && rgbScopeCacheSize == normalizedTargetSize) {
+        return rgbScopeCache;
+    }
+
+    rgbScopeCache = generateQImage(ViewMode::RGB_SCOPE_VIEW, normalizedTargetSize);
+    rgbScopeCacheValid = true;
+    rgbScopeCacheSize = normalizedTargetSize;
+    return rgbScopeCache;
 }
 
 // Method to get the number of available frames
@@ -626,6 +875,10 @@ TbcSource::ScanLineData TbcSource::getScanLineData(qint32 scanLine)
             frameLine = scanLine;
             isFirstField = (scanLine % 2) == 0;
             break;
+        }
+
+        case ViewMode::RGB_SCOPE_VIEW: {
+            return ScanLineData();
         }
 
         case ViewMode::SPLIT_VIEW: {
@@ -798,7 +1051,9 @@ TbcSource::FieldTimingData TbcSource::getFieldTimingData()
         return derivedHeight > 0 ? derivedHeight : videoParameters.fieldHeight;
     };
 
-    const bool showBothFields = (viewMode == ViewMode::FRAME_VIEW || viewMode == ViewMode::SPLIT_VIEW);
+    const bool showBothFields = (viewMode == ViewMode::FRAME_VIEW
+                                 || viewMode == ViewMode::SPLIT_VIEW
+                                 || viewMode == ViewMode::RGB_SCOPE_VIEW);
     const bool useFirstField = (loadedFieldNumber % 2) != 0;
     const qint32 selectedInputIndex = useFirstField ? firstInputIndex : secondInputIndex;
 
@@ -1045,6 +1300,10 @@ void TbcSource::resetState()
     loadedFieldNumber = -1;
     inputFieldsValid = false;
     decodedFrameValid = false;
+    rgbScopeCache = QImage();
+    rgbScopeCacheValid = false;
+    rgbScopeCacheSize = QSize();
+    cache = QImage();
     cacheValid = false;
 }
 
@@ -1055,6 +1314,8 @@ void TbcSource::invalidateImageCache()
     // load depends on the decoder parameters
     inputFieldsValid = false;
     decodedFrameValid = false;
+    rgbScopeCacheValid = false;
+    rgbScopeCacheSize = QSize();
     cacheValid = false;
 }
 
@@ -1272,7 +1533,7 @@ void TbcSource::decodeFrame()
 }
 
 // Method to create a QImage for a source video frame
-QImage TbcSource::generateQImage()
+QImage TbcSource::generateQImage(ViewMode renderViewMode, const QSize &targetSize)
 {
     // Get the metadata for the video parameters
     LdDecodeMetaData::VideoParameters videoParameters = ldDecodeMetaData.getVideoParameters();
@@ -1293,7 +1554,7 @@ QImage TbcSource::generateQImage()
 
     if (chromaOn) {
         // Show debug information
-        if (getFieldViewEnabled()) {
+        if (renderViewMode == ViewMode::FIELD_VIEW) {
             tbcDebugStream() << "TbcSource::generateQImage(): Generating a chroma image from field"
                              << loadedFieldNumber << "(" << videoParameters.fieldWidth << "x" << videoParameters.fieldHeight << ")";
         } else {
@@ -1325,7 +1586,7 @@ QImage TbcSource::generateQImage()
         }
     } else {
         // Show debug information
-        if (getFieldViewEnabled()) {
+        if (renderViewMode == ViewMode::FIELD_VIEW) {
             tbcDebugStream() << "TbcSource::generateQImage(): Generating a source image from field"
                              << loadedFieldNumber << "(" << videoParameters.fieldWidth << "x" << videoParameters.fieldHeight << ")";
         } else {
@@ -1358,9 +1619,22 @@ QImage TbcSource::generateQImage()
         }
     }
 
+    if (renderViewMode == ViewMode::RGB_SCOPE_VIEW) {
+        const QImage scopeImage = renderRgbParadeScopeImage(rgbData, frameWidth, frameHeight, videoParameters, targetSize);
+        return scopeImage.isNull() ? outputImage : scopeImage;
+    }
+
     // Copy RGB data to QImage
-    switch (getViewMode()) {
+    switch (renderViewMode) {
         case ViewMode::FRAME_VIEW: {
+            for (auto y = 0; y < inputHeight; y++) {
+                auto *outputLine = reinterpret_cast<QRgb*>(outputImage.scanLine(y + inputOffset));
+                std::copy_n(&rgbData[y * inputWidth], inputWidth, &outputLine[outputOffset]);
+            }
+            break;
+        }
+
+        case ViewMode::RGB_SCOPE_VIEW: {
             for (auto y = 0; y < inputHeight; y++) {
                 auto *outputLine = reinterpret_cast<QRgb*>(outputImage.scanLine(y + inputOffset));
                 std::copy_n(&rgbData[y * inputWidth], inputWidth, &outputLine[outputOffset]);

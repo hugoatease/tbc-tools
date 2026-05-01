@@ -765,6 +765,7 @@
     </property>
     <addaction name="actionVectorscope"/>
     <addaction name="actionLine_scope"/>
+    <addaction name="actionRGB_scope"/>
     <addaction name="actionField_timing_scope"/>
    </widget>
    <widget class="QMenu" name="menuHelp">
@@ -892,6 +893,11 @@
    </property>
    <property name="shortcut">
     <string>Ctrl+L</string>
+   </property>
+  </action>
+  <action name="actionRGB_scope">
+   <property name="text">
+    <string>RGB scope...</string>
    </property>
   </action>
   <action name="actionVectorscope">

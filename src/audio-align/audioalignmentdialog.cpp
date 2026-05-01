@@ -86,6 +86,9 @@ AudioAlignmentDialog::AudioAlignmentDialog(QWidget *parent) :
     if (ui->loadTracksForExportLabel) {
         ui->loadTracksForExportLabel->setToolTip(loadTracksForExportTooltip);
     }
+    if (ui->cancelButton) {
+        ui->cancelButton->setToolTip(tr("Force stop the currently running alignment process."));
+    }
 
     if (ui->statusLabel) {
         ui->statusLabel->setText(tr("Using internal AAA workflow (ffprobe + ffmpeg + VhsDecodeAutoAudioAlign)."));
@@ -162,6 +165,10 @@ void AudioAlignmentDialog::setAlignmentUiBusy(bool busy)
         ui->alignButton->setEnabled(enabled);
         ui->alignButton->setText(busy ? tr("Aligning...") : tr("Align"));
     }
+    if (ui->cancelButton) {
+        ui->cancelButton->setEnabled(busy);
+        ui->cancelButton->setText(tr("Cancel / Force Stop"));
+    }
 }
 
 void AudioAlignmentDialog::startAlignmentRun(const QString &jsonFileName,
@@ -177,6 +184,7 @@ void AudioAlignmentDialog::startAlignmentRun(const QString &jsonFileName,
         return;
     }
 
+    alignmentCancelRequested.store(false, std::memory_order_relaxed);
     setAlignmentUiBusy(true);
 
     QPointer<AudioAlignmentDialog> self(this);
@@ -185,6 +193,9 @@ void AudioAlignmentDialog::startAlignmentRun(const QString &jsonFileName,
         runResult.success = true;
         const int totalTracks = qMax(1, static_cast<int>(trackRequests.size()));
         int completedTracks = 0;
+        auto cancellationRequested = [self]() -> bool {
+            return !self || self->alignmentCancelRequested.load(std::memory_order_relaxed);
+        };
 
         auto postStatus = [self](const QString &statusText) {
             if (!self) {
@@ -216,6 +227,12 @@ void AudioAlignmentDialog::startAlignmentRun(const QString &jsonFileName,
         };
 
         for (const AlignmentTrackRequest &trackRequest : trackRequests) {
+            if (cancellationRequested()) {
+                runResult.success = false;
+                runResult.cancelled = true;
+                runResult.errorMessage = QObject::tr("Operation cancelled by user.");
+                break;
+            }
             updateProgressStatus(trackRequest.trackLabel, 0, QString());
 
             QString trackErrorMessage;
@@ -228,11 +245,17 @@ void AudioAlignmentDialog::startAlignmentRun(const QString &jsonFileName,
                 [&](int stagePercent, const QString &stageMessage) {
                     updateProgressStatus(trackRequest.trackLabel, stagePercent, stageMessage);
                 },
+                cancellationRequested,
                 &trackErrorMessage);
             if (!success) {
                 runResult.success = false;
-                runResult.failureTrackLabel = trackRequest.trackLabel;
                 runResult.errorMessage = trackErrorMessage;
+                runResult.cancelled = cancellationRequested()
+                                      || trackErrorMessage.contains(QStringLiteral("cancelled"),
+                                                                    Qt::CaseInsensitive);
+                if (!runResult.cancelled) {
+                    runResult.failureTrackLabel = trackRequest.trackLabel;
+                }
                 break;
             }
 
@@ -281,6 +304,14 @@ void AudioAlignmentDialog::finishAlignmentRun(const AlignmentRunResult &result)
 {
     QApplication::restoreOverrideCursor();
     setAlignmentUiBusy(false);
+    alignmentCancelRequested.store(false, std::memory_order_relaxed);
+
+    if (result.cancelled) {
+        if (ui && ui->statusLabel) {
+            ui->statusLabel->setText(tr("Alignment cancelled."));
+        }
+        return;
+    }
 
     if (!result.success) {
         const QString failedTrackLabel = result.failureTrackLabel.isEmpty()
@@ -356,6 +387,7 @@ void AudioAlignmentDialog::finishAlignmentRun(const AlignmentRunResult &result)
 AudioAlignmentDialog::~AudioAlignmentDialog()
 {
     if (alignmentWorkerThread) {
+        alignmentCancelRequested.store(true, std::memory_order_relaxed);
         alignmentWorkerThread->wait();
         delete alignmentWorkerThread;
         alignmentWorkerThread = nullptr;
@@ -367,7 +399,10 @@ void AudioAlignmentDialog::closeEvent(QCloseEvent *event)
 {
     if (alignmentInProgress) {
         if (ui && ui->statusLabel) {
-            ui->statusLabel->setText(tr("Alignment is currently running. Please wait for completion."));
+            const bool stopRequested = alignmentCancelRequested.load(std::memory_order_relaxed);
+            ui->statusLabel->setText(stopRequested
+                                         ? tr("Alignment stop requested. Please wait for the running process to exit.")
+                                         : tr("Alignment is currently running. Use Cancel / Force Stop to stop it."));
         }
         event->ignore();
         return;
@@ -687,6 +722,32 @@ void AudioAlignmentDialog::on_alignButton_clicked()
                       trackRequests,
                       ui->overwriteCheckBox && ui->overwriteCheckBox->isChecked(),
                       currentRfVideoSampleRateHz());
+}
+
+void AudioAlignmentDialog::on_cancelButton_clicked()
+{
+    if (!alignmentInProgress) {
+        if (ui && ui->statusLabel) {
+            ui->statusLabel->setText(tr("No alignment is currently running."));
+        }
+        return;
+    }
+
+    const bool alreadyRequested = alignmentCancelRequested.exchange(true, std::memory_order_relaxed);
+    if (alreadyRequested) {
+        if (ui && ui->statusLabel) {
+            ui->statusLabel->setText(tr("Force stop already requested. Waiting for the running process to exit..."));
+        }
+        return;
+    }
+
+    if (ui && ui->statusLabel) {
+        ui->statusLabel->setText(tr("Stopping alignment..."));
+    }
+    if (ui && ui->cancelButton) {
+        ui->cancelButton->setEnabled(false);
+        ui->cancelButton->setText(tr("Stopping..."));
+    }
 }
 
 void AudioAlignmentDialog::updateLinearOutputFromInput(bool forceOutputUpdate)

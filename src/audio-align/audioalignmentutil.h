@@ -17,6 +17,7 @@
 
 namespace AudioAlignmentUtil {
 using ProgressCallback = std::function<void(int percent, const QString &statusMessage)>;
+using CancelCallback = std::function<bool()>;
 QString normalizePathForCurrentPlatform(const QString &path);
 QString defaultAlignedOutputPath(const QString &inputFilename);
 QString autoDetectInputAudioFile(const QString &jsonFilename, const QString &excludeFile = QString());
@@ -28,6 +29,7 @@ bool runStreamAlign(const QString &jsonFilename,
                     quint32 rfVideoSampleRateHz,
                     bool overwriteOutput,
                     const ProgressCallback &progressCallback = ProgressCallback(),
+                    const CancelCallback &cancelCallback = CancelCallback(),
                     QString *errorMessage = nullptr);
 }
 

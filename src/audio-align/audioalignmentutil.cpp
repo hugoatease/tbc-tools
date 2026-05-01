@@ -206,6 +206,7 @@ bool runProcess(const QString &program,
                 const QStringList &arguments,
                 const QString &workingDirectory,
                 const std::function<void(const QString &)> &outputLineCallback,
+                const AudioAlignmentUtil::CancelCallback &cancelCallback,
                 QString *combinedOutput,
                 QString *errorMessage)
 {
@@ -251,9 +252,44 @@ bool runProcess(const QString &program,
         }
     };
 
+    auto cancellationRequested = [&cancelCallback]() -> bool {
+        return cancelCallback && cancelCallback();
+    };
     while (process.state() != QProcess::NotRunning) {
+        if (cancellationRequested()) {
+            process.terminate();
+            if (!process.waitForFinished(1000)) {
+                process.kill();
+                process.waitForFinished(3000);
+            }
+            consumeChunk(process.readAllStandardOutput());
+            const QString cancelledOutput = QString::fromLocal8Bit(combinedOutputData).trimmed();
+            if (combinedOutput) {
+                *combinedOutput = cancelledOutput;
+            }
+            if (errorMessage) {
+                *errorMessage = QObject::tr("Operation cancelled by user.");
+                if (!cancelledOutput.isEmpty()) {
+                    *errorMessage += QStringLiteral("\n") + cancelledOutput;
+                }
+            }
+            return false;
+        }
         process.waitForReadyRead(100);
         consumeChunk(process.readAllStandardOutput());
+    }
+    if (cancellationRequested()) {
+        const QString cancelledOutput = QString::fromLocal8Bit(combinedOutputData).trimmed();
+        if (combinedOutput) {
+            *combinedOutput = cancelledOutput;
+        }
+        if (errorMessage) {
+            *errorMessage = QObject::tr("Operation cancelled by user.");
+            if (!cancelledOutput.isEmpty()) {
+                *errorMessage += QStringLiteral("\n") + cancelledOutput;
+            }
+        }
+        return false;
     }
     consumeChunk(process.readAllStandardOutput());
     if (!pendingOutputLine.trimmed().isEmpty() && outputLineCallback) {
@@ -291,7 +327,13 @@ bool detectAudioSampleRateHz(const QString &ffprobePath,
         QStringLiteral("-of"), QStringLiteral("default=noprint_wrappers=1:nokey=1"),
         inputFilename
     };
-    if (!runProcess(ffprobePath, arguments, QString(), {}, &output, &processError)) {
+    if (!runProcess(ffprobePath,
+                    arguments,
+                    QString(),
+                    {},
+                    AudioAlignmentUtil::CancelCallback(),
+                    &output,
+                    &processError)) {
         if (errorMessage) {
             *errorMessage = processError.isEmpty()
                 ? QObject::tr("Unable to detect audio sample rate using ffprobe.")
@@ -356,6 +398,24 @@ bool hasPreferredKeyword(const QString &audioBaseLower, AudioPreference preferen
     return true;
 }
 
+bool isBasebandStereoCh1Ch2Name(const QString &audioBaseLower)
+{
+    return audioBaseLower.contains(QStringLiteral("baseband_stereo_ch1_ch2"))
+        || (audioBaseLower.contains(QStringLiteral("baseband"))
+            && audioBaseLower.contains(QStringLiteral("stereo"))
+            && audioBaseLower.contains(QStringLiteral("ch1"))
+            && audioBaseLower.contains(QStringLiteral("ch2")));
+}
+
+bool isBasebandStereoCh3Ch4Name(const QString &audioBaseLower)
+{
+    return audioBaseLower.contains(QStringLiteral("baseband_stereo_ch3_ch4"))
+        || (audioBaseLower.contains(QStringLiteral("baseband"))
+            && audioBaseLower.contains(QStringLiteral("stereo"))
+            && audioBaseLower.contains(QStringLiteral("ch3"))
+            && audioBaseLower.contains(QStringLiteral("ch4")));
+}
+
 int audioCandidateScore(const QFileInfo &audioInfo,
                         const QStringList &rootCandidatesLower,
                         AudioPreference preference)
@@ -399,11 +459,17 @@ int audioCandidateScore(const QFileInfo &audioInfo,
     }
     switch (preference) {
     case AudioPreference::Linear:
+        if (isBasebandStereoCh1Ch2Name(audioBaseLower)) {
+            bestRootScore += 780;
+        }
         if (audioBaseLower.contains(QStringLiteral("linear"))) {
             bestRootScore += 340;
         }
         if (audioBaseLower.contains(QStringLiteral("baseband"))) {
             bestRootScore += 320;
+        }
+        if (isBasebandStereoCh3Ch4Name(audioBaseLower)) {
+            bestRootScore -= 220;
         }
         if (audioBaseLower.contains(QStringLiteral("hifi"))) {
             bestRootScore -= 260;
@@ -573,10 +639,23 @@ bool runStreamAlign(const QString &jsonFilename,
                     quint32 rfVideoSampleRateHz,
                     bool overwriteOutput,
                     const ProgressCallback &progressCallback,
+                    const CancelCallback &cancelCallback,
                     QString *errorMessage)
 {
     if (errorMessage) {
         errorMessage->clear();
+    }
+    auto cancellationRequested = [&cancelCallback]() -> bool {
+        return cancelCallback && cancelCallback();
+    };
+    auto setCancelledError = [errorMessage]() {
+        if (errorMessage) {
+            *errorMessage = QObject::tr("Operation cancelled by user.");
+        }
+    };
+    if (cancellationRequested()) {
+        setCancelledError();
+        return false;
     }
     emitProgress(progressCallback, 0, QObject::tr("Preparing alignment..."));
 
@@ -639,6 +718,10 @@ bool runStreamAlign(const QString &jsonFilename,
     if (!detectAudioSampleRateHz(ffprobePath, normalizedInput, &streamSampleRateHz, errorMessage)) {
         return false;
     }
+    if (cancellationRequested()) {
+        setCancelledError();
+        return false;
+    }
     emitProgress(progressCallback, 5, QObject::tr("Preparation complete."));
 
     QTemporaryDir temporaryDirectory;
@@ -673,6 +756,7 @@ bool runStreamAlign(const QString &jsonFilename,
                                          QObject::tr("Decoding input audio..."));
                         }
                     },
+                    cancelCallback,
                     &processOutput,
                     &processError)) {
         if (errorMessage) {
@@ -703,6 +787,7 @@ bool runStreamAlign(const QString &jsonFilename,
                                          QObject::tr("Aligning audio stream..."));
                         }
                     },
+                    cancelCallback,
                     &processOutput,
                     &processError)) {
         if (errorMessage) {
@@ -736,6 +821,7 @@ bool runStreamAlign(const QString &jsonFilename,
                                          QObject::tr("Encoding aligned output..."));
                         }
                     },
+                    cancelCallback,
                     &processOutput,
                     &processError)) {
         if (errorMessage) {

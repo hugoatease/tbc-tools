@@ -1104,6 +1104,7 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
 
     // Set up dialogues
     oscilloscopeDialog = new OscilloscopeDialog(this);
+    rgbScopeDialog = new RgbScopeDialog(this);
     vectorscopeDialog = new VectorscopeDialog(this);
     fieldTimingDialog = new FieldTimingDialog(this);
     aboutDialog = new AboutDialog(this);
@@ -1245,6 +1246,12 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
 
     // Connect to the changed signal from the vectorscope dialogue
     connect(vectorscopeDialog, &VectorscopeDialog::scopeChanged, this, &MainWindow::vectorscopeChangedSignalHandler);
+    connect(rgbScopeDialog, &RgbScopeDialog::renderTargetSizeChanged, this, [this](const QSize &) {
+        if (!rgbScopeDialog || !rgbScopeDialog->isVisible() || rgbScopeDialog->isMinimized()) {
+            return;
+        }
+        updateRgbScopeDialogue(false);
+    });
 
     // Connect to the video parameters changed signal
     connect(videoParametersDialog, &VideoParametersDialog::videoParametersChanged, this, &MainWindow::videoParametersChangedSignalHandler);
@@ -1304,6 +1311,14 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     resizeTimer->setSingleShot(true);
     resizeTimer->setInterval(100); // 100ms delay for resize calculations
     connect(resizeTimer, &QTimer::timeout, this, &MainWindow::resizeFrameToWindow);
+    rgbScopeRefreshTimer = new QTimer(this);
+    rgbScopeRefreshTimer->setSingleShot(true);
+    connect(rgbScopeRefreshTimer, &QTimer::timeout, this, [this]() {
+        rgbScopeRefreshPending = false;
+        if (rgbScopeDialog && rgbScopeDialog->isVisible()) {
+            updateRgbScopeDialogue(true);
+        }
+    });
     
     // Initialize chroma seek mode tracking
     chromaSeekMode = false;
@@ -1476,6 +1491,7 @@ void MainWindow::setGuiEnabled(bool enabled)
 
     // Enable menu options
     ui->actionLine_scope->setEnabled(enabled);
+    ui->actionRGB_scope->setEnabled(enabled);
     ui->actionVectorscope->setEnabled(enabled);
     ui->actionField_timing_scope->setEnabled(enabled);
     ui->actionVBI->setEnabled(enabled);
@@ -1839,6 +1855,7 @@ void MainWindow::updateGuiLoaded()
     if (metadataOnly) {
         ui->actionSave_frame_as_PNG->setEnabled(false);
         ui->actionLine_scope->setEnabled(false);
+        ui->actionRGB_scope->setEnabled(false);
         ui->actionVectorscope->setEnabled(false);
         ui->actionField_timing_scope->setEnabled(false);
     }
@@ -1946,6 +1963,12 @@ void MainWindow::updateGuiUnloaded()
     videoParametersDialog->hide();
     chromaDecoderConfigDialog->hide();
     fieldTimingDialog->hide();
+    rgbScopeDialog->hide();
+    if (rgbScopeRefreshTimer) {
+        rgbScopeRefreshTimer->stop();
+    }
+    rgbScopeRefreshPending = false;
+    rgbScopeLastRefreshMs = 0;
     updateTimelineMarkers();
     updateNotesViewerState();
 
@@ -2284,6 +2307,9 @@ void MainWindow::updateImage()
     if (oscilloscopeDialog->isVisible()) {
         updateOscilloscopeDialogue();
     }
+    if (rgbScopeDialog->isVisible() && !rgbScopeDialog->isMinimized()) {
+        updateRgbScopeDialogue();
+    }
     if (vectorscopeDialog->isVisible()) {
         updateVectorscopeDialogue();
     }
@@ -2586,6 +2612,8 @@ QVector<QRect> MainWindow::getActiveVideoRects() const
         }
         break;
     }
+    case TbcSource::ViewMode::RGB_SCOPE_VIEW:
+        break;
     }
 
     return rects;
@@ -2974,6 +3002,36 @@ void MainWindow::updateOscilloscopeDialogue()
                                        tbcSource.getFrameWidth(), tbcSource.getFrameHeight(), tbcSource.getSourceMode() == TbcSource::SourceMode::BOTH_SOURCES);
 }
 
+void MainWindow::updateRgbScopeDialogue(bool force)
+{
+    if (!rgbScopeDialog || !tbcSource.getIsSourceLoaded() || tbcSource.getIsMetadataOnly()) {
+        return;
+    }
+    if (asyncFrameRenderInProgress && shouldRenderFrameAsync()) {
+        return;
+    }
+
+    const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+    const qint64 minRefreshIntervalMs = playbackRunning ? 180 : 80;
+    if (!force && rgbScopeLastRefreshMs > 0) {
+        const qint64 elapsedMs = nowMs - rgbScopeLastRefreshMs;
+        if (elapsedMs < minRefreshIntervalMs) {
+            if (rgbScopeRefreshTimer && !rgbScopeRefreshPending) {
+                rgbScopeRefreshPending = true;
+                rgbScopeRefreshTimer->start(static_cast<int>(minRefreshIntervalMs - elapsedMs));
+            }
+            return;
+        }
+    }
+
+    rgbScopeDialog->showScopeImage(tbcSource.getRgbScopeImage(rgbScopeDialog->scopeRenderTargetSize()));
+    rgbScopeLastRefreshMs = nowMs;
+    if (rgbScopeRefreshTimer && rgbScopeRefreshPending) {
+        rgbScopeRefreshTimer->stop();
+        rgbScopeRefreshPending = false;
+    }
+}
+
 // Method to update the vectorscope
 void MainWindow::updateVectorscopeDialogue()
 {
@@ -3280,10 +3338,16 @@ void MainWindow::setViewValues()
 {
     qint32 currentNumber, maximum;
     QString buttonLabel, spinLabel;
+    const bool rgbScopeView = tbcSource.getRgbScopeViewEnabled();
 
 	if (this->width() >= 930)
 	{
-		if (tbcSource.getFieldViewEnabled()) {
+		if (rgbScopeView) {
+			currentNumber = currentFrameNumber;
+			maximum = tbcSource.getNumberOfFrames();
+			spinLabel = QString("Frame #:");
+			buttonLabel = QString("RGB Scope");
+		} else if (tbcSource.getFieldViewEnabled()) {
 			currentNumber = currentFieldNumber;
 			maximum = tbcSource.getNumberOfFields();
 			spinLabel = QString("Field #:");
@@ -3306,7 +3370,12 @@ void MainWindow::setViewValues()
 	}
 	else
 	{
-		if (tbcSource.getFieldViewEnabled()) {
+		if (rgbScopeView) {
+			currentNumber = currentFrameNumber;
+			maximum = tbcSource.getNumberOfFrames();
+			spinLabel = QString("Frame #:");
+			buttonLabel = QString("RGB");
+		} else if (tbcSource.getFieldViewEnabled()) {
 			currentNumber = currentFieldNumber;
 			maximum = tbcSource.getNumberOfFields();
 			spinLabel = QString("Field #:");
@@ -4418,6 +4487,19 @@ void MainWindow::on_actionVectorscope_triggered()
     }
 }
 
+// Display the RGB scope pop-out view
+void MainWindow::on_actionRGB_scope_triggered()
+{
+    if (!tbcSource.getIsSourceLoaded() || tbcSource.getIsMetadataOnly()) {
+        return;
+    }
+    if (!rgbScopeDialog->isVisible()) {
+        rgbScopeDialog->show();
+    }
+    updateRgbScopeDialogue(true);
+    rgbScopeDialog->raise();
+    rgbScopeDialog->activateWindow();
+}
 // Display the field timing scope view
 void MainWindow::on_actionField_timing_scope_triggered()
 {
@@ -4527,6 +4609,10 @@ void MainWindow::on_actionSave_frame_as_PNG_triggered()
 
     case TbcSource::ViewMode::FIELD_VIEW:
         filenameStem += tr("field_");
+        break;
+
+    case TbcSource::ViewMode::RGB_SCOPE_VIEW:
+        filenameStem += tr("rgb_scope_");
         break;
     }
 
@@ -4728,7 +4814,8 @@ void MainWindow::on_actionSave_all_modes_as_PNGs_triggered()
         {QStringLiteral("frame"), TbcSource::ViewMode::FRAME_VIEW, false},
         {QStringLiteral("split"), TbcSource::ViewMode::SPLIT_VIEW, false},
         {QStringLiteral("field_1x"), TbcSource::ViewMode::FIELD_VIEW, false},
-        {QStringLiteral("field_2x"), TbcSource::ViewMode::FIELD_VIEW, true}
+        {QStringLiteral("field_2x"), TbcSource::ViewMode::FIELD_VIEW, true},
+        {QStringLiteral("rgb_scope"), TbcSource::ViewMode::RGB_SCOPE_VIEW, false}
     };
 
     int savedCount = 0;
@@ -5438,11 +5525,19 @@ void MainWindow::on_viewPushButton_clicked()
                 // Set field mode with 2:1 aspect
                 tbcSource.setStretchField(true);
             } else {
-                tbcDebugStream() << "Changing to FRAME_VIEW mode";
+                tbcDebugStream() << "Changing to RGB_SCOPE_VIEW mode";
 
-                // Set frame mode
-                tbcSource.setViewMode(TbcSource::ViewMode::FRAME_VIEW);
+                // Set RGB scope mode
+                tbcSource.setViewMode(TbcSource::ViewMode::RGB_SCOPE_VIEW);
+                tbcSource.setStretchField(false);
             }
+            break;
+
+        case TbcSource::ViewMode::RGB_SCOPE_VIEW:
+            tbcDebugStream() << "Changing to FRAME_VIEW mode";
+
+            // Set frame mode
+            tbcSource.setViewMode(TbcSource::ViewMode::FRAME_VIEW);
             break;
     }
 
@@ -6265,7 +6360,9 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 				ui->viewPushButton->setText(tr("Field 1:1"));
 			}
 		} else {
-			if (tbcSource.getSplitViewEnabled()) {
+			if (tbcSource.getRgbScopeViewEnabled()) {
+				ui->viewPushButton->setText(tr("RGB Scope"));
+			} else if (tbcSource.getSplitViewEnabled()) {
 				ui->viewPushButton->setText(tr("Split View"));
 			} else {
 				ui->viewPushButton->setText(tr("Frame View"));
@@ -6281,7 +6378,9 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 				ui->viewPushButton->setText(tr("Field 1:1"));
 			}
 		} else {
-			if (tbcSource.getSplitViewEnabled()) {
+			if (tbcSource.getRgbScopeViewEnabled()) {
+				ui->viewPushButton->setText(tr("RGB"));
+			} else if (tbcSource.getSplitViewEnabled()) {
 				ui->viewPushButton->setText(tr("Split"));
 			} else {
 				ui->viewPushButton->setText(tr("Frame"));

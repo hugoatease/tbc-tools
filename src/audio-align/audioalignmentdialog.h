@@ -15,6 +15,7 @@
 #include <QtGlobal>
 #include <QVector>
 #include <QStringList>
+#include <atomic>
 
 namespace Ui {
 class AudioAlignmentDialog;
@@ -48,6 +49,7 @@ private slots:
     void on_hifiInputBrowseButton_clicked();
     void on_hifiOutputBrowseButton_clicked();
     void on_alignButton_clicked();
+    void on_cancelButton_clicked();
 
 private:
     struct AlignmentTrackRequest {
@@ -58,6 +60,7 @@ private:
     };
     struct AlignmentRunResult {
         bool success = false;
+        bool cancelled = false;
         bool linearAligned = false;
         bool hifiAligned = false;
         QString linearOutputFile;
@@ -86,6 +89,7 @@ private:
     bool userEditedLinearOutput = false;
     bool userEditedHifiOutput = false;
     bool alignmentInProgress = false;
+    std::atomic_bool alignmentCancelRequested{false};
     QThread *alignmentWorkerThread = nullptr;
 };
 

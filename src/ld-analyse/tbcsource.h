@@ -15,6 +15,7 @@
 #include <QObject>
 #include <QImage>
 #include <QPainter>
+#include <QSize>
 #include <QtConcurrent/QtConcurrent>
 #include <QDebug>
 #include <vector>
@@ -103,6 +104,7 @@ public:
         FRAME_VIEW,
         SPLIT_VIEW,
         FIELD_VIEW,
+        RGB_SCOPE_VIEW,
     };
     void setViewMode(ViewMode viewMode);
     void setStretchField(bool _stretch);
@@ -111,6 +113,7 @@ public:
     bool getFrameViewEnabled() const;
     bool getFieldViewEnabled() const;
     bool getSplitViewEnabled() const;
+    bool getRgbScopeViewEnabled() const;
     bool getStretchField() const;
 
     enum SourceMode {
@@ -125,6 +128,7 @@ public:
     void load(qint32 frameNumber, qint32 fieldNumber);
 
     QImage getImage();
+    QImage getRgbScopeImage(const QSize &targetSize = QSize());
     qint32 getNumberOfFrames() const;
     qint32 getNumberOfFields() const;
     bool getIsWidescreen() const;
@@ -242,6 +246,9 @@ private:
     // RGB image data for the loaded frame
     QImage cache;
     bool cacheValid;
+    QImage rgbScopeCache;
+    bool rgbScopeCacheValid;
+    QSize rgbScopeCacheSize;
 
     // Chroma decoder configuration
     PalColour::Configuration palConfiguration;
@@ -259,7 +266,7 @@ private:
     void configureChromaDecoder();
     void loadInputFields();
     void decodeFrame();
-    QImage generateQImage();
+    QImage generateQImage(ViewMode renderViewMode, const QSize &targetSize = QSize());
     QImage generateChromaImage();
     QImage generateMonoImage();
     void generateData();
