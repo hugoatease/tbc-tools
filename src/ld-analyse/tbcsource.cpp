@@ -79,6 +79,16 @@ QImage renderRgbParadeScopeImage(const QVector<QRgb> &rgbData,
     QImage scopeImage(scopeWidth, scopeHeight, QImage::Format_RGB32);
     scopeImage.fill(Qt::black);
 
+    const qint32 leftAxisWidth = qBound<qint32>(20, scopeWidth / 11, 64);
+    const qint32 rightPadding = qBound<qint32>(4, scopeWidth / 64, 16);
+    const qint32 topPadding = qBound<qint32>(12, scopeHeight / 14, 52);
+    const qint32 bottomPadding = qBound<qint32>(10, scopeHeight / 12, 48);
+    const QRect plotRect(leftAxisWidth,
+                         topPadding,
+                         qMax<qint32>(1, scopeWidth - leftAxisWidth - rightPadding),
+                         qMax<qint32>(1, scopeHeight - topPadding - bottomPadding));
+    const qint32 plotHeight = qMax<qint32>(1, plotRect.height());
+
     qint32 sourceXStart = qBound<qint32>(0, videoParameters.activeVideoStart, frameWidth - 1);
     qint32 sourceXEnd = qBound<qint32>(sourceXStart + 1, videoParameters.activeVideoEnd, frameWidth);
     qint32 sourceYStart = qBound<qint32>(0, videoParameters.firstActiveFrameLine, frameHeight - 1);
@@ -107,9 +117,18 @@ QImage renderRgbParadeScopeImage(const QVector<QRgb> &rgbData,
     const qint32 sourceWidth = qMax<qint32>(1, sourceXEnd - sourceXStart);
     const qint32 sourceHeight = qMax<qint32>(1, sourceYEnd - sourceYStart);
     const qint32 xDenominator = qMax<qint32>(1, sourceWidth - 1);
-    const qint32 channelRenderWidth = qMax<qint32>(1, scopeWidth / 3);
+    const qint32 channelRenderWidth = qMax<qint32>(1, plotRect.width() / 3);
     const qint32 sampleStepX = qMax<qint32>(1, sourceWidth / channelRenderWidth);
-    const qint32 sampleStepY = qMax<qint32>(1, sourceHeight / qMax<qint32>(1, scopeHeight * 2));
+    const qint32 sampleStepY = qMax<qint32>(1, sourceHeight / qMax<qint32>(1, plotHeight * 2));
+
+    auto mapCodeValueToY = [&](qint32 value) {
+        const qint32 clamped = qBound<qint32>(0, value, 255);
+        if (plotHeight <= 1) {
+            return plotRect.top();
+        }
+        const qint32 localY = (plotHeight - 1) - ((clamped * (plotHeight - 1)) / 255);
+        return plotRect.top() + localY;
+    };
 
     struct WaveformChannel {
         qint32 startX = 0;
@@ -118,12 +137,12 @@ QImage renderRgbParadeScopeImage(const QVector<QRgb> &rgbData,
     };
     std::array<WaveformChannel, 3> waveformChannels;
     for (qint32 channel = 0; channel < 3; ++channel) {
-        const qint32 channelStart = (channel * scopeWidth) / 3;
-        const qint32 channelEnd = ((channel + 1) * scopeWidth) / 3;
+        const qint32 channelStart = plotRect.left() + ((channel * plotRect.width()) / 3);
+        const qint32 channelEnd = plotRect.left() + (((channel + 1) * plotRect.width()) / 3);
         WaveformChannel &waveformChannel = waveformChannels[static_cast<size_t>(channel)];
         waveformChannel.startX = channelStart;
         waveformChannel.width = qMax<qint32>(1, channelEnd - channelStart);
-        waveformChannel.bins.fill(0, waveformChannel.width * scopeHeight);
+        waveformChannel.bins.fill(0, waveformChannel.width * plotHeight);
     }
 
     auto channelValueAt = [](QRgb pixel, qint32 channel) -> qint32 {
@@ -145,7 +164,7 @@ QImage renderRgbParadeScopeImage(const QVector<QRgb> &rgbData,
                     ? 0
                     : ((sourceOffsetX * (waveformChannel.width - 1)) / xDenominator);
                 const qint32 value = channelValueAt(sourcePixel, channel);
-                const qint32 mappedY = (scopeHeight - 1) - ((value * (scopeHeight - 1)) / 255);
+                const qint32 mappedY = mapCodeValueToY(value) - plotRect.top();
                 quint16 &binValue = waveformChannel.bins[(mappedY * waveformChannel.width) + localX];
                 if (binValue < std::numeric_limits<quint16>::max()) {
                     ++binValue;
@@ -162,10 +181,10 @@ QImage renderRgbParadeScopeImage(const QVector<QRgb> &rgbData,
     for (qint32 channel = 0; channel < 3; ++channel) {
         const WaveformChannel &waveformChannel = waveformChannels[static_cast<size_t>(channel)];
         const QColor channelColor = waveformColors[static_cast<size_t>(channel)];
-        for (qint32 yPosition = 0; yPosition < scopeHeight; ++yPosition) {
-            QRgb *scanLine = reinterpret_cast<QRgb *>(scopeImage.scanLine(yPosition));
+        for (qint32 localY = 0; localY < plotHeight; ++localY) {
+            QRgb *scanLine = reinterpret_cast<QRgb *>(scopeImage.scanLine(plotRect.top() + localY));
             for (qint32 localX = 0; localX < waveformChannel.width; ++localX) {
-                const quint16 density = waveformChannel.bins[(yPosition * waveformChannel.width) + localX];
+                const quint16 density = waveformChannel.bins[(localY * waveformChannel.width) + localX];
                 if (density == 0) {
                     continue;
                 }
@@ -191,38 +210,50 @@ QImage renderRgbParadeScopeImage(const QVector<QRgb> &rgbData,
 
     scopePainter.setCompositionMode(QPainter::CompositionMode_SourceOver);
     scopePainter.setPen(QPen(QColor(150, 150, 150), 1));
-    scopePainter.drawRect(0, 0, scopeWidth - 1, scopeHeight - 1);
-    scopePainter.drawLine(scopeWidth / 3, 0, scopeWidth / 3, scopeHeight - 1);
-    scopePainter.drawLine((scopeWidth * 2) / 3, 0, (scopeWidth * 2) / 3, scopeHeight - 1);
+    scopePainter.drawRect(plotRect.adjusted(0, 0, -1, -1));
+    scopePainter.drawLine(plotRect.left() + (plotRect.width() / 3),
+                          plotRect.top(),
+                          plotRect.left() + (plotRect.width() / 3),
+                          plotRect.bottom());
+    scopePainter.drawLine(plotRect.left() + ((plotRect.width() * 2) / 3),
+                          plotRect.top(),
+                          plotRect.left() + ((plotRect.width() * 2) / 3),
+                          plotRect.bottom());
 
-    auto mapCodeValueToY = [scopeHeight](qint32 value) {
-        const qint32 clamped = qBound<qint32>(0, value, 255);
-        return (scopeHeight - 1) - ((clamped * (scopeHeight - 1)) / 255);
-    };
-    const qint32 yStudioBlack = mapCodeValueToY(16);
-    const qint32 yStudioWhite = mapCodeValueToY(235);
+    const std::array<qint32, 5> rangeGuideValues = { 0, 64, 128, 192, 255 };
+    for (const qint32 value : rangeGuideValues) {
+        const bool majorGuide = (value == 0 || value == 128 || value == 255);
+        scopePainter.setPen(QPen(majorGuide ? QColor(110, 110, 110) : QColor(80, 80, 80), 1));
+        const qint32 yPosition = mapCodeValueToY(value);
+        scopePainter.drawLine(plotRect.left(), yPosition, plotRect.right(), yPosition);
+    }
 
-    scopePainter.setPen(QPen(QColor(190, 190, 190), 1, Qt::DashLine));
-    scopePainter.drawLine(0, yStudioBlack, scopeWidth - 1, yStudioBlack);
-    scopePainter.drawLine(0, yStudioWhite, scopeWidth - 1, yStudioWhite);
+    const std::array<qint32, 2> legalRangeMarkers = { 16, 235 };
+    scopePainter.setPen(QPen(QColor(150, 150, 150, 200), 1, Qt::DashLine));
+    for (const qint32 value : legalRangeMarkers) {
+        const qint32 yPosition = mapCodeValueToY(value);
+        scopePainter.drawLine(plotRect.left(), yPosition, plotRect.right(), yPosition);
+    }
 
-    QFont levelFont = scopePainter.font();
-    levelFont.setPointSize(qMax<qint32>(7, scopeHeight / 42));
-    scopePainter.setFont(levelFont);
-    const QColor levelColor(200, 200, 200);
-    auto drawLevelLabel = [&](qint32 yPosition, const QString &text) {
-        scopePainter.setPen(levelColor);
-        const qint32 baselineY = qBound<qint32>(10, yPosition + 4, scopeHeight - 2);
-        const qint32 labelX = qMax<qint32>(8, scopeWidth - 48);
-        scopePainter.drawText(labelX, baselineY, text);
-    };
-    drawLevelLabel(yStudioWhite, QStringLiteral("235"));
-    drawLevelLabel(yStudioBlack, QStringLiteral("16"));
+    QFont axisFont = scopePainter.font();
+    axisFont.setPointSize(qMax<qint32>(7, scopeHeight / 42));
+    scopePainter.setFont(axisFont);
+    const qint32 axisLabelWidth = qMax<qint32>(10, leftAxisWidth - 6);
+    for (const qint32 value : rangeGuideValues) {
+        const qint32 yPosition = mapCodeValueToY(value);
+        scopePainter.setPen(QColor(205, 205, 205));
+        scopePainter.drawText(QRect(2, yPosition - 8, axisLabelWidth, 16),
+                              Qt::AlignRight | Qt::AlignVCenter,
+                              QString::number(value));
+    }
 
-    scopePainter.setPen(QColor(160, 160, 160));
-    scopePainter.drawText(QRect(8, scopeHeight - 20, qMax<qint32>(20, scopeWidth - 64), 16),
+    scopePainter.setPen(QColor(170, 170, 170));
+    scopePainter.drawText(QRect(plotRect.left(),
+                                qMax<qint32>(0, scopeHeight - bottomPadding),
+                                plotRect.width(),
+                                bottomPadding),
                           Qt::AlignLeft | Qt::AlignVCenter,
-                          QStringLiteral("Legal range 16-235"));
+                          QStringLiteral("8-bit range 0-255"));
 
     QFont labelFont = scopePainter.font();
     labelFont.setPointSize(qMax<qint32>(8, scopeHeight / 36));
@@ -237,11 +268,14 @@ QImage renderRgbParadeScopeImage(const QVector<QRgb> &rgbData,
     };
 
     for (qint32 channel = 0; channel < 3; ++channel) {
-        const qint32 channelStart = (channel * scopeWidth) / 3;
-        const qint32 channelEnd = ((channel + 1) * scopeWidth) / 3;
+        const qint32 channelStart = plotRect.left() + ((channel * plotRect.width()) / 3);
+        const qint32 channelEnd = plotRect.left() + (((channel + 1) * plotRect.width()) / 3);
         scopePainter.setPen(labelColors[static_cast<size_t>(channel)]);
-        scopePainter.drawText(QRect(channelStart + 6, 6, qMax<qint32>(8, channelEnd - channelStart - 12), 28),
-                              Qt::AlignLeft | Qt::AlignTop,
+        scopePainter.drawText(QRect(channelStart,
+                                    2,
+                                    qMax<qint32>(8, channelEnd - channelStart),
+                                    qMax<qint32>(10, topPadding - 2)),
+                              Qt::AlignHCenter | Qt::AlignVCenter,
                               labels[static_cast<size_t>(channel)]);
     }
 
