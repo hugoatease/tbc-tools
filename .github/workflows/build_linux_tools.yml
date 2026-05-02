@@ -117,7 +117,7 @@ jobs:
             [ -e "AppDir/usr/bin/$base" ] && continue
             cp -a "$item" "AppDir/usr/bin/$base"
           done
-          nix build nixpkgs#ffmpeg --out-link ffmpeg-result
+          nix build .#ffmpeg --out-link ffmpeg-result
           FFMPEG_BIN=""
           FFPROBE_BIN=""
           for ffout in ffmpeg-result ffmpeg-result-*; do
@@ -602,7 +602,7 @@ jobs:
             [ -e "release/bin/$base" ] && continue
             cp -a "$item" "release/bin/$base"
           done
-          nix build nixpkgs#ffmpeg --out-link ffmpeg-result
+          nix build .#ffmpeg --out-link ffmpeg-result
           FFMPEG_BIN=""
           FFPROBE_BIN=""
           for ffout in ffmpeg-result ffmpeg-result-*; do

@@ -24,6 +24,7 @@
         ezpwdSrc = ezpwd;
         isLinux = pkgsUnstable.stdenv.hostPlatform.isLinux;
         isDarwin = pkgsUnstable.stdenv.hostPlatform.isDarwin;
+        isLinuxX86_64 = isLinux && pkgsUnstable.stdenv.hostPlatform.isx86_64;
         pkgs = if isLinux then legacyPkgs else pkgsUnstable;
         # Vendor older CUDA package sets from legacy nixpkgs for Pascal/GTX 1000 support.
         # Keep both sets available; default to CUDA 11.8 for pre-Volta compatibility.
@@ -33,7 +34,7 @@
         cudaHostCompiler = if isLinux then legacyPkgs.gcc11 else null;
         cudaCudnnPackage = if isLinux then cudaPackages.cudnn_8_9 else null;
         onnxruntimePackage =
-          if isLinux then
+          if isLinuxX86_64 then
             legacyPkgs.stdenvNoCC.mkDerivation rec {
               pname = "onnxruntime-gpu-prebuilt";
               version = "1.18.1";
@@ -77,6 +78,7 @@
         (!isLinux || pkgs.lib.versionAtLeast vendoredCudaPackages12.cudatoolkit.version "12.4")
         "Vendored CUDA 12 package set must provide toolkit >= 12.4";
       {
+        packages.ffmpeg = pkgs.ffmpeg;
         packages.default = pkgs.stdenv.mkDerivation {
           pname = "ld-decode-tools";
           version = packageVersion;
