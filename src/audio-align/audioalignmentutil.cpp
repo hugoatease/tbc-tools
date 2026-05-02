@@ -385,12 +385,26 @@ QString comparablePathForMatch(const QString &path)
     }
     return info.absoluteFilePath();
 }
+bool containsBasebandKeyword(const QString &audioBaseLower)
+{
+    return audioBaseLower.contains(QStringLiteral("baseband"))
+        || audioBaseLower.contains(QStringLiteral("base_band"))
+        || audioBaseLower.contains(QStringLiteral("base-band"))
+        || audioBaseLower.contains(QStringLiteral("base band"));
+}
+
+bool hasExcludedAutoInputKeyword(const QString &audioFilenameLower)
+{
+    return audioFilenameLower.contains(QStringLiteral("rf"))
+        || audioFilenameLower.contains(QStringLiteral("align"))
+        || audioFilenameLower.contains(QStringLiteral("aligned"));
+}
 
 bool hasPreferredKeyword(const QString &audioBaseLower, AudioPreference preference)
 {
     if (preference == AudioPreference::Linear) {
         return audioBaseLower.contains(QStringLiteral("linear"))
-            || audioBaseLower.contains(QStringLiteral("baseband"));
+            || containsBasebandKeyword(audioBaseLower);
     }
     if (preference == AudioPreference::Hifi) {
         return audioBaseLower.contains(QStringLiteral("hifi"));
@@ -401,7 +415,7 @@ bool hasPreferredKeyword(const QString &audioBaseLower, AudioPreference preferen
 bool isBasebandStereoCh1Ch2Name(const QString &audioBaseLower)
 {
     return audioBaseLower.contains(QStringLiteral("baseband_stereo_ch1_ch2"))
-        || (audioBaseLower.contains(QStringLiteral("baseband"))
+        || (containsBasebandKeyword(audioBaseLower)
             && audioBaseLower.contains(QStringLiteral("stereo"))
             && audioBaseLower.contains(QStringLiteral("ch1"))
             && audioBaseLower.contains(QStringLiteral("ch2")));
@@ -410,7 +424,7 @@ bool isBasebandStereoCh1Ch2Name(const QString &audioBaseLower)
 bool isBasebandStereoCh3Ch4Name(const QString &audioBaseLower)
 {
     return audioBaseLower.contains(QStringLiteral("baseband_stereo_ch3_ch4"))
-        || (audioBaseLower.contains(QStringLiteral("baseband"))
+        || (containsBasebandKeyword(audioBaseLower)
             && audioBaseLower.contains(QStringLiteral("stereo"))
             && audioBaseLower.contains(QStringLiteral("ch3"))
             && audioBaseLower.contains(QStringLiteral("ch4")));
@@ -465,7 +479,7 @@ int audioCandidateScore(const QFileInfo &audioInfo,
         if (audioBaseLower.contains(QStringLiteral("linear"))) {
             bestRootScore += 340;
         }
-        if (audioBaseLower.contains(QStringLiteral("baseband"))) {
+        if (containsBasebandKeyword(audioBaseLower)) {
             bestRootScore += 320;
         }
         if (isBasebandStereoCh3Ch4Name(audioBaseLower)) {
@@ -482,7 +496,7 @@ int audioCandidateScore(const QFileInfo &audioInfo,
             bestRootScore += 300;
         }
         if (audioBaseLower.contains(QStringLiteral("linear"))
-            || audioBaseLower.contains(QStringLiteral("baseband"))) {
+            || containsBasebandKeyword(audioBaseLower)) {
             bestRootScore -= 260;
         }
         break;
@@ -496,7 +510,7 @@ int audioCandidateScore(const QFileInfo &audioInfo,
         if (audioBaseLower.contains(QStringLiteral("linear"))) {
             bestRootScore += 220;
         }
-        if (audioBaseLower.contains(QStringLiteral("baseband"))) {
+        if (containsBasebandKeyword(audioBaseLower)) {
             bestRootScore += 200;
         }
         break;
@@ -551,6 +565,10 @@ QString autoDetectInputAudioFileInternal(const QString &jsonFilename,
         if (!normalizedExclude.isEmpty() && comparablePathForMatch(entryInfo.absoluteFilePath()) == normalizedExclude) {
             continue;
         }
+        const QString audioFilenameLower = entryInfo.fileName().toLower();
+        if (hasExcludedAutoInputKeyword(audioFilenameLower)) {
+            continue;
+        }
 
         const QString audioBaseLower = entryInfo.completeBaseName().toLower();
         if (requirePreferredKeyword && !hasPreferredKeyword(audioBaseLower, preference)) {
@@ -558,8 +576,24 @@ QString autoDetectInputAudioFileInternal(const QString &jsonFilename,
         }
 
         const int candidateScore = audioCandidateScore(entryInfo, rootCandidatesLower, preference);
-        if (candidateScore > bestScore) {
-            bestScore = candidateScore;
+        int effectiveScore = candidateScore;
+        if (effectiveScore <= 0
+            && preference == AudioPreference::Linear
+            && containsBasebandKeyword(audioBaseLower)) {
+            effectiveScore = 260;
+            if (isBasebandStereoCh1Ch2Name(audioBaseLower)) {
+                effectiveScore += 120;
+            }
+            if (isBasebandStereoCh3Ch4Name(audioBaseLower)) {
+                effectiveScore -= 80;
+            }
+            if (suffixLower == QStringLiteral("flac")) {
+                effectiveScore += 30;
+            }
+        }
+
+        if (effectiveScore > bestScore) {
+            bestScore = effectiveScore;
             bestMatch = entryInfo;
         }
     }

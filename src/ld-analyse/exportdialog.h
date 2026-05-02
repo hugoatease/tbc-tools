@@ -6,6 +6,9 @@
 #include <QHash>
 
 class TbcSource;
+class QResizeEvent;
+class QSplitter;
+class QTableWidget;
 
 namespace Ui {
 class ExportDialog;
@@ -29,6 +32,7 @@ public:
         QString total;
         QString errors;
         QString fps;
+        QString feedTag;
     };
     explicit ExportDialog(QWidget *parent = nullptr);
     ~ExportDialog();
@@ -38,9 +42,12 @@ public:
     void setExportProfileConfigPreference(bool enabled, const QString &configPath);
     void setInPoint(int frameNumber);
     void setOutPoint(int frameNumber);
+    bool hasAudioTracksConfigured() const;
     void loadAudioTracksForExport(const QStringList &trackFiles,
                                   const QStringList &trackNames = QStringList());
     void refreshResolutionOptions();
+protected:
+    void resizeEvent(QResizeEvent *event) override;
 signals:
     void userEditRangeSelectionChanged(int inPoint, int outPoint, bool clearMetadataValues);
     void proxyGenerationPreferenceChanged(bool enabled);
@@ -75,6 +82,8 @@ private:
     void updateFromSource();
     void refreshProfiles();
     void updateProfileDependentControls();
+    void updateFeedLogPaneMode();
+    void updateFeedLogPaneSizing();
     void emitRangeSelectionChanged(bool clearMetadataValues);
     void setBusy(bool busy);
     void updateRangeControlsForSource(bool resetToFullRange);
@@ -129,6 +138,10 @@ private:
     void updateExportProfileConfigPathUi();
     void emitExportProfileConfigPreferenceChanged();
     void appendStatus(const QString &message);
+    void appendFeedStatus(const QString &message, const QString &feedTag);
+    void clearFeedStatusLines();
+    void appendFeedLog(const QString &message, const QString &feedTag);
+    void clearFeedLogLines();
     void appendLog(const QString &message);
     QString writeExportFailureLog(const QString &failureTitle,
                                   const QString &summaryMessage,
@@ -140,10 +153,12 @@ private:
     QString formatCommand(const QString &program, const QStringList &args) const;
     void resetProcessStats();
     void initializeProcessStats();
+    void updateProcessStatsPaneMode();
+    QTableWidget *processStatsTableForFeed(const QString &feedTag) const;
     void updateProcessStat(const ExportProcessStat &stat);
-    void processOutputLine(const QString &line, QString *lastStatus);
-    void consumeProcessOutputChunk(const QString &chunk, QString *pendingBuffer);
-    void flushPendingProcessOutput();
+    void processOutputLine(const QString &line, QString *lastStatus, const QString &feedTag);
+    void consumeProcessOutputChunk(const QString &chunk, QString *pendingBuffer, const QString &feedTag);
+    void flushPendingProcessOutput(const QString &feedTag);
 
     Ui::ExportDialog *ui;
     TbcSource *tbcSource = nullptr;
@@ -176,6 +191,14 @@ private:
     bool parallelProxySucceeded = false;
     bool mainExportFinished = false;
     bool mainExportSucceeded = false;
+    bool splitStatsByFeed = false;
+    QString mainFeedStatusLine;
+    QString proxyFeedStatusLine;
+    QString mainFeedLogLine;
+    QString proxyFeedLogLine;
+    QSplitter *processStatsSplitter = nullptr;
+    QTableWidget *mainProcessStatsTable = nullptr;
+    QTableWidget *proxyProcessStatsTable = nullptr;
     QHash<QString, int> processRowMap;
 };
 

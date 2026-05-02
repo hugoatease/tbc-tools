@@ -1892,37 +1892,36 @@ bool TbcSource::startBackgroundLoad(QString sourceFilename)
     }
     auto metadataCandidatesForFile = [](const QFileInfo &info) {
         QStringList candidates;
-        candidates << (info.filePath() + QStringLiteral(".db"));
         candidates << (info.filePath() + QStringLiteral(".json"));
+        candidates << (info.filePath() + QStringLiteral(".db"));
         const QString basePath = QDir(info.absolutePath()).filePath(info.completeBaseName());
-        const QString baseDbCandidate = basePath + QStringLiteral(".db");
-        if (!candidates.contains(baseDbCandidate)) {
-            candidates << baseDbCandidate;
-        }
         const QString baseJsonCandidate = basePath + QStringLiteral(".json");
         if (!candidates.contains(baseJsonCandidate)) {
             candidates << baseJsonCandidate;
+        }
+        const QString baseDbCandidate = basePath + QStringLiteral(".db");
+        if (!candidates.contains(baseDbCandidate)) {
+            candidates << baseDbCandidate;
         }
         const QString suffix = info.suffix().toLower();
         if (suffix == QLatin1String("ytbc")
             || suffix == QLatin1String("ctbc")
             || suffix == QLatin1String("tbcy")
             || suffix == QLatin1String("tbcc")) {
-            const QString altDbCandidate = QDir(info.absolutePath())
-                                               .filePath(info.completeBaseName() + QStringLiteral(".tbc.db"));
-            if (!candidates.contains(altDbCandidate)) {
-                candidates << altDbCandidate;
-            }
             const QString altJsonCandidate = QDir(info.absolutePath())
                                                  .filePath(info.completeBaseName() + QStringLiteral(".tbc.json"));
             if (!candidates.contains(altJsonCandidate)) {
                 candidates << altJsonCandidate;
             }
+            const QString altDbCandidate = QDir(info.absolutePath())
+                                               .filePath(info.completeBaseName() + QStringLiteral(".tbc.db"));
+            if (!candidates.contains(altDbCandidate)) {
+                candidates << altDbCandidate;
+            }
         }
         return candidates;
     };
 
-    QString metadataFileName;
     QStringList metadataCandidates = metadataCandidatesForFile(QFileInfo(sourceFilename));
     if (isChromaTbc && lumaFilename != sourceFilename) {
         const QStringList lumaCandidates = metadataCandidatesForFile(QFileInfo(lumaFilename));
@@ -1932,27 +1931,26 @@ bool TbcSource::startBackgroundLoad(QString sourceFilename)
             }
         }
     }
+
+    QStringList metadataReadCandidates;
+    const auto appendMetadataReadCandidate = [&metadataReadCandidates](const QString &candidate) {
+        if (candidate.isEmpty()) {
+            return;
+        }
+        if (!metadataReadCandidates.contains(candidate, Qt::CaseInsensitive)) {
+            metadataReadCandidates << candidate;
+        }
+    };
     if (!requestedMetadataFilename.isEmpty()) {
         QFileInfo requestedInfo(requestedMetadataFilename);
         QString requestedPath = requestedMetadataFilename;
         if (requestedInfo.isRelative()) {
             requestedPath = QDir(sourceDir).filePath(requestedMetadataFilename);
         }
-        if (QFileInfo::exists(requestedPath)) {
-            metadataFileName = requestedPath;
-        }
+        appendMetadataReadCandidate(requestedPath);
     }
-
-    if (metadataFileName.isEmpty()) {
-        for (const QString &candidate : metadataCandidates) {
-            if (QFileInfo::exists(candidate)) {
-                metadataFileName = candidate;
-                break;
-            }
-        }
-        if (metadataFileName.isEmpty()) {
-            metadataFileName = metadataCandidates.first();
-        }
+    for (const QString &candidate : metadataCandidates) {
+        appendMetadataReadCandidate(candidate);
     }
 
     if (isChromaTbc && QFileInfo::exists(lumaFilename)) {
@@ -1960,9 +1958,25 @@ bool TbcSource::startBackgroundLoad(QString sourceFilename)
         sourceFilename = lumaFilename;
     }
 
-    if (!ldDecodeMetaData.read(metadataFileName)) {
-        // Open failed
-        qWarning() << "Open TBC metadata failed for filename" << metadataFileName;
+    QString metadataFileName;
+    QStringList failedMetadataCandidates;
+    for (const QString &candidate : metadataReadCandidates) {
+        if (!QFileInfo::exists(candidate)) {
+            continue;
+        }
+        if (ldDecodeMetaData.read(candidate)) {
+            metadataFileName = candidate;
+            break;
+        }
+        failedMetadataCandidates << candidate;
+    }
+
+    if (metadataFileName.isEmpty()) {
+        if (!failedMetadataCandidates.isEmpty()) {
+            qWarning() << "Open TBC metadata failed for candidates" << failedMetadataCandidates;
+        } else {
+            qWarning() << "Could not locate any metadata file from candidates" << metadataReadCandidates;
+        }
         currentSourceFilename.clear();
 
         // Show an error to the user and give up

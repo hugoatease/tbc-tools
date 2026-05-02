@@ -720,19 +720,32 @@
     </widget>
    </item>
    <item>
-    <widget class="QPlainTextEdit" name="logTextEdit">
+    <widget class="QSplitter" name="feedLogSplitter">
      <property name="minimumSize">
       <size>
        <width>0</width>
        <height>54</height>
       </size>
      </property>
-     <property name="readOnly">
-      <bool>true</bool>
+     <property name="orientation">
+      <enum>Qt::Horizontal</enum>
      </property>
-     <property name="placeholderText">
-      <string>Export log</string>
-     </property>
+     <widget class="QPlainTextEdit" name="logTextEdit">
+      <property name="readOnly">
+       <bool>true</bool>
+      </property>
+      <property name="placeholderText">
+       <string>Main export feed</string>
+      </property>
+     </widget>
+     <widget class="QPlainTextEdit" name="proxyLogTextEdit">
+      <property name="readOnly">
+       <bool>true</bool>
+      </property>
+      <property name="placeholderText">
+       <string>Proxy export feed</string>
+      </property>
+     </widget>
     </widget>
    </item>
    <item>

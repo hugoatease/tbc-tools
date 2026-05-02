@@ -29,6 +29,7 @@ EfmProcessor::EfmProcessor() :
     m_showAudio(false),
     m_outputWavMetadata(false),
     m_noAudioConcealment(false),
+    m_zeroPad(false),
     m_noWavHeader(false)
 {}
 
@@ -45,9 +46,15 @@ bool EfmProcessor::process(const QString &inputFilename, const QString &outputFi
 
     // Prepare the output writers
     if (m_noWavHeader) {
-        m_writerRaw.open(outputFilename);
+        if (!m_writerRaw.open(outputFilename)) {
+            m_readerData24Section.close();
+            return false;
+        }
     } else {
-        m_writerWav.open(outputFilename);
+        if (!m_writerWav.open(outputFilename)) {
+            m_readerData24Section.close();
+            return false;
+        }
     }
     
     if (m_outputWavMetadata) {
@@ -57,7 +64,12 @@ bool EfmProcessor::process(const QString &inputFilename, const QString &outputFi
         } else {
             metadataFilename.append(".txt");
         }
-        m_writerWavMetadata.open(metadataFilename, m_noAudioConcealment);
+        if (!m_writerWavMetadata.open(metadataFilename, m_noAudioConcealment)) {
+            if (m_writerWav.isOpen()) m_writerWav.close();
+            if (m_writerRaw.isOpen()) m_writerRaw.close();
+            m_readerData24Section.close();
+            return false;
+        }
     }
 
     // Get the first section
@@ -173,6 +185,9 @@ void EfmProcessor::processAudioPipeline()
     if (m_noAudioConcealment) {
         while (m_data24ToAudio.isReady()) {
             AudioSection audioSection = m_data24ToAudio.popSection();
+            if (m_showAudio) {
+                audioSection.showData();
+            }
             if (m_noWavHeader) {
                 m_writerRaw.write(audioSection);
             } else {
@@ -191,6 +206,9 @@ void EfmProcessor::processAudioPipeline()
 
         while (m_audioCorrection.isReady()) {
             AudioSection audioSection = m_audioCorrection.popSection();
+            if (m_showAudio) {
+                audioSection.showData();
+            }
             if (m_noWavHeader) {
                 m_writerRaw.write(audioSection);
             } else {

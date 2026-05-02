@@ -1,6 +1,6 @@
 /******************************************************************************
- * main.cpp
- * tbc-audio-align - Audio alignment tool for ld-decode
+ * efmhandler-main.cpp
+ * tbc-efm-handler - Dedicated EFM/AC3 handling workflow GUI
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  * SPDX-FileCopyrightText: 2026 Simon Inns
@@ -13,7 +13,9 @@
 #include <QCommandLineOption>
 #include <QCommandLineParser>
 #include <QCoreApplication>
+#include <QFileInfo>
 #include <QPalette>
+#include <QStringList>
 #include <QStyleFactory>
 #if defined(Q_OS_WIN)
 #include <QSettings>
@@ -23,7 +25,7 @@
 #include <QProcess>
 #endif
 
-#include "audioalignmentdialog.h"
+#include "efmhandlerdialog.h"
 #include "tbc/logging.h"
 namespace {
 // Cross-platform function to detect if system is in dark mode
@@ -115,18 +117,17 @@ int main(int argc, char *argv[])
         app.setStyle(QStringLiteral("Fusion"));
     }
 
-    // Set application name and version
-    QCoreApplication::setApplicationName("tbc-audio-align");
-    QCoreApplication::setApplicationVersion(QString("ld-decode-tools - Branch: %1 / Commit: %2").arg(APP_BRANCH, APP_COMMIT));
-    QCoreApplication::setOrganizationDomain("domesday86.com");
+    QCoreApplication::setApplicationName("tbc-efm-handler");
+    QCoreApplication::setApplicationVersion(
+        QString("ld-decode-tools - Branch: %1 / Commit: %2").arg(APP_BRANCH, APP_COMMIT));
+    QCoreApplication::setOrganizationDomain("github.com");
 
-    // Set up the command line parser
     QCommandLineParser parser;
     parser.setApplicationDescription(
-                "tbc-audio-align - Audio alignment tool for ld-decode\n"
-                "\n"
-                "(c)2026 Simon Inns\n"
-                "GPLv3 Open-Source - github: https://github.com/happycube/ld-decode");
+        "tbc-efm-handler - Dedicated EFM/AC3 handling workflow GUI\n"
+        "\n"
+        "(c)2026 Simon Inns\n"
+        "GPLv3 Open-Source - github: https://github.com/happycube/ld-decode");
     parser.addHelpOption();
     parser.addVersionOption();
 
@@ -134,36 +135,34 @@ int main(int argc, char *argv[])
     addStandardDebugOptions(parser);
 
     QCommandLineOption sourceDirectoryOption(QStringList() << "source-dir",
-                                             QCoreApplication::translate("main", "Initial source directory used by browse dialogs"),
+                                             QCoreApplication::translate(
+                                                 "main", "Initial source directory used by browse dialogs"),
                                              QCoreApplication::translate("main", "path"));
     parser.addOption(sourceDirectoryOption);
 
-    QCommandLineOption jsonOption(QStringList() << "json",
-                                  QCoreApplication::translate("main", "Prefill metadata JSON input"),
-                                  QCoreApplication::translate("main", "filename"));
-    parser.addOption(jsonOption);
+    QCommandLineOption efmInputOption(QStringList() << "efm-input",
+                                      QCoreApplication::translate(
+                                          "main", "Prefill EFM input file (can be passed multiple times)"),
+                                      QCoreApplication::translate("main", "filename"));
+    parser.addOption(efmInputOption);
 
-    QCommandLineOption inputFileOption(QStringList() << "input-file",
-                                       QCoreApplication::translate("main", "Prefill input audio stream"),
-                                       QCoreApplication::translate("main", "filename"));
-    parser.addOption(inputFileOption);
+    QCommandLineOption ac3InputOption(QStringList() << "ac3-input",
+                                      QCoreApplication::translate("main", "Prefill AC3 symbols input file"),
+                                      QCoreApplication::translate("main", "filename"));
+    parser.addOption(ac3InputOption);
 
-    QCommandLineOption outputFileOption(QStringList() << "output-file",
-                                        QCoreApplication::translate("main", "Prefill output audio stream"),
-                                        QCoreApplication::translate("main", "filename"));
-    parser.addOption(outputFileOption);
-
-    QCommandLineOption rfVideoSampleRateOption(QStringList() << "rf-video-sample-rate-hz",
-                                               QCoreApplication::translate("main", "Prefill RF video sample rate in Hz"),
-                                               QCoreApplication::translate("main", "hz"));
-    parser.addOption(rfVideoSampleRateOption);
-
-    QCommandLineOption exportTrackFileOption(QStringList() << "export-track-file",
-                                             QCoreApplication::translate("main", "Write aligned track details for ld-analyse export auto-load"),
-                                             QCoreApplication::translate("main", "filename"));
-    parser.addOption(exportTrackFileOption);
+    QCommandLineOption outputBaseOption(QStringList() << "output-base",
+                                        QCoreApplication::translate("main", "Prefill EFM output base path"),
+                                        QCoreApplication::translate("main", "path"));
+    parser.addOption(outputBaseOption);
     parser.addOption(QCommandLineOption("force-dark-theme",
                                         QCoreApplication::translate("main", "Force dark theme regardless of system settings")));
+
+    parser.addPositionalArgument(
+        "input",
+        QCoreApplication::translate("main",
+                                    "Optional input file(s) to preload (.efm => EFM input, others => AC3 input)"),
+        "[input ...]");
 
     parser.process(app);
     processStandardDebugOptions(parser);
@@ -174,28 +173,32 @@ int main(int argc, char *argv[])
         applyDarkTheme(app);
     }
 
-    AudioAlignmentDialog dialog;
+    EfmHandlerDialog dialog;
+
     if (parser.isSet(sourceDirectoryOption)) {
         dialog.setSourceDirectory(parser.value(sourceDirectoryOption));
     }
-    if (parser.isSet(jsonOption)) {
-        dialog.setDefaultJson(parser.value(jsonOption));
-    }
-    if (parser.isSet(inputFileOption)) {
-        dialog.setDefaultInputFile(parser.value(inputFileOption));
-    }
-    if (parser.isSet(outputFileOption)) {
-        dialog.setDefaultOutputFile(parser.value(outputFileOption));
-    }
-    if (parser.isSet(exportTrackFileOption)) {
-        dialog.setExportTrackOutputFile(parser.value(exportTrackFileOption));
+
+    const QStringList efmInputs = parser.values(efmInputOption);
+    for (const QString &efmInput : efmInputs) {
+        dialog.setDefaultEfmInput(efmInput);
     }
 
-    bool ok = false;
-    if (parser.isSet(rfVideoSampleRateOption)) {
-        const quint32 rfSampleRate = parser.value(rfVideoSampleRateOption).toUInt(&ok);
-        if (ok && rfSampleRate > 0) {
-            dialog.setDefaultRfVideoSampleRate(rfSampleRate);
+    if (parser.isSet(ac3InputOption)) {
+        dialog.setDefaultAc3Input(parser.value(ac3InputOption));
+    }
+
+    if (parser.isSet(outputBaseOption)) {
+        dialog.setSuggestedOutputBase(parser.value(outputBaseOption));
+    }
+
+    const QStringList positionalInputs = parser.positionalArguments();
+    for (const QString &positionalInput : positionalInputs) {
+        const QString suffix = QFileInfo(positionalInput).suffix().trimmed().toLower();
+        if (suffix == QStringLiteral("efm")) {
+            dialog.setDefaultEfmInput(positionalInput);
+        } else {
+            dialog.setDefaultAc3Input(positionalInput);
         }
     }
 

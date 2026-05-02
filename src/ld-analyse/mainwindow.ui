@@ -798,6 +798,7 @@
     <addaction name="actionProcess_VITS"/>
     <addaction name="actionFix_JSON_SNR"/>
     <addaction name="actionAuto_Audio_Align"/>
+    <addaction name="actionEFM_Handler"/>
     <addaction name="separator"/>
     <addaction name="actionMetadata_Status"/>
     <addaction name="actionMetadata_Conversion"/>
@@ -877,6 +878,11 @@
   <action name="actionAuto_Audio_Align">
    <property name="text">
     <string>Auto Audio Align...</string>
+   </property>
+  </action>
+  <action name="actionEFM_Handler">
+   <property name="text">
+    <string>EFM Handler...</string>
    </property>
   </action>
   <action name="actionExit">

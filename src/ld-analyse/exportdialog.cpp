@@ -29,11 +29,23 @@
 #include <QTableWidgetItem>
 #include <QHeaderView>
 #include <QAbstractItemView>
+#include <QSizePolicy>
+#include <QSplitter>
 #include <QTimer>
+#include <QUrl>
 #include <algorithm>
 #include <signal.h>
 
 namespace {
+const QString kStatsFeedMain = QStringLiteral("main");
+const QString kStatsFeedProxy = QStringLiteral("proxy");
+
+QString normalizedStatsFeedTag(const QString &feedTag)
+{
+    const QString normalized = feedTag.trimmed().toLower();
+    return normalized == kStatsFeedProxy ? kStatsFeedProxy : kStatsFeedMain;
+}
+
 void setTableItem(QTableWidget *table, int row, int column, const QString &text)
 {
     if (!table) {
@@ -65,6 +77,20 @@ QString stripAnsiSequences(const QString &input)
 bool isIgnorableLogLine(const QString &line)
 {
     return line.contains(QStringLiteral("No support for ANSI escape sequences"), Qt::CaseInsensitive);
+}
+bool isTransientProcessTelemetryLine(const QString &line)
+{
+    const QString normalized = line.trimmed().toLower();
+    if (normalized.startsWith(QStringLiteral("frame type:"))) {
+        return true;
+    }
+    const bool sizePrefix = normalized.startsWith(QStringLiteral("size:"))
+                            || normalized.startsWith(QStringLiteral("size="));
+    const bool hasDuration = normalized.contains(QStringLiteral("duration:"))
+                             || normalized.contains(QStringLiteral("time="));
+    const bool hasBitrate = normalized.contains(QStringLiteral("bitrate:"))
+                            || normalized.contains(QStringLiteral("bitrate="));
+    return sizePrefix && hasDuration && hasBitrate;
 }
 QString quoteArgument(const QString &arg)
 {
@@ -171,6 +197,48 @@ QString runDirectoryDialog(QWidget *parent,
         return QString();
     }
     return dialog.selectedFiles().constFirst();
+}
+QString normalizeAudioTrackPathInput(const QString &path)
+{
+    QString normalized = path.trimmed();
+    if (normalized.isEmpty()) {
+        return QString();
+    }
+
+    const QStringList lines =
+        normalized.split(QRegularExpression(QStringLiteral("[\\r\\n]+")), Qt::SkipEmptyParts);
+    if (!lines.isEmpty()) {
+        normalized = lines.constFirst().trimmed();
+    }
+    if (normalized.isEmpty()) {
+        return QString();
+    }
+
+    if (normalized.startsWith(QStringLiteral("file:"), Qt::CaseInsensitive)) {
+        const QUrl parsedUrl = QUrl::fromUserInput(normalized);
+        if (parsedUrl.isValid() && parsedUrl.isLocalFile()) {
+            const QString localPath = parsedUrl.toLocalFile();
+            if (!localPath.isEmpty()) {
+                normalized = localPath;
+            }
+        }
+    }
+
+    normalized = QDir::cleanPath(QDir::fromNativeSeparators(normalized));
+    return QDir::toNativeSeparators(normalized);
+}
+
+void normalizeAudioTrackLineEditPath(QLineEdit *lineEdit)
+{
+    if (!lineEdit) {
+        return;
+    }
+    const QString normalized = normalizeAudioTrackPathInput(lineEdit->text());
+    if (normalized == lineEdit->text()) {
+        return;
+    }
+    const QSignalBlocker blocker(lineEdit);
+    lineEdit->setText(normalized);
 }
 
 QStringList defaultExecutableSearchDirs(const QString &currentInputFile)
@@ -309,6 +377,7 @@ struct ActiveAreaFrameDefaults {
     int ffrl = 0;
     int lfrl = 0;
 };
+constexpr int kVerticalFramingAutoUserDefinedThreshold = 20;
 
 ActiveAreaFrameDefaults activeAreaDefaultsForSystem(int system)
 {
@@ -330,18 +399,29 @@ bool hasExplicitVerticalFraming(const LdDecodeMetaData::VideoParameters &videoPa
            && videoParameters.firstActiveFrameLine > 0
            && videoParameters.lastActiveFrameLine > 0;
 }
-
-bool usesCustomVerticalFraming(const LdDecodeMetaData::VideoParameters &videoParameters)
+bool hasVerticalFramingDeltaBeyondThreshold(const LdDecodeMetaData::VideoParameters &videoParameters,
+                                            int thresholdLines)
 {
     if (!videoParameters.isValid || !hasExplicitVerticalFraming(videoParameters)) {
         return false;
     }
 
     const ActiveAreaFrameDefaults defaults = activeAreaDefaultsForSystem(videoParameters.system);
-    return videoParameters.firstActiveFieldLine != defaults.ffll
-           || videoParameters.lastActiveFieldLine != defaults.lfll
-           || videoParameters.firstActiveFrameLine != defaults.ffrl
-           || videoParameters.lastActiveFrameLine != defaults.lfrl;
+    const int clampedThreshold = qMax(0, thresholdLines);
+    const auto exceedsThreshold = [clampedThreshold](int value, int defaultValue) {
+        return value > 0 && qAbs(value - defaultValue) > clampedThreshold;
+    };
+
+    return exceedsThreshold(videoParameters.firstActiveFieldLine, defaults.ffll)
+           || exceedsThreshold(videoParameters.lastActiveFieldLine, defaults.lfll)
+           || exceedsThreshold(videoParameters.firstActiveFrameLine, defaults.ffrl)
+           || exceedsThreshold(videoParameters.lastActiveFrameLine, defaults.lfrl);
+}
+
+bool usesCustomVerticalFraming(const LdDecodeMetaData::VideoParameters &videoParameters)
+{
+    return hasVerticalFramingDeltaBeyondThreshold(videoParameters,
+                                                  kVerticalFramingAutoUserDefinedThreshold);
 }
 
 bool hasAnyNonDefaultVerticalFraming(const LdDecodeMetaData::VideoParameters &videoParameters)
@@ -1351,6 +1431,14 @@ ExportDialog::ExportDialog(QWidget *parent) :
     if (ui->generateProxyCheckBox) {
         ui->generateProxyCheckBox->setChecked(false);
         connect(ui->generateProxyCheckBox, &QCheckBox::toggled, this, [this](bool checked) {
+            if ((!exportProcess || exportProcess->state() == QProcess::NotRunning)
+                && (!parallelProxyProcess || parallelProxyProcess->state() == QProcess::NotRunning)) {
+                splitStatsByFeed = checked;
+                updateProcessStatsPaneMode();
+                updateFeedLogPaneMode();
+                resetProcessStats();
+                initializeProcessStats();
+            }
             updateProfileDependentControls();
             emit proxyGenerationPreferenceChanged(checked);
         });
@@ -1507,9 +1595,13 @@ ExportDialog::ExportDialog(QWidget *parent) :
         });
     }
     updateRangeLengthLabel();
-    if (ui->processStatsTable) {
-        ui->processStatsTable->setColumnCount(7);
-        ui->processStatsTable->setHorizontalHeaderLabels({
+    mainProcessStatsTable = ui->processStatsTable;
+    const auto configureProcessStatsTable = [this](QTableWidget *table, const QString &toolTip) {
+        if (!table) {
+            return;
+        }
+        table->setColumnCount(7);
+        table->setHorizontalHeaderLabels({
             tr("Process"),
             tr("TBC"),
             tr("Track"),
@@ -1518,19 +1610,83 @@ ExportDialog::ExportDialog(QWidget *parent) :
             tr("Errors"),
             tr("FPS")
         });
-        ui->processStatsTable->verticalHeader()->setVisible(false);
-        ui->processStatsTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-        ui->processStatsTable->setSelectionMode(QAbstractItemView::NoSelection);
-        ui->processStatsTable->setSelectionBehavior(QAbstractItemView::SelectRows);
-        ui->processStatsTable->setAlternatingRowColors(true);
-        ui->processStatsTable->horizontalHeader()->setStretchLastSection(true);
-        ui->processStatsTable->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
-        ui->processStatsTable->setMinimumHeight(90);
+        table->verticalHeader()->setVisible(false);
+        table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        table->setSelectionMode(QAbstractItemView::NoSelection);
+        table->setSelectionBehavior(QAbstractItemView::SelectRows);
+        table->setAlternatingRowColors(true);
+        table->horizontalHeader()->setStretchLastSection(true);
+        table->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+        table->setMinimumHeight(110);
+        table->setToolTip(toolTip);
+        table->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    };
+    configureProcessStatsTable(mainProcessStatsTable, tr("Main export process stats"));
+    if (mainProcessStatsTable && ui->mainLayout) {
+        const int processStatsIndex = ui->mainLayout->indexOf(mainProcessStatsTable);
+        processStatsSplitter = new QSplitter(Qt::Horizontal, this);
+        processStatsSplitter->setObjectName(QStringLiteral("processStatsSplitter"));
+        processStatsSplitter->setChildrenCollapsible(false);
+        processStatsSplitter->setHandleWidth(2);
+        processStatsSplitter->setMinimumHeight(110);
+        processStatsSplitter->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+
+        proxyProcessStatsTable = new QTableWidget(processStatsSplitter);
+        proxyProcessStatsTable->setObjectName(QStringLiteral("proxyProcessStatsTable"));
+        configureProcessStatsTable(proxyProcessStatsTable, tr("Proxy export process stats"));
+
+        ui->mainLayout->removeWidget(mainProcessStatsTable);
+        mainProcessStatsTable->setParent(processStatsSplitter);
+        processStatsSplitter->addWidget(mainProcessStatsTable);
+        processStatsSplitter->addWidget(proxyProcessStatsTable);
+        processStatsSplitter->setStretchFactor(0, 1);
+        processStatsSplitter->setStretchFactor(1, 1);
+        processStatsSplitter->setSizes(QList<int>({1, 1}));
+
+        if (processStatsIndex >= 0) {
+            ui->mainLayout->insertWidget(processStatsIndex, processStatsSplitter);
+        } else {
+            ui->mainLayout->addWidget(processStatsSplitter);
+        }
     }
+    updateProcessStatsPaneMode();
     if (ui->logTextEdit) {
-        ui->logTextEdit->setMaximumBlockCount(3);
-        const int lineHeight = QFontMetrics(ui->logTextEdit->font()).lineSpacing();
-        ui->logTextEdit->setFixedHeight(lineHeight * 3 + 8);
+        ui->logTextEdit->setMaximumBlockCount(10);
+        ui->logTextEdit->setPlaceholderText(tr("Main export feed"));
+        ui->logTextEdit->setLineWrapMode(QPlainTextEdit::NoWrap);
+        ui->logTextEdit->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        if (ui->proxyLogTextEdit) {
+            ui->proxyLogTextEdit->setMaximumBlockCount(10);
+            ui->proxyLogTextEdit->setPlaceholderText(tr("Proxy export feed"));
+            ui->proxyLogTextEdit->setLineWrapMode(QPlainTextEdit::NoWrap);
+            ui->proxyLogTextEdit->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        }
+        if (ui->feedLogSplitter) {
+            ui->feedLogSplitter->setChildrenCollapsible(false);
+            ui->feedLogSplitter->setHandleWidth(2);
+            ui->feedLogSplitter->setStretchFactor(0, 1);
+            ui->feedLogSplitter->setStretchFactor(1, 1);
+            ui->feedLogSplitter->setSizes(QList<int>({1, 1}));
+            ui->feedLogSplitter->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+        }
+        updateFeedLogPaneSizing();
+    }
+    if (ui->mainLayout) {
+        QWidget *statsWidget = processStatsSplitter
+                                   ? static_cast<QWidget *>(processStatsSplitter)
+                                   : static_cast<QWidget *>(mainProcessStatsTable);
+        if (statsWidget) {
+            const int statsIndex = ui->mainLayout->indexOf(statsWidget);
+            if (statsIndex >= 0) {
+                ui->mainLayout->setStretch(statsIndex, 2);
+            }
+        }
+        if (ui->feedLogSplitter) {
+            const int feedIndex = ui->mainLayout->indexOf(ui->feedLogSplitter);
+            if (feedIndex >= 0) {
+                ui->mainLayout->setStretch(feedIndex, 3);
+            }
+        }
     }
     if (ui->cancelButton) {
         ui->cancelButton->setEnabled(false);
@@ -1541,6 +1697,28 @@ ExportDialog::ExportDialog(QWidget *parent) :
     if (ui->profileComboBox) {
         connect(ui->profileComboBox, &QComboBox::currentTextChanged, this,
                 [this](const QString &) { updateProfileDependentControls(); });
+    }
+    const QList<QLineEdit *> audioTrackLineEdits = {
+        ui->audio1LineEdit,
+        ui->audio2LineEdit,
+        ui->audio3LineEdit,
+        ui->audio4LineEdit
+    };
+    for (QLineEdit *audioTrackLineEdit : audioTrackLineEdits) {
+        if (!audioTrackLineEdit) {
+            continue;
+        }
+        connect(audioTrackLineEdit, &QLineEdit::textChanged, this, [audioTrackLineEdit](const QString &text) {
+            if (!text.contains(QStringLiteral("file://"), Qt::CaseInsensitive)
+                && !text.contains(QLatin1Char('\r'))
+                && !text.contains(QLatin1Char('\n'))) {
+                return;
+            }
+            normalizeAudioTrackLineEditPath(audioTrackLineEdit);
+        });
+        connect(audioTrackLineEdit, &QLineEdit::editingFinished, this, [audioTrackLineEdit]() {
+            normalizeAudioTrackLineEditPath(audioTrackLineEdit);
+        });
     }
     if (ui->proresVariantComboBox) {
         connect(ui->proresVariantComboBox, &QComboBox::currentTextChanged, this,
@@ -1582,6 +1760,9 @@ ExportDialog::ExportDialog(QWidget *parent) :
     connect(parallelProxyProcess, &QProcess::started, this, [this]() {
         appendLog(tr("Parallel proxy export started (PID %1).").arg(parallelProxyProcess->processId()));
     });
+    splitStatsByFeed = shouldGenerateProxyForSelection();
+    updateProcessStatsPaneMode();
+    updateFeedLogPaneMode();
     updateProfileDependentControls();
 
     appendStatus(tr("Ready."));
@@ -1592,6 +1773,105 @@ ExportDialog::~ExportDialog()
 {
     cleanupTemporaryMetadataSnapshot();
     delete ui;
+}
+
+void ExportDialog::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    updateFeedLogPaneSizing();
+}
+void ExportDialog::updateFeedLogPaneMode()
+{
+    if (!ui || !ui->logTextEdit) {
+        return;
+    }
+
+    const bool splitFeedLogs = splitStatsByFeed && ui->proxyLogTextEdit;
+    ui->logTextEdit->setVisible(true);
+    if (ui->proxyLogTextEdit) {
+        ui->proxyLogTextEdit->setVisible(splitFeedLogs);
+    }
+    if (!ui->feedLogSplitter) {
+        return;
+    }
+    ui->feedLogSplitter->setHandleWidth(splitFeedLogs ? 2 : 0);
+    if (splitFeedLogs) {
+        ui->feedLogSplitter->setSizes(QList<int>({1, 1}));
+    } else {
+        ui->feedLogSplitter->setSizes(QList<int>({1, 0}));
+    }
+}
+
+void ExportDialog::updateFeedLogPaneSizing()
+{
+    if (!ui || !ui->logTextEdit) {
+        return;
+    }
+
+    const int lineHeight = QFontMetrics(ui->logTextEdit->font()).lineSpacing();
+    const int baseVisibleLines = 8;
+    const int basePadding = 10;
+    const int dynamicExtraPx = qBound(20, height() / 12, 220);
+    const int logHeight = (lineHeight * baseVisibleLines) + basePadding + dynamicExtraPx;
+    const int dynamicVisibleLines = qMax(baseVisibleLines, (logHeight - basePadding) / qMax(1, lineHeight));
+    const int maxLogBlocks = qMax(60, dynamicVisibleLines * 12);
+    if (ui->logTextEdit->minimumHeight() != logHeight) {
+        ui->logTextEdit->setMinimumHeight(logHeight);
+    }
+    if (ui->logTextEdit->maximumBlockCount() != maxLogBlocks) {
+        ui->logTextEdit->setMaximumBlockCount(maxLogBlocks);
+    }
+    if (ui->proxyLogTextEdit && ui->proxyLogTextEdit->minimumHeight() != logHeight) {
+        ui->proxyLogTextEdit->setMinimumHeight(logHeight);
+    }
+    if (ui->proxyLogTextEdit && ui->proxyLogTextEdit->maximumBlockCount() != maxLogBlocks) {
+        ui->proxyLogTextEdit->setMaximumBlockCount(maxLogBlocks);
+    }
+    if (ui->feedLogSplitter && ui->feedLogSplitter->minimumHeight() != logHeight) {
+        ui->feedLogSplitter->setMinimumHeight(logHeight);
+    }
+}
+void ExportDialog::updateProcessStatsPaneMode()
+{
+    if (!mainProcessStatsTable && ui) {
+        mainProcessStatsTable = ui->processStatsTable;
+    }
+    if (!mainProcessStatsTable) {
+        return;
+    }
+
+    if (!processStatsSplitter) {
+        if (proxyProcessStatsTable) {
+            proxyProcessStatsTable->setVisible(splitStatsByFeed);
+        }
+        return;
+    }
+
+    mainProcessStatsTable->setVisible(true);
+    if (proxyProcessStatsTable) {
+        proxyProcessStatsTable->setVisible(splitStatsByFeed);
+    }
+
+    processStatsSplitter->setHandleWidth(splitStatsByFeed ? 2 : 0);
+    if (splitStatsByFeed) {
+        processStatsSplitter->setSizes(QList<int>({1, 1}));
+    } else {
+        processStatsSplitter->setSizes(QList<int>({1, 0}));
+    }
+}
+
+QTableWidget *ExportDialog::processStatsTableForFeed(const QString &feedTag) const
+{
+    const QString normalizedFeedTag = normalizedStatsFeedTag(feedTag);
+    if (splitStatsByFeed
+        && normalizedFeedTag == kStatsFeedProxy
+        && proxyProcessStatsTable) {
+        return proxyProcessStatsTable;
+    }
+    if (mainProcessStatsTable) {
+        return mainProcessStatsTable;
+    }
+    return ui ? ui->processStatsTable : nullptr;
 }
 
 void ExportDialog::setSource(TbcSource *source)
@@ -1610,6 +1890,14 @@ void ExportDialog::setGenerateProxyEnabledPreference(bool enabled)
 
     const QSignalBlocker blocker(ui->generateProxyCheckBox);
     ui->generateProxyCheckBox->setChecked(enabled);
+    if ((!exportProcess || exportProcess->state() == QProcess::NotRunning)
+        && (!parallelProxyProcess || parallelProxyProcess->state() == QProcess::NotRunning)) {
+        splitStatsByFeed = enabled;
+        updateProcessStatsPaneMode();
+        updateFeedLogPaneMode();
+        resetProcessStats();
+        initializeProcessStats();
+    }
     updateProfileDependentControls();
 }
 
@@ -1694,6 +1982,26 @@ void ExportDialog::setOutPoint(int frameNumber)
     syncRangeTimecodeEditors();
 }
 
+bool ExportDialog::hasAudioTracksConfigured() const
+{
+    if (!ui) {
+        return false;
+    }
+
+    const QStringList trackCandidates = {
+        ui->audio1LineEdit ? ui->audio1LineEdit->text().trimmed() : QString(),
+        ui->audio2LineEdit ? ui->audio2LineEdit->text().trimmed() : QString(),
+        ui->audio3LineEdit ? ui->audio3LineEdit->text().trimmed() : QString(),
+        ui->audio4LineEdit ? ui->audio4LineEdit->text().trimmed() : QString()
+    };
+    for (const QString &candidate : trackCandidates) {
+        if (!candidate.isEmpty()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void ExportDialog::loadAudioTracksForExport(const QStringList &trackFiles, const QStringList &trackNames)
 {
     if (!ui) {
@@ -1725,7 +2033,7 @@ void ExportDialog::loadAudioTracksForExport(const QStringList &trackFiles, const
 
     int loadedTrackCount = 0;
     for (const QString &trackFileValue : trackFiles) {
-        const QString trackFile = trackFileValue.trimmed();
+        const QString trackFile = normalizeAudioTrackPathInput(trackFileValue);
         if (trackFile.isEmpty()) {
             continue;
         }
@@ -2376,7 +2684,7 @@ void ExportDialog::on_audio1BrowseButton_clicked()
     const QString selected = runOpenFileDialog(this,
                                                tr("Select audio track 1"),
                                                currentInputFile.isEmpty() ? QString() : QFileInfo(currentInputFile).absolutePath(),
-                                               tr("Audio Files (*.wav *.flac *.aiff *.aif *.mp3 *.m4a *.aac *.ogg);;All Files (*)"));
+                                               tr("Audio Files (*.wav *.flac *.aiff *.aif *.mp3 *.m4a *.aac *.ogg *.pcm);;All Files (*)"));
     if (!selected.isEmpty()) {
         ui->audio1LineEdit->setText(selected);
     }
@@ -2387,7 +2695,7 @@ void ExportDialog::on_audio2BrowseButton_clicked()
     const QString selected = runOpenFileDialog(this,
                                                tr("Select audio track 2"),
                                                currentInputFile.isEmpty() ? QString() : QFileInfo(currentInputFile).absolutePath(),
-                                               tr("Audio Files (*.wav *.flac *.aiff *.aif *.mp3 *.m4a *.aac *.ogg);;All Files (*)"));
+                                               tr("Audio Files (*.wav *.flac *.aiff *.aif *.mp3 *.m4a *.aac *.ogg *.pcm);;All Files (*)"));
     if (!selected.isEmpty()) {
         ui->audio2LineEdit->setText(selected);
     }
@@ -2398,7 +2706,7 @@ void ExportDialog::on_audio3BrowseButton_clicked()
     const QString selected = runOpenFileDialog(this,
                                                tr("Select audio track 3"),
                                                currentInputFile.isEmpty() ? QString() : QFileInfo(currentInputFile).absolutePath(),
-                                               tr("Audio Files (*.wav *.flac *.aiff *.aif *.mp3 *.m4a *.aac *.ogg);;All Files (*)"));
+                                               tr("Audio Files (*.wav *.flac *.aiff *.aif *.mp3 *.m4a *.aac *.ogg *.pcm);;All Files (*)"));
     if (!selected.isEmpty()) {
         ui->audio3LineEdit->setText(selected);
     }
@@ -2409,7 +2717,7 @@ void ExportDialog::on_audio4BrowseButton_clicked()
     const QString selected = runOpenFileDialog(this,
                                                tr("Select audio track 4"),
                                                currentInputFile.isEmpty() ? QString() : QFileInfo(currentInputFile).absolutePath(),
-                                               tr("Audio Files (*.wav *.flac *.aiff *.aif *.mp3 *.m4a *.aac *.ogg);;All Files (*)"));
+                                               tr("Audio Files (*.wav *.flac *.aiff *.aif *.mp3 *.m4a *.aac *.ogg *.pcm);;All Files (*)"));
     if (!selected.isEmpty()) {
         ui->audio4LineEdit->setText(selected);
     }
@@ -2745,8 +3053,12 @@ void ExportDialog::on_exportButton_clicked()
         const bool supportsAppendVideoFilter = executableSupportsOption(exportPath, QStringLiteral("--append-video-filter"));
         const bool supportsD1OutputSizing = executableSupportsD1OutputSizing(exportPath);
         const LdDecodeMetaData::VideoParameters &previewVideoParameters = tbcSource->getVideoParameters();
-        const bool hasCustomActiveLineFraming = resolutionMode == QStringLiteral("user_defined")
-                                                || hasAnyNonDefaultVerticalFraming(previewVideoParameters);
+        const bool hasAnyVerticalLineAdjustment = hasAnyNonDefaultVerticalFraming(previewVideoParameters);
+        const bool hasSignificantVerticalLineAdjustment =
+            hasVerticalFramingDeltaBeyondThreshold(previewVideoParameters,
+                                                   kVerticalFramingAutoUserDefinedThreshold);
+    const bool hasCustomActiveLineFraming = resolutionMode == QStringLiteral("user_defined")
+                                            || hasSignificantVerticalLineAdjustment;
         const bool deinterlacedOutputProfile = isWebProfileName(selectedProfile);
         if (dropoutMode == QStringLiteral("heavy")
             && !executableSupportsOption(exportPath, QStringLiteral("--overcorrect"))) {
@@ -3050,6 +3362,18 @@ void ExportDialog::on_exportButton_clicked()
     outputBaseForCurrentRun = outputBase;
     proxyCodecForCurrentRun = selectedProxyCodec;
     proxyOutputPathForCurrentRun = plannedProxyOutputPath;
+    splitStatsByFeed = generateProxyRequested;
+    updateProcessStatsPaneMode();
+    updateFeedLogPaneMode();
+    clearFeedLogLines();
+    if (splitStatsByFeed && ui) {
+        if (ui->logTextEdit) {
+            ui->logTextEdit->clear();
+        }
+        if (ui->proxyLogTextEdit) {
+            ui->proxyLogTextEdit->clear();
+        }
+    }
     resetProcessStats();
     initializeProcessStats();
 
@@ -3208,8 +3532,9 @@ void ExportDialog::on_cancelButton_clicked()
 
 void ExportDialog::handleProcessFinished(int exitCode, QProcess::ExitStatus exitStatus)
 {
-    flushPendingProcessOutput();
     const RunStage finishedStage = activeRunStage;
+    const QString feedTag = finishedStage == RunStage::ProxyExport ? kStatsFeedProxy : kStatsFeedMain;
+    flushPendingProcessOutput(feedTag);
     const bool wasCancelRequested = cancelRequested;
     cancelRequested = false;
     const QString combinedOutput = processStdout + QStringLiteral("\n") + processStderr;
@@ -3326,8 +3651,9 @@ void ExportDialog::handleProcessFinished(int exitCode, QProcess::ExitStatus exit
 void ExportDialog::handleProcessError(QProcess::ProcessError)
 {
     setBusy(false);
-    flushPendingProcessOutput();
     const RunStage failedStage = activeRunStage;
+    const QString feedTag = failedStage == RunStage::ProxyExport ? kStatsFeedProxy : kStatsFeedMain;
+    flushPendingProcessOutput(feedTag);
     const QString errorText = exportProcess ? exportProcess->errorString() : QString();
     if (failedStage != RunStage::ProxyExport
         && parallelProxyProcess
@@ -3373,7 +3699,7 @@ void ExportDialog::handleProcessError(QProcess::ProcessError)
     }
     clearRunState();
 }
-void ExportDialog::processOutputLine(const QString &line, QString *lastStatus)
+void ExportDialog::processOutputLine(const QString &line, QString *lastStatus, const QString &feedTag)
 {
     const QString trimmed = line.trimmed();
     if (trimmed.isEmpty() || isIgnorableLogLine(trimmed)) {
@@ -3382,6 +3708,7 @@ void ExportDialog::processOutputLine(const QString &line, QString *lastStatus)
 
     ExportProcessStat stat;
     if (parseProgressLine(trimmed, &stat)) {
+        stat.feedTag = feedTag;
         updateProcessStat(stat);
         return;
     }
@@ -3389,10 +3716,17 @@ void ExportDialog::processOutputLine(const QString &line, QString *lastStatus)
     if (lastStatus) {
         *lastStatus = trimmed;
     }
+    if (splitStatsByFeed) {
+        if (isTransientProcessTelemetryLine(trimmed)) {
+            return;
+        }
+        appendFeedLog(trimmed, feedTag);
+        return;
+    }
     appendLog(trimmed);
 }
 
-void ExportDialog::consumeProcessOutputChunk(const QString &chunk, QString *pendingBuffer)
+void ExportDialog::consumeProcessOutputChunk(const QString &chunk, QString *pendingBuffer, const QString &feedTag)
 {
     if (!pendingBuffer || chunk.isEmpty()) {
         return;
@@ -3401,6 +3735,7 @@ void ExportDialog::consumeProcessOutputChunk(const QString &chunk, QString *pend
     QString buffer = *pendingBuffer + stripAnsiSequences(chunk);
     ExportProcessStat ffmpegStat;
     if (parseFfmpegProgressLine(buffer, &ffmpegStat)) {
+        ffmpegStat.feedTag = feedTag;
         updateProcessStat(ffmpegStat);
     }
     buffer.replace(QLatin1Char('\r'), QLatin1Char('\n'));
@@ -3420,17 +3755,17 @@ void ExportDialog::consumeProcessOutputChunk(const QString &chunk, QString *pend
     QString lastStatus;
     const QStringList lines = completeLines.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
     for (const QString &line : lines) {
-        processOutputLine(line, &lastStatus);
+        processOutputLine(line, &lastStatus, feedTag);
     }
     if (!lastStatus.isEmpty()) {
-        appendStatus(lastStatus);
+        appendFeedStatus(lastStatus, feedTag);
     }
 }
 
-void ExportDialog::flushPendingProcessOutput()
+void ExportDialog::flushPendingProcessOutput(const QString &feedTag)
 {
-    consumeProcessOutputChunk(QStringLiteral("\n"), &pendingStdoutBuffer);
-    consumeProcessOutputChunk(QStringLiteral("\n"), &pendingStderrBuffer);
+    consumeProcessOutputChunk(QStringLiteral("\n"), &pendingStdoutBuffer, feedTag);
+    consumeProcessOutputChunk(QStringLiteral("\n"), &pendingStderrBuffer, feedTag);
     pendingStdoutBuffer.clear();
     pendingStderrBuffer.clear();
 }
@@ -3439,34 +3774,36 @@ void ExportDialog::handleProcessStdout()
 {
     const QString chunk = QString::fromLocal8Bit(exportProcess->readAllStandardOutput());
     processStdout += chunk;
-    consumeProcessOutputChunk(chunk, &pendingStdoutBuffer);
+    const QString feedTag = activeRunStage == RunStage::ProxyExport ? kStatsFeedProxy : kStatsFeedMain;
+    consumeProcessOutputChunk(chunk, &pendingStdoutBuffer, feedTag);
 }
 
 void ExportDialog::handleProcessStderr()
 {
     const QString chunk = QString::fromLocal8Bit(exportProcess->readAllStandardError());
     processStderr += chunk;
-    consumeProcessOutputChunk(chunk, &pendingStderrBuffer);
+    const QString feedTag = activeRunStage == RunStage::ProxyExport ? kStatsFeedProxy : kStatsFeedMain;
+    consumeProcessOutputChunk(chunk, &pendingStderrBuffer, feedTag);
 }
 
 void ExportDialog::handleParallelProxyProcessStdout()
 {
     const QString chunk = QString::fromLocal8Bit(parallelProxyProcess->readAllStandardOutput());
     parallelProxyStdout += chunk;
-    consumeProcessOutputChunk(chunk, &pendingParallelProxyStdoutBuffer);
+    consumeProcessOutputChunk(chunk, &pendingParallelProxyStdoutBuffer, kStatsFeedProxy);
 }
 
 void ExportDialog::handleParallelProxyProcessStderr()
 {
     const QString chunk = QString::fromLocal8Bit(parallelProxyProcess->readAllStandardError());
     parallelProxyStderr += chunk;
-    consumeProcessOutputChunk(chunk, &pendingParallelProxyStderrBuffer);
+    consumeProcessOutputChunk(chunk, &pendingParallelProxyStderrBuffer, kStatsFeedProxy);
 }
 
 void ExportDialog::handleParallelProxyProcessFinished(int exitCode, QProcess::ExitStatus exitStatus)
 {
-    consumeProcessOutputChunk(QStringLiteral("\n"), &pendingParallelProxyStdoutBuffer);
-    consumeProcessOutputChunk(QStringLiteral("\n"), &pendingParallelProxyStderrBuffer);
+    consumeProcessOutputChunk(QStringLiteral("\n"), &pendingParallelProxyStdoutBuffer, kStatsFeedProxy);
+    consumeProcessOutputChunk(QStringLiteral("\n"), &pendingParallelProxyStderrBuffer, kStatsFeedProxy);
     pendingParallelProxyStdoutBuffer.clear();
     pendingParallelProxyStderrBuffer.clear();
 
@@ -3567,20 +3904,26 @@ void ExportDialog::handleParallelProxyProcessError(QProcess::ProcessError)
 void ExportDialog::resetProcessStats()
 {
     processRowMap.clear();
-    if (ui->processStatsTable) {
-        ui->processStatsTable->setRowCount(0);
+    if (mainProcessStatsTable) {
+        mainProcessStatsTable->setRowCount(0);
+    }
+    if (proxyProcessStatsTable) {
+        proxyProcessStatsTable->setRowCount(0);
     }
 }
 
 void ExportDialog::initializeProcessStats()
 {
-    if (!tbcSource || !ui->processStatsTable) {
+    if (!tbcSource || !mainProcessStatsTable) {
         return;
     }
 
     const int totalFramesValue = qMax(0, tbcSource->getNumberOfFrames());
     const QString totalFrames = totalFramesValue > 0 ? QString::number(totalFramesValue) : QStringLiteral("—");
-    auto seedStat = [this, &totalFrames](const QString &process, const QString &tbcType) {
+    const TbcSource::SourceMode mode = tbcSource->getSourceMode();
+    const auto seedStat = [this, &totalFrames](const QString &process,
+                                               const QString &tbcType,
+                                               const QString &feedTag) {
         ExportProcessStat stat;
         stat.process = process;
         stat.tbcType = tbcType;
@@ -3589,69 +3932,55 @@ void ExportDialog::initializeProcessStats()
         stat.total = totalFrames;
         stat.errors = QStringLiteral("0");
         stat.fps = QStringLiteral("—");
+        stat.feedTag = feedTag;
         updateProcessStat(stat);
     };
-
-    const TbcSource::SourceMode mode = tbcSource->getSourceMode();
-    if (mode == TbcSource::BOTH_SOURCES) {
-        seedStat(QStringLiteral("ld-dropout-correct"), QStringLiteral("LUMA"));
-        seedStat(QStringLiteral("ld-dropout-correct"), QStringLiteral("CHROMA"));
-        seedStat(QStringLiteral("ld-chroma-decoder"), QStringLiteral("LUMA"));
-        seedStat(QStringLiteral("ld-chroma-decoder"), QStringLiteral("CHROMA"));
-    } else if (mode == TbcSource::LUMA_SOURCE) {
-        seedStat(QStringLiteral("ld-dropout-correct"), QStringLiteral("LUMA"));
-        seedStat(QStringLiteral("ld-chroma-decoder"), QStringLiteral("LUMA"));
-    } else if (mode == TbcSource::CHROMA_SOURCE) {
-        seedStat(QStringLiteral("ld-dropout-correct"), QStringLiteral("CHROMA"));
-        seedStat(QStringLiteral("ld-chroma-decoder"), QStringLiteral("CHROMA"));
-    } else {
-        seedStat(QStringLiteral("ld-dropout-correct"), QStringLiteral("COMBINED"));
-        seedStat(QStringLiteral("ld-chroma-decoder"), QStringLiteral("COMBINED"));
+    const auto seedFeed = [&seedStat, mode](const QString &feedTag) {
+        if (mode == TbcSource::BOTH_SOURCES) {
+            seedStat(QStringLiteral("ld-dropout-correct"), QStringLiteral("LUMA"), feedTag);
+            seedStat(QStringLiteral("ld-dropout-correct"), QStringLiteral("CHROMA"), feedTag);
+            seedStat(QStringLiteral("ld-chroma-decoder"), QStringLiteral("LUMA"), feedTag);
+            seedStat(QStringLiteral("ld-chroma-decoder"), QStringLiteral("CHROMA"), feedTag);
+        } else if (mode == TbcSource::LUMA_SOURCE) {
+            seedStat(QStringLiteral("ld-dropout-correct"), QStringLiteral("LUMA"), feedTag);
+            seedStat(QStringLiteral("ld-chroma-decoder"), QStringLiteral("LUMA"), feedTag);
+        } else if (mode == TbcSource::CHROMA_SOURCE) {
+            seedStat(QStringLiteral("ld-dropout-correct"), QStringLiteral("CHROMA"), feedTag);
+            seedStat(QStringLiteral("ld-chroma-decoder"), QStringLiteral("CHROMA"), feedTag);
+        } else {
+            seedStat(QStringLiteral("ld-dropout-correct"), QStringLiteral("COMBINED"), feedTag);
+            seedStat(QStringLiteral("ld-chroma-decoder"), QStringLiteral("COMBINED"), feedTag);
+        }
+        seedStat(QStringLiteral("ffmpeg"), QStringLiteral("—"), feedTag);
+    };
+    seedFeed(kStatsFeedMain);
+    if (splitStatsByFeed) {
+        seedFeed(kStatsFeedProxy);
     }
-    seedStat(QStringLiteral("ffmpeg"), QStringLiteral("—"));
 }
 
 void ExportDialog::updateProcessStat(const ExportProcessStat &stat)
 {
-    if (!ui->processStatsTable) {
+    const QString feedTag = normalizedStatsFeedTag(stat.feedTag);
+    const QString keyFeed = splitStatsByFeed ? feedTag : kStatsFeedMain;
+    QTableWidget *targetTable = processStatsTableForFeed(keyFeed);
+    if (!targetTable) {
         return;
     }
-    if (stat.tbcType == QStringLiteral("—")) {
-        QVector<int> processRows;
-        processRows.reserve(ui->processStatsTable->rowCount());
-        for (int rowIndex = 0; rowIndex < ui->processStatsTable->rowCount(); ++rowIndex) {
-            QTableWidgetItem *processItem = ui->processStatsTable->item(rowIndex, 0);
-            if (processItem && processItem->text() == stat.process) {
-                processRows.push_back(rowIndex);
-            }
-        }
-        if (!processRows.isEmpty()) {
-            for (const int rowIndex : processRows) {
-                setTableItem(ui->processStatsTable, rowIndex, 0, stat.process);
-                setTableItem(ui->processStatsTable, rowIndex, 2, stat.trackedName);
-                setTableItem(ui->processStatsTable, rowIndex, 3, stat.current);
-                setTableItem(ui->processStatsTable, rowIndex, 4, stat.total);
-                setTableItem(ui->processStatsTable, rowIndex, 5, stat.errors);
-                setTableItem(ui->processStatsTable, rowIndex, 6, stat.fps);
-            }
-            return;
-        }
-    }
-    const QString key = stat.process + QStringLiteral("|") + stat.tbcType;
+    const QString key = keyFeed + QStringLiteral("|") + stat.process + QStringLiteral("|") + stat.tbcType;
     int row = processRowMap.value(key, -1);
-    if (row < 0) {
-        row = ui->processStatsTable->rowCount();
-        ui->processStatsTable->insertRow(row);
+    if (row < 0 || row >= targetTable->rowCount()) {
+        row = targetTable->rowCount();
+        targetTable->insertRow(row);
         processRowMap.insert(key, row);
     }
-
-    setTableItem(ui->processStatsTable, row, 0, stat.process);
-    setTableItem(ui->processStatsTable, row, 1, stat.tbcType);
-    setTableItem(ui->processStatsTable, row, 2, stat.trackedName);
-    setTableItem(ui->processStatsTable, row, 3, stat.current);
-    setTableItem(ui->processStatsTable, row, 4, stat.total);
-    setTableItem(ui->processStatsTable, row, 5, stat.errors);
-    setTableItem(ui->processStatsTable, row, 6, stat.fps);
+    setTableItem(targetTable, row, 0, stat.process);
+    setTableItem(targetTable, row, 1, stat.tbcType);
+    setTableItem(targetTable, row, 2, stat.trackedName);
+    setTableItem(targetTable, row, 3, stat.current);
+    setTableItem(targetTable, row, 4, stat.total);
+    setTableItem(targetTable, row, 5, stat.errors);
+    setTableItem(targetTable, row, 6, stat.fps);
 }
 
 void ExportDialog::setBusy(bool busy)
@@ -4023,10 +4352,10 @@ QStringList ExportDialog::collectAudioTracks() const
 {
     QStringList tracks;
     const QStringList candidates = {
-        ui->audio1LineEdit->text().trimmed(),
-        ui->audio2LineEdit->text().trimmed(),
-        ui->audio3LineEdit->text().trimmed(),
-        ui->audio4LineEdit->text().trimmed()
+        normalizeAudioTrackPathInput(ui->audio1LineEdit->text()),
+        normalizeAudioTrackPathInput(ui->audio2LineEdit->text()),
+        normalizeAudioTrackPathInput(ui->audio3LineEdit->text()),
+        normalizeAudioTrackPathInput(ui->audio4LineEdit->text())
     };
     for (const QString &track : candidates) {
         if (!track.isEmpty()) {
@@ -4309,6 +4638,9 @@ bool ExportDialog::startProxyExport(QString *errorMessage, bool forceOverwrite)
     }
 
     proxyOutputPathForCurrentRun = targetProxyPath;
+    splitStatsByFeed = true;
+    updateProcessStatsPaneMode();
+    updateFeedLogPaneMode();
     processStdout.clear();
     processStderr.clear();
     pendingStdoutBuffer.clear();
@@ -4327,6 +4659,7 @@ bool ExportDialog::startProxyExport(QString *errorMessage, bool forceOverwrite)
     stat.total = QStringLiteral("—");
     stat.errors = QStringLiteral("0");
     stat.fps = QStringLiteral("—");
+    stat.feedTag = kStatsFeedProxy;
     updateProcessStat(stat);
 
     exportProcess->setWorkingDirectory(QFileInfo(sourceVideoPath).absolutePath());
@@ -4372,6 +4705,11 @@ void ExportDialog::clearRunState()
     parallelProxyStderr.clear();
     pendingParallelProxyStdoutBuffer.clear();
     pendingParallelProxyStderrBuffer.clear();
+    clearFeedStatusLines();
+    clearFeedLogLines();
+    splitStatsByFeed = shouldGenerateProxyForSelection();
+    updateProcessStatsPaneMode();
+    updateFeedLogPaneMode();
     cleanupTemporaryMetadataSnapshot();
 }
 bool ExportDialog::prepareTrimmedAudioTracks(int zeroBasedStartFrame,
@@ -4444,7 +4782,7 @@ bool ExportDialog::prepareTrimmedAudioTracks(int zeroBasedStartFrame,
     QStringList trimmedTracks;
     trimmedTracks.reserve(audioTracks->size());
     for (int index = 0; index < audioTracks->size(); ++index) {
-        const QString sourceTrack = audioTracks->at(index).trimmed();
+        const QString sourceTrack = normalizeAudioTrackPathInput(audioTracks->at(index));
         if (sourceTrack.isEmpty()) {
             continue;
         }
@@ -4466,14 +4804,20 @@ bool ExportDialog::prepareTrimmedAudioTracks(int zeroBasedStartFrame,
             QStringLiteral("ld-analyse-audio-range-%1-%2.wav")
                 .arg(index + 1)
                 .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
+        const bool isRawPcmTrack = sourceInfo.suffix().compare(QStringLiteral("pcm"), Qt::CaseInsensitive) == 0;
         QStringList ffmpegArgs;
         ffmpegArgs << QStringLiteral("-hide_banner")
                    << QStringLiteral("-v") << QStringLiteral("error")
                    << QStringLiteral("-nostdin")
                    << QStringLiteral("-y")
                    << QStringLiteral("-ss") << startArg
-                   << QStringLiteral("-t") << durationArg
-                   << QStringLiteral("-i") << sourceTrack
+                   << QStringLiteral("-t") << durationArg;
+        if (isRawPcmTrack) {
+            ffmpegArgs << QStringLiteral("-f") << QStringLiteral("s16le")
+                       << QStringLiteral("-ar") << QStringLiteral("44100")
+                       << QStringLiteral("-ac") << QStringLiteral("2");
+        }
+        ffmpegArgs << QStringLiteral("-i") << sourceTrack
                    << QStringLiteral("-map") << QStringLiteral("0:a:0")
                    << QStringLiteral("-vn")
                    << QStringLiteral("-sn")
@@ -4688,11 +5032,26 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
         appendTrackTitle(ui->audio4LineEdit, ui->audio4NameLineEdit);
     }
     for (int i = 0; i < tracksToUse.size(); ++i) {
-        const QString track = tracksToUse.at(i).trimmed();
+        const QString track = normalizeAudioTrackPathInput(tracksToUse.at(i));
         if (track.isEmpty()) {
             continue;
         }
         const QString title = (i < trackTitles.size()) ? trackTitles.at(i).trimmed() : QString();
+        const bool isRawPcmTrack =
+            QFileInfo(track).suffix().compare(QStringLiteral("pcm"), Qt::CaseInsensitive) == 0;
+        if (isRawPcmTrack) {
+            QJsonArray advancedTrack;
+            advancedTrack.append(track);
+            advancedTrack.append(title.isEmpty() ? QJsonValue(QJsonValue::Null)
+                                                 : QJsonValue(title));
+            advancedTrack.append(QJsonValue(QJsonValue::Null));
+            advancedTrack.append(44100);
+            advancedTrack.append(QStringLiteral("s16le"));
+            advancedTrack.append(2);
+            args << QStringLiteral("--audio-track-advanced")
+                 << QString::fromUtf8(QJsonDocument(advancedTrack).toJson(QJsonDocument::Compact));
+            continue;
+        }
         if (!title.isEmpty()) {
             QJsonArray advancedTrack;
             advancedTrack.append(track);
@@ -4752,9 +5111,12 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
             args << QStringLiteral("--lfrl") << QString::number(lfrl);
         }
     };
-    const bool forwardActiveLines = hasAnyNonDefaultVerticalFraming(videoParameters);
+    const bool hasAnyVerticalLineAdjustment = hasAnyNonDefaultVerticalFraming(videoParameters);
+    const bool hasSignificantVerticalLineAdjustment =
+        hasVerticalFramingDeltaBeyondThreshold(videoParameters,
+                                               kVerticalFramingAutoUserDefinedThreshold);
     const bool hasCustomActiveLineFraming = resolutionMode == QStringLiteral("user_defined")
-                                            || forwardActiveLines;
+                                            || hasSignificantVerticalLineAdjustment;
     const bool letterboxCropRequested = ui->letterboxCropCheckBox
                                         && ui->letterboxCropCheckBox->isChecked();
     const bool forceAnamorphicRequested = ui->forceAnamorphicCheckBox
@@ -4823,7 +5185,7 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
         }
     } else if (resolutionMode == QStringLiteral("active_vbi")) {
         args << QStringLiteral("--vbi");
-    } else if (resolutionMode == QStringLiteral("user_defined") || forwardActiveLines) {
+    } else if (resolutionMode == QStringLiteral("user_defined") || hasAnyVerticalLineAdjustment) {
         appendFramingArgs(videoParameters.firstActiveFieldLine,
                           videoParameters.lastActiveFieldLine,
                           videoParameters.firstActiveFrameLine,
@@ -5274,6 +5636,74 @@ void ExportDialog::appendStatus(const QString &message)
 {
     ui->statusLabel->setText(message);
 }
+void ExportDialog::appendFeedStatus(const QString &message, const QString &feedTag)
+{
+    const QString trimmed = message.trimmed();
+    if (trimmed.isEmpty()) {
+        return;
+    }
+    if (!splitStatsByFeed) {
+        appendStatus(trimmed);
+        return;
+    }
+
+    const QString normalizedFeedTag = normalizedStatsFeedTag(feedTag);
+    if (normalizedFeedTag == kStatsFeedProxy) {
+        proxyFeedStatusLine = trimmed;
+    } else {
+        mainFeedStatusLine = trimmed;
+    }
+
+    const QString mainLine = mainFeedStatusLine.isEmpty() ? QStringLiteral("—") : mainFeedStatusLine;
+    const QString proxyLine = proxyFeedStatusLine.isEmpty() ? QStringLiteral("—") : proxyFeedStatusLine;
+    appendStatus(QStringLiteral("Main: %1\nProxy: %2").arg(mainLine, proxyLine));
+}
+
+void ExportDialog::clearFeedStatusLines()
+{
+    mainFeedStatusLine.clear();
+    proxyFeedStatusLine.clear();
+}
+
+void ExportDialog::appendFeedLog(const QString &message, const QString &feedTag)
+{
+    const QString trimmed = message.trimmed();
+    if (trimmed.isEmpty()) {
+        return;
+    }
+    if (!splitStatsByFeed || !ui || !ui->logTextEdit || !ui->proxyLogTextEdit) {
+        appendLog(trimmed);
+        return;
+    }
+
+    const QString normalizedFeedTag = normalizedStatsFeedTag(feedTag);
+    QString *lineTarget = normalizedFeedTag == kStatsFeedProxy ? &proxyFeedLogLine : &mainFeedLogLine;
+    QPlainTextEdit *targetLog = normalizedFeedTag == kStatsFeedProxy ? ui->proxyLogTextEdit : ui->logTextEdit;
+    if (*lineTarget == trimmed) {
+        return;
+    }
+    *lineTarget = trimmed;
+
+    const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"));
+    const QString rendered = QStringLiteral("[%1] %2").arg(timestamp, trimmed);
+    if (!rendered.isEmpty()) {
+        targetLog->appendPlainText(rendered);
+    }
+}
+
+void ExportDialog::clearFeedLogLines()
+{
+    mainFeedLogLine.clear();
+    proxyFeedLogLine.clear();
+    if (ui) {
+        if (ui->logTextEdit) {
+            ui->logTextEdit->clear();
+        }
+        if (ui->proxyLogTextEdit) {
+            ui->proxyLogTextEdit->clear();
+        }
+    }
+}
 
 void ExportDialog::appendLog(const QString &message)
 {
@@ -5352,8 +5782,16 @@ QString ExportDialog::writeExportFailureLog(const QString &failureTitle,
         const QString exportLog = ui->logTextEdit->toPlainText().trimmed();
         if (!exportLog.isEmpty()) {
             stream << '\n';
-            stream << "=== Export dialog log ===\n";
+            stream << "=== Main export dialog log ===\n";
             stream << exportLog << '\n';
+        }
+    }
+    if (ui && ui->proxyLogTextEdit) {
+        const QString proxyExportLog = ui->proxyLogTextEdit->toPlainText().trimmed();
+        if (!proxyExportLog.isEmpty()) {
+            stream << '\n';
+            stream << "=== Proxy export dialog log ===\n";
+            stream << proxyExportLog << '\n';
         }
     }
 

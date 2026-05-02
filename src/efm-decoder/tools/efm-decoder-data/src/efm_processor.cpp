@@ -26,6 +26,7 @@
 #include "tbc/logging.h"
 
 EfmProcessor::EfmProcessor() : 
+    m_showRawSector(false),
     m_outputDataMetadata(false)
 {}
 
@@ -41,7 +42,10 @@ bool EfmProcessor::process(const QString &inputFilename, const QString &outputFi
     }
 
     // Prepare the output file writers
-    m_writerSector.open(outputFilename);
+    if (!m_writerSector.open(outputFilename)) {
+        m_readerData24Section.close();
+        return false;
+    }
     if (m_outputDataMetadata) {
         QString metadataFilename = outputFilename;
         if (metadataFilename.endsWith(".dat")) {
@@ -49,7 +53,11 @@ bool EfmProcessor::process(const QString &inputFilename, const QString &outputFi
         } else {
             metadataFilename.append(".bsm");
         }
-        m_writerSectorMetadata.open(metadataFilename);
+        if (!m_writerSectorMetadata.open(metadataFilename)) {
+            if (m_writerSector.isOpen()) m_writerSector.close();
+            m_readerData24Section.close();
+            return false;
+        }
     }
 
     // Process the Data24 Section data
@@ -66,6 +74,13 @@ bool EfmProcessor::process(const QString &inputFilename, const QString &outputFi
             if (!m_readerData24Section.hasMoreData() && !section.isComplete()) {
                 break; // End of stream
             }
+            if (!section.isComplete()) {
+                qCritical() << "EfmProcessor::process(): Incomplete Data24 section encountered while streaming";
+                m_readerData24Section.close();
+                if (m_writerSector.isOpen()) m_writerSector.close();
+                if (m_writerSectorMetadata.isOpen()) m_writerSectorMetadata.close();
+                return false;
+            }
             
             m_data24ToRawSector.pushSection(section);
             m_dataPipelineStats.data24ToRawSectorTime += dataPipelineTimer.nsecsElapsed();
@@ -81,7 +96,15 @@ bool EfmProcessor::process(const QString &inputFilename, const QString &outputFi
         // File mode: process with known size
         for (index = 0; index < m_readerData24Section.size(); ++index) {
             dataPipelineTimer.restart();
-            m_data24ToRawSector.pushSection(m_readerData24Section.read());
+            const Data24Section section = m_readerData24Section.read();
+            if (!section.isComplete()) {
+                qCritical() << "EfmProcessor::process(): Incomplete Data24 section encountered at index" << index;
+                m_readerData24Section.close();
+                if (m_writerSector.isOpen()) m_writerSector.close();
+                if (m_writerSectorMetadata.isOpen()) m_writerSectorMetadata.close();
+                return false;
+            }
+            m_data24ToRawSector.pushSection(section);
             m_dataPipelineStats.data24ToRawSectorTime += dataPipelineTimer.nsecsElapsed();
             processDataPipeline();
 

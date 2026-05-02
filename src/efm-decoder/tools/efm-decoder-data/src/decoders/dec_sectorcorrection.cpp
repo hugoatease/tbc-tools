@@ -59,7 +59,7 @@ void SectorCorrection::processQueue()
             // This is the first sector - we have to fill the missing leading sectors
             // if the address isn't 0
 
-            if (sector.address().frameNumber() != 0) {
+            if (sector.address().address() != 0) {
                 // Fill the missing leading sectors from address 0 to the first decoded sector address
                 if (m_showDebug) {
                     tbcDebugStream().nospace().noquote() << "SectorCorrection::processQueue(): First received frame address is "
