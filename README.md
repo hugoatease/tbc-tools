@@ -3,14 +3,24 @@
 
 This is the complete suite of tools for processing TBC (Time Base Corrected) files from the decode projects, [vhs-decode](https://github.com/oyvindln/vhs-decode/wiki), [cvbs-decode](https://github.com/oyvindln/vhs-decode/wiki/CVBS-Composite-Decode), [ld-decode](https://github.com/happycube/ld-decode). 
 
-This is an experimental, highly subject to change feature addtion focused branch based off the orignal ld-tools, directly after the cut-off for [decode-orc](https://simoninns.github.io/decode-orc-docs/decode-orc/) developmet.
+This is an cross-platform (experimental) highly subject to change feature addtion focused branch based off the orignal ld-tools, directly after the cut-off for [decode-orc](https://simoninns.github.io/decode-orc-docs/decode-orc/) development.
 
-These tools are for analyzing analog video sources, handling the 4fsc video data, metadata and final tweaks in framing, chroma-decoding and video levels before converting to YUV digital video files. 
+These tools are for analyzing decoded analog video sources, handling the 4fsc video data, sound, metadata and final tweaks in framing, chroma-decoding and video levels before converting to YUV digital video files.
 
 Please see the [releases page](https://github.com/harrypm/tbc-tools/releases/) for ready to use self-contained binarys for production usage. 
 
+
 ## Images
 
+<img width="1920" height="1080" alt="Screenshot from 2026-04-04 19-16-33" src="https://github.com/user-attachments/assets/9458ffcb-6bc5-4801-8716-476921b8506e" />
+
+<img width="1920" height="1080" alt="Screenshot from 2026-04-04 19-12-14" src="https://github.com/user-attachments/assets/b5d43138-07d3-4eae-9b65-389df2963792" />
+
+<img width="1354" height="975" alt="Screenshot from 2026-05-02 07-02-52" src="https://github.com/user-attachments/assets/e6241648-a911-445b-a777-629a691ce7d6" />
+
+<img width="665" height="345" alt="Screenshot from 2026-05-02 07-03-24" src="https://github.com/user-attachments/assets/de08ed72-00cb-4887-8951-0fc27dea12cf" />
+
+<img width="860" height="762" alt="Screenshot from 2026-05-02 07-01-35" src="https://github.com/user-attachments/assets/d147dd99-6b09-4752-b3b3-c90801b72f21" />
 
 
 ## Tool Categories
@@ -26,6 +36,7 @@ Please see the [releases page](https://github.com/harrypm/tbc-tools/releases/) f
 
 *Replaces deprecated ld-process-efm with staged decoding and stacking capabilities*
 
+- **efm-handler**        - GUI handling tool for stages automatic use.
 - **efm-decoder-f2**     - Convert EFM T-values to F2 sections
 - **efm-decoder-d24**    - Convert F2 sections to Data24 format
 - **efm-decoder-audio**  - Convert EFM Data24 sections to 16-bit stereo PCM audio
@@ -54,9 +65,11 @@ Please see the [releases page](https://github.com/harrypm/tbc-tools/releases/) f
 
 ## Getting Started
 
-1. **Analysis**: Use `ld-analyse` to assess capture quality and identify issues such as off-set images or chroma phase/gain correction.
-2. **Correction**: Apply `ld-dropout-correct` for dropout masking.
-3. **Export**: Convert to final formats using `tbc-video-export` to chroma-decode and encode via FFmpeg profile to a video file.
+**Analyse & Adjust**: Use `ld-analyse` to assess capture quality and identify issues such as off-set active picture area or chroma phase/gain & video levels corrections.
+
+**Align**: Using Auto Audio Align, your can align your source capture to your metadata and load in the audio for perfect cut.
+
+**Export**: Convert to final formats using the export page to chroma-decode and encode via FFmpeg profile to a main and or proxy video file. 
 
 ## Linux Dependencies and Installation (Multi-Distro)
 
