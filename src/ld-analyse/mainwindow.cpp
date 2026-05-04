@@ -53,6 +53,7 @@
 #include <QTextEdit>
 #include <QAbstractSpinBox>
 #include <QKeySequence>
+#include <QShortcut>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -4919,6 +4920,8 @@ void MainWindow::on_actionSave_all_modes_as_PNGs_triggered()
     if (QPushButton *defaultButton = qobject_cast<QPushButton *>(everythingButton)) {
         exportModeDialog.setDefaultButton(defaultButton);
     }
+    QShortcut escapeShortcut(QKeySequence(Qt::Key_Escape), &exportModeDialog);
+    connect(&escapeShortcut, &QShortcut::activated, &exportModeDialog, &QDialog::reject);
     exportModeDialog.exec();
 
     const QAbstractButton *selectedExportModeButton = exportModeDialog.clickedButton();
