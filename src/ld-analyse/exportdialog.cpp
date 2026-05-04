@@ -1,4 +1,5 @@
 #include "exportdialog.h"
+#include "exportarguments.h"
 #include "ui_exportdialog.h"
 
 #include "tbcsource.h"
@@ -3223,14 +3224,6 @@ void ExportDialog::on_exportButton_clicked()
     } else {
         appendLog(tr("VITC start timecode (FFmpeg style): unavailable for selected range."));
     }
-    const QString selectedDropoutMode = ui->dropoutModeComboBox
-                                            ? ui->dropoutModeComboBox->currentData().toString()
-                                            : QStringLiteral("basic");
-    const bool disableDropoutCorrectionForMidTapeRange =
-        startFrameOneBased > 1 && selectedDropoutMode != QStringLiteral("disabled");
-    if (disableDropoutCorrectionForMidTapeRange) {
-        appendLog(tr("Dropout correction disabled for this export range because ld-dropout-correct cannot seek to non-zero start frames."));
-    }
 
     QStringList exportAudioTracks = collectAudioTracks();
     if (!exportAudioTracks.isEmpty() && (zeroBasedStartForAudioTrim > 0 || rangeLength < totalFrames)) {
@@ -3255,8 +3248,7 @@ void ExportDialog::on_exportButton_clicked()
                                                  configOverridePath,
                                                  exportAudioTracks,
                                                  startFrameOneBased,
-                                                 rangeLength,
-                                                 disableDropoutCorrectionForMidTapeRange);
+                                                 rangeLength);
     if (arguments.isEmpty()) {
         cleanupTemporaryMetadataSnapshot();
         if (!errorMessage.isEmpty()) {
@@ -3279,7 +3271,6 @@ void ExportDialog::on_exportButton_clicked()
                                                 exportAudioTracks,
                                                 startFrameOneBased,
                                                 rangeLength,
-                                                disableDropoutCorrectionForMidTapeRange,
                                                 proxyProfile,
                                                 proxyOutputBase);
         if (parallelProxyArguments.isEmpty()) {
@@ -4886,7 +4877,6 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
                                          const QStringList &audioTracks,
                                          int startFrameOneBasedOverride,
                                          int lengthOverride,
-                                         bool disableDropoutCorrectOverride,
                                          const QString &profileOverride,
                                          const QString &outputBaseOverride) const
 {
@@ -4980,12 +4970,10 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
     const QString correctionMode = ui->dropoutFieldModeComboBox
                                        ? ui->dropoutFieldModeComboBox->currentData().toString()
                                        : QStringLiteral("innerfield");
-    const bool forceDisableDropoutCorrection =
-        disableDropoutCorrectOverride && dropoutMode != QStringLiteral("disabled");
     const bool supportsDropoutInterfieldCorrection = executableSupportsOption(
         exportPath, QStringLiteral("--dropout-interfield-correction"));
     const QString outputResolutionMode = effectiveOutputResolutionMode(ui ? ui->outputResolutionModeComboBox : nullptr);
-    if (dropoutMode == QStringLiteral("disabled") || forceDisableDropoutCorrection) {
+    if (ExportArguments::shouldDisableDropoutCorrection(dropoutMode, startFrameOneBased)) {
         args << QStringLiteral("--no-dropout-correct");
     } else {
         if (dropoutMode == QStringLiteral("heavy")

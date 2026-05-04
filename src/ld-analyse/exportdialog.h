@@ -126,7 +126,6 @@ private:
                                const QStringList &audioTracks = QStringList(),
                                int startFrameOneBasedOverride = -1,
                                int lengthOverride = -1,
-                               bool disableDropoutCorrectOverride = false,
                                const QString &profileOverride = QString(),
                                const QString &outputBaseOverride = QString()) const;
     QString createTemporaryExportConfig(QString *errorMessage,

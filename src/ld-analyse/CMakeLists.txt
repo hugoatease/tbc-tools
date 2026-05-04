@@ -9,6 +9,7 @@ set(ld-analyse_SOURCES
     closedcaptionsdialog.cpp closedcaptionsdialog.ui
     efmhandlerdialog.cpp efmhandlerdialog.h
     exportdialog.cpp exportdialog.ui
+    exportarguments.cpp exportarguments.h
     metadataconversiondialog.cpp metadataconversiondialog.ui
     metadatastatusdialog.cpp metadatastatusdialog.ui
     notesviewerdialog.cpp notesviewerdialog.h

@@ -233,6 +233,7 @@ if(BUILD_TESTING)
     add_subdirectory(src/library/tbc/testmetadata)
     add_subdirectory(src/library/tbc/testvbidecoder)
     add_subdirectory(src/library/tbc/testvitcdecoder)
+    add_subdirectory(src/ld-analyse/testexportarguments)
 
     # Tests for the ld-decode tools.
     # Most of the tests expect that you have cloned (or symlinked) the
