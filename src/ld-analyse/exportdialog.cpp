@@ -3055,11 +3055,8 @@ void ExportDialog::on_exportButton_clicked()
         const bool supportsD1OutputSizing = executableSupportsD1OutputSizing(exportPath);
         const LdDecodeMetaData::VideoParameters &previewVideoParameters = tbcSource->getVideoParameters();
         const bool hasAnyVerticalLineAdjustment = hasAnyNonDefaultVerticalFraming(previewVideoParameters);
-        const bool hasSignificantVerticalLineAdjustment =
-            hasVerticalFramingDeltaBeyondThreshold(previewVideoParameters,
-                                                   kVerticalFramingAutoUserDefinedThreshold);
-    const bool hasCustomActiveLineFraming = resolutionMode == QStringLiteral("user_defined")
-                                            || hasSignificantVerticalLineAdjustment;
+        const bool isDefaultActiveAreaFraming =
+            ExportArguments::isDefaultActiveAreaFraming(resolutionMode, hasAnyVerticalLineAdjustment);
         const bool deinterlacedOutputProfile = isWebProfileName(selectedProfile);
         if (dropoutMode == QStringLiteral("heavy")
             && !executableSupportsOption(exportPath, QStringLiteral("--overcorrect"))) {
@@ -3085,7 +3082,7 @@ void ExportDialog::on_exportButton_clicked()
                                        && shouldUseD1OutputSizing(resolutionMode, outputResolutionMode)
                                        && supportsD1OutputSizing
                                        && !deinterlacedOutputProfile
-                                       && !hasCustomActiveLineFraming;
+                                       && isDefaultActiveAreaFraming;
         if (outputResamplePlan.enabled) {
             if (useD1OutputSizing) {
                 appendLog(tr("Output resolution mode '%1' will export %2x%3 with SAR %4 using --d1.")
@@ -3095,7 +3092,7 @@ void ExportDialog::on_exportButton_clicked()
                               .arg(outputResamplePlan.width)
                               .arg(outputResamplePlan.height)
                               .arg(outputResamplePlan.sampleAspectRatio));
-            } else if (hasCustomActiveLineFraming
+            } else if (!isDefaultActiveAreaFraming
                        && shouldUseD1OutputSizing(resolutionMode, outputResolutionMode)) {
                 appendLog(tr("D1 output sizing is unavailable when active-area framing has custom line adjustments; using filter-based or native sizing instead."));
             } else if (supportsAppendVideoFilter) {
@@ -5100,11 +5097,8 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
         }
     };
     const bool hasAnyVerticalLineAdjustment = hasAnyNonDefaultVerticalFraming(videoParameters);
-    const bool hasSignificantVerticalLineAdjustment =
-        hasVerticalFramingDeltaBeyondThreshold(videoParameters,
-                                               kVerticalFramingAutoUserDefinedThreshold);
-    const bool hasCustomActiveLineFraming = resolutionMode == QStringLiteral("user_defined")
-                                            || hasSignificantVerticalLineAdjustment;
+    const bool isDefaultActiveAreaFraming =
+        ExportArguments::isDefaultActiveAreaFraming(resolutionMode, hasAnyVerticalLineAdjustment);
     const bool letterboxCropRequested = ui->letterboxCropCheckBox
                                         && ui->letterboxCropCheckBox->isChecked();
     const bool forceAnamorphicRequested = ui->forceAnamorphicCheckBox
@@ -5127,7 +5121,7 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
         return QStringList();
     }
     if (letterboxCropRequested) {
-        if (resolutionMode != QStringLiteral("active_area") || hasCustomActiveLineFraming) {
+        if (!isDefaultActiveAreaFraming) {
             if (errorMessage) {
                 *errorMessage = tr("Letterbox crop is only available with default Active Area framing.");
             }
@@ -5195,7 +5189,7 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
                                        && shouldUseD1OutputSizing(resolutionMode, outputResolutionMode)
                                        && executableSupportsD1OutputSizing(exportPath)
                                        && !deinterlacedOutputProfile
-                                       && !hasCustomActiveLineFraming;
+                                       && isDefaultActiveAreaFraming;
         if (useD1OutputSizing) {
             args << QStringLiteral("--d1");
         } else if (outputResamplePlan.enabled

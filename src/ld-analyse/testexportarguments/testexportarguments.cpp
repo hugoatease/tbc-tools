@@ -43,9 +43,19 @@ void testDropoutDisablePolicy()
     assert(ExportArguments::shouldDisableDropoutCorrection(QStringLiteral("disabled"), 1));
     assert(ExportArguments::shouldDisableDropoutCorrection(QStringLiteral("disabled"), 250));
 }
+void testDefaultActiveAreaFramingPolicy()
+{
+    cerr << "Testing ExportArguments::isDefaultActiveAreaFraming\n";
+
+    assert(ExportArguments::isDefaultActiveAreaFraming(QStringLiteral("active_area"), false));
+    assert(!ExportArguments::isDefaultActiveAreaFraming(QStringLiteral("active_area"), true));
+    assert(!ExportArguments::isDefaultActiveAreaFraming(QStringLiteral("active_vbi"), false));
+    assert(!ExportArguments::isDefaultActiveAreaFraming(QStringLiteral("user_defined"), false));
+}
 
 int main()
 {
     testDropoutDisablePolicy();
+    testDefaultActiveAreaFramingPolicy();
     return 0;
 }
