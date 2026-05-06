@@ -81,6 +81,18 @@ class TestWrappersFFmpeg:
             expected_str=["scale=720:576:flags=lanczos:interl=1,setsar=128/117"],
         ),
         WrapperTestCase(
+            id="standard output (pal, custom active frame lines)",
+            input_tbc=f"{get_path('pal_svideo')}.tbc",
+            input_opts=[
+                "--standard",
+                "--first-active-frame-line",
+                "50",
+                "--last-active-frame-line",
+                "610",
+            ],
+            expected_str=["scale=720:576:flags=lanczos:interl=1,setsar=128/117"],
+        ),
+        WrapperTestCase(
             id="standard output (ntsc)",
             input_tbc=f"{get_path('ntsc_svideo')}.tbc",
             input_opts=["--standard"],
@@ -90,6 +102,18 @@ class TestWrappersFFmpeg:
             id="d1 alias output (pal-m)",
             input_tbc=f"{get_path('palm_svideo')}.tbc",
             input_opts=["--d1"],
+            expected_str=["scale=720:486:flags=lanczos:interl=1,setsar=12/13"],
+        ),
+        WrapperTestCase(
+            id="d1 alias output (ntsc, custom active field lines)",
+            input_tbc=f"{get_path('ntsc_svideo')}.tbc",
+            input_opts=[
+                "--d1",
+                "--first-active-field-line",
+                "18",
+                "--last-active-field-line",
+                "259",
+            ],
             expected_str=["scale=720:486:flags=lanczos:interl=1,setsar=12/13"],
         ),
         WrapperTestCase(
@@ -241,8 +265,8 @@ class TestWrappersFFmpeg:
                 {"-metadata", "tbc_decode_git_branch=UNKNOWN"},
                 {"-metadata", "tbc_decode_git_commit=UNKNOWN"},
                 {"-metadata", "tbc_decode_version=UNKNOWN@UNKNOWN"},
-                {"-metadata", "tbc_source_black_16b_ire=15039.6"},
-                {"-metadata", "tbc_source_white_16b_ire=53773.2"},
+                {"-metadata", "tbc_source_black_16b_ire=14745.6"},
+                {"-metadata", "tbc_source_white_16b_ire=59417.600000000006"},
             ],
         ),
         WrapperTestCase(
@@ -257,6 +281,8 @@ class TestWrappersFFmpeg:
                 "2.5",
                 "--luma-nr",
                 "3.5",
+                "--chroma-decoder-luma",
+                "pal2d",
             ],
             expected_opts=[
                 {"-metadata", "tbc_export_force_black_level=16,17,18"},

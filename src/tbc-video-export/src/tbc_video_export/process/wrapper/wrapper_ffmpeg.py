@@ -436,17 +436,12 @@ class WrapperFFmpeg(Wrapper):
         if not self._state.opts.standard:
             return None
 
-        if self._state.opts.contains_active_line_opts():
-            return None
-
         if (
             self._state.opts.vbi
             or self._state.opts.full_vertical
             or self._state.opts.letterbox
             or self._state.opts.full_frame
             or self._state.opts.luma_4fsc
-            or self._state.decoder_line_preset
-            != self._state.video_system_data.active_lines["default"]
         ):
             return None
 

@@ -123,12 +123,11 @@ def _validate_line_opts(parser: argparse.ArgumentParser, opts: Opts) -> None:
         or opts.full_vertical
         or opts.letterbox
         or opts.full_frame
-        or opts.contains_active_line_opts()
         or opts.luma_4fsc
     ):
         parser.error(
-            "arguments --standard/--d1: only allowed with default active-area "
-            "framing"
+            "arguments --standard/--d1: not allowed with arguments "
+            "[--vbi | --full-vertical | --letterbox | --full-frame | --luma-4fsc]"
         )
 
     if opts.full_frame and opts.luma_4fsc:

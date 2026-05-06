@@ -222,6 +222,18 @@ int main(int argc, char *argv[])
     qInstallMessageHandler(filteredDebugOutputHandler);
     configureBundledQtPluginPaths(argc, argv);
 
+    // Some environments set QT_STYLE_OVERRIDE=Adwaita-Dark, which Qt6 may not provide.
+    // Normalize unsupported overrides to Fusion to avoid low-contrast fallback styling.
+    const QByteArray styleOverride = qgetenv("QT_STYLE_OVERRIDE").trimmed();
+    const QStringList availableStyles = QStyleFactory::keys();
+    if (!styleOverride.isEmpty()) {
+        const QString requestedStyle = QString::fromLocal8Bit(styleOverride);
+        const bool styleSupported = availableStyles.contains(requestedStyle, Qt::CaseInsensitive);
+        if (!styleSupported && availableStyles.contains(QStringLiteral("Fusion"), Qt::CaseInsensitive)) {
+            qputenv("QT_STYLE_OVERRIDE", QByteArrayLiteral("Fusion"));
+        }
+    }
+
     QApplication a(argc, argv);
     // Use Fusion on all platforms when available for consistent widget styling.
     if (QStyleFactory::keys().contains(QStringLiteral("Fusion"), Qt::CaseInsensitive)) {
