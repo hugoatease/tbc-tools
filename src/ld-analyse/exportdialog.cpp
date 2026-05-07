@@ -1245,7 +1245,6 @@ QString firstValidVitcTimecodeForRange(const QString &metadataSnapshotPath,
             return timecode;
         }
     }
-
     return QString();
 }
 
@@ -4107,10 +4106,6 @@ QString ExportDialog::resolveVideoExportPath() const
 
 QString ExportDialog::resolveFfmpegPath() const
 {
-    const QString fromPath = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
-    if (!fromPath.isEmpty()) {
-        return fromPath;
-    }
     const QStringList candidateDirs = defaultExecutableSearchDirs(currentInputFile);
 
     QStringList candidateNames;
@@ -4128,6 +4123,11 @@ QString ExportDialog::resolveFfmpegPath() const
                 return candidate;
             }
         }
+    }
+
+    const QString fromPath = QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    if (!fromPath.isEmpty()) {
+        return fromPath;
     }
 
     return QString();

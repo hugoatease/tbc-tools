@@ -18,3 +18,17 @@ install(DIRECTORY "${TBC_VIDEO_EXPORT_SOURCE_DIR}/tbc_video_export"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/tbc-video-export/src")
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
         DESTINATION "${CMAKE_INSTALL_DATADIR}/tbc-video-export")
+
+if(BUILD_TESTING)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(
+            NAME video-export-runtime
+            COMMAND ${Python3_EXECUTABLE}
+                "${CMAKE_SOURCE_DIR}/scripts/test-video-export-runtime.py"
+                --build "${CMAKE_BINARY_DIR}"
+                --source "${CMAKE_SOURCE_DIR}"
+        )
+        set_tests_properties(video-export-runtime PROPERTIES SKIP_RETURN_CODE 77)
+    endif()
+endif()

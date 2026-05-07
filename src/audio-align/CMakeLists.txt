@@ -27,3 +27,24 @@ add_custom_command(TARGET tbc-audio-align POST_BUILD
 
 install(TARGETS tbc-audio-align)
 install(DIRECTORY "${_audio_align_vendor_dir}/" DESTINATION ${CMAKE_INSTALL_BINDIR}/vendor/vhs_decode_auto_audio_align)
+
+if(BUILD_TESTING)
+    add_executable(test-audio-align-runtime
+        testaudioalignmentruntime.cpp
+        audioalignmentutil.cpp
+    )
+    target_link_libraries(test-audio-align-runtime PRIVATE Qt::Core lddecode-library)
+    target_compile_definitions(test-audio-align-runtime PRIVATE
+        AUDIO_ALIGN_VENDOR_DIR="${CMAKE_CURRENT_SOURCE_DIR}/vendor/vhs_decode_auto_audio_align"
+    )
+
+    add_test(
+        NAME aaa-runtime
+        COMMAND $<TARGET_FILE:test-audio-align-runtime>
+            --json "${CMAKE_SOURCE_DIR}/src/tbc-video-export/tests/files/pal_svideo.tbc.json"
+            --input-audio "${CMAKE_SOURCE_DIR}/src/tbc-video-export/tests/files/audio_48_16.wav"
+            --output-audio "${CMAKE_BINARY_DIR}/test-artifacts/aaa-runtime/aligned.flac"
+            --rf-video-sample-rate-hz 40000000
+    )
+    set_tests_properties(aaa-runtime PROPERTIES SKIP_RETURN_CODE 77)
+endif()

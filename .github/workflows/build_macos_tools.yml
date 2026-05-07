@@ -437,6 +437,29 @@ jobs:
             echo "Missing vendored exporter package payload: dist/tbc-tools.app/Contents/share/tbc-video-export/src/tbc_video_export"
             exit 1
           fi
+          for tool in ffmpeg ffprobe; do
+            tool_path="dist/tbc-tools.app/Contents/MacOS/$tool"
+            if [ ! -x "$tool_path" ]; then
+              echo "Missing bundled $tool binary: $tool_path"
+              exit 1
+            fi
+            tool_archs="$(lipo -archs "$tool_path" 2>/dev/null || true)"
+            if [ -z "$tool_archs" ]; then
+              echo "Unable to read architecture for bundled $tool"
+              file "$tool_path" || true
+              exit 1
+            fi
+            echo "Bundled $tool architecture: $tool_archs"
+            echo "$tool_archs" | grep -qw "${{ matrix.arch }}" || {
+              echo "Expected $tool to include architecture ${{ matrix.arch }}, got: $tool_archs"
+              exit 1
+            }
+            if ! "$tool_path" -hide_banner -version >"/tmp/$tool-version.log" 2>&1; then
+              echo "Bundled $tool failed launch smoke test."
+              sed -n '1,80p' "/tmp/$tool-version.log" || true
+              exit 1
+            fi
+          done
           export PYTHONDONTWRITEBYTECODE=1
           if ! dist/tbc-tools.app/Contents/MacOS/tbc-video-export --version >/tmp/tbc-video-export-version.log 2>&1; then
             echo "Vendored exporter tool failed launch smoke test."
@@ -584,6 +607,22 @@ jobs:
           echo "Universal executable archs: $ARCHS"
           echo "$ARCHS" | grep -qw arm64 || { echo "arm64 arch missing in universal binary"; exit 1; }
           echo "$ARCHS" | grep -qw x86_64 || { echo "x86_64 arch missing in universal binary"; exit 1; }
+          for tool in ffmpeg ffprobe; do
+            TOOL_PATH="$APP_UNI/Contents/MacOS/$tool"
+            if [ ! -f "$TOOL_PATH" ]; then
+              echo "Missing merged bundled tool: $TOOL_PATH"
+              exit 1
+            fi
+            TOOL_ARCHS="$(lipo -archs "$TOOL_PATH" 2>/dev/null || true)"
+            if [ -z "$TOOL_ARCHS" ]; then
+              echo "Unable to read architecture for merged bundled tool: $TOOL_PATH"
+              file "$TOOL_PATH" || true
+              exit 1
+            fi
+            echo "Universal $tool archs: $TOOL_ARCHS"
+            echo "$TOOL_ARCHS" | grep -qw arm64 || { echo "arm64 arch missing in universal $tool"; exit 1; }
+            echo "$TOOL_ARCHS" | grep -qw x86_64 || { echo "x86_64 arch missing in universal $tool"; exit 1; }
+          done
 
       - name: Install create-dmg
         run: |
