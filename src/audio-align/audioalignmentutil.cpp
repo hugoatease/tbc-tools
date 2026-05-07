@@ -81,6 +81,76 @@ QString findFirstExistingFile(const QStringList &candidates)
     return QString();
 }
 
+QString findFirstExistingExecutable(const QStringList &candidates)
+{
+    for (const QString &candidate : candidates) {
+        const QFileInfo candidateInfo(candidate);
+        if (candidateInfo.exists() && candidateInfo.isFile() && candidateInfo.isExecutable()) {
+            return candidateInfo.absoluteFilePath();
+        }
+    }
+    return QString();
+}
+
+QStringList executableNameCandidates(const QString &baseName)
+{
+    QStringList names;
+#if defined(Q_OS_WIN)
+    names << (baseName + QStringLiteral(".exe"));
+#endif
+    names << baseName;
+    return names;
+}
+
+QString resolveBundledOrPathTool(const QString &baseName)
+{
+    const QStringList names = executableNameCandidates(baseName);
+    if (names.isEmpty()) {
+        return QString();
+    }
+
+    const QString appDir = QCoreApplication::applicationDirPath();
+    QStringList candidateDirs;
+    appendUniqueCandidate(candidateDirs, appDir);
+    appendUniqueCandidate(candidateDirs, QDir(appDir).filePath(QStringLiteral("bin")));
+    appendUniqueCandidate(candidateDirs, QDir(appDir).filePath(QStringLiteral("../MacOS")));
+    appendUniqueCandidate(candidateDirs, QDir(appDir).filePath(QStringLiteral("../Resources/bin")));
+    appendUniqueCandidate(candidateDirs, QDir(appDir).filePath(QStringLiteral("../../MacOS")));
+    appendUniqueCandidate(candidateDirs, QDir(appDir).filePath(QStringLiteral("../../Resources/bin")));
+
+    const QString currentDir = QDir::currentPath();
+    appendUniqueCandidate(candidateDirs, currentDir);
+    appendUniqueCandidate(candidateDirs, QDir(currentDir).filePath(QStringLiteral("build/bin")));
+
+    const QString homeDir = QDir::homePath();
+    if (!homeDir.isEmpty()) {
+        appendUniqueCandidate(candidateDirs, QDir(homeDir).filePath(QStringLiteral(".local/bin")));
+        appendUniqueCandidate(candidateDirs, QDir(homeDir).filePath(QStringLiteral("bin")));
+    }
+
+    QStringList bundledCandidates;
+    for (const QString &directoryPath : candidateDirs) {
+        const QDir directory(directoryPath);
+        for (const QString &name : names) {
+            appendUniqueCandidate(bundledCandidates, directory.filePath(name));
+        }
+    }
+
+    const QString bundledTool = findFirstExistingExecutable(bundledCandidates);
+    if (!bundledTool.isEmpty()) {
+        return bundledTool;
+    }
+
+    for (const QString &name : names) {
+        const QString fromPath = QStandardPaths::findExecutable(name);
+        if (!fromPath.isEmpty()) {
+            return fromPath;
+        }
+    }
+
+    return QString();
+}
+
 QString resolveAudioAlignExecutablePath()
 {
     QStringList pathCandidates;
@@ -153,12 +223,12 @@ bool resolveRunner(QString *program,
 
 QString resolveFfmpegPath()
 {
-    return QStandardPaths::findExecutable(QStringLiteral("ffmpeg"));
+    return resolveBundledOrPathTool(QStringLiteral("ffmpeg"));
 }
 
 QString resolveFfprobePath()
 {
-    return QStandardPaths::findExecutable(QStringLiteral("ffprobe"));
+    return resolveBundledOrPathTool(QStringLiteral("ffprobe"));
 }
 int extractPercentFromOutputLine(const QString &line)
 {
@@ -730,14 +800,14 @@ bool runStreamAlign(const QString &jsonFilename,
     const QString ffmpegPath = resolveFfmpegPath();
     if (ffmpegPath.isEmpty()) {
         if (errorMessage) {
-            *errorMessage = QObject::tr("ffmpeg is required but was not found in PATH.");
+            *errorMessage = QObject::tr("ffmpeg is required but was not found in bundled tool locations or PATH.");
         }
         return false;
     }
     const QString ffprobePath = resolveFfprobePath();
     if (ffprobePath.isEmpty()) {
         if (errorMessage) {
-            *errorMessage = QObject::tr("ffprobe is required but was not found in PATH.");
+            *errorMessage = QObject::tr("ffprobe is required but was not found in bundled tool locations or PATH.");
         }
         return false;
     }
