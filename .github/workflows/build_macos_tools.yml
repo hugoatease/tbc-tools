@@ -284,6 +284,12 @@ jobs:
             file "$1" 2>/dev/null | grep -q "Mach-O"
           }
 
+          exports_symbol() {
+            local file="$1"
+            local symbol="$2"
+            nm -gU "$file" 2>/dev/null | grep -Eq "(^|[[:space:]])${symbol}$"
+          }
+
           newref_for_dep() {
             local dep="$1"
             if [[ "$dep" == *".framework/"* ]]; then
@@ -330,6 +336,19 @@ jobs:
               if [ ! -f "$target" ]; then
                 cp "$dep" "$target" 2>/dev/null || true
                 chmod u+w "$target" 2>/dev/null || true
+              elif ! cmp -s "$dep" "$target" 2>/dev/null; then
+                # Different Nix packages can install identically named dylibs.
+                # Keep the first copy unless we detect the libiconv provider
+                # needed by libidn2 (_libiconv symbol) is currently missing.
+                if [ "$base" = "libiconv.2.dylib" ] \
+                  && exports_symbol "$dep" "_libiconv" \
+                  && ! exports_symbol "$target" "_libiconv"; then
+                  echo "Replacing collided libiconv.2.dylib with provider exporting _libiconv: $dep"
+                  cp "$dep" "$target" 2>/dev/null || true
+                  chmod u+w "$target" 2>/dev/null || true
+                else
+                  echo "Keeping existing collided dylib $base; skipping alternate provider: $dep"
+                fi
               fi
               install_name_tool -id "@rpath/$base" "$target" 2>/dev/null || true
               echo "$target"
@@ -464,6 +483,19 @@ jobs:
               exit 1
             fi
           done
+          if [ -f "dist/tbc-tools.app/Contents/Frameworks/libidn2.0.dylib" ]; then
+            ICONV_LIB="dist/tbc-tools.app/Contents/Frameworks/libiconv.2.dylib"
+            if [ ! -f "$ICONV_LIB" ]; then
+              echo "libidn2 is bundled but libiconv.2.dylib is missing from Frameworks."
+              exit 1
+            fi
+            if ! nm -gU "$ICONV_LIB" 2>/dev/null | grep -Eq '(^|[[:space:]])_libiconv$'; then
+              echo "Bundled libiconv.2.dylib is missing _libiconv export required by libidn2."
+              otool -L dist/tbc-tools.app/Contents/Frameworks/libidn2.0.dylib 2>/dev/null || true
+              nm -gU "$ICONV_LIB" 2>/dev/null | sed -n '1,80p' || true
+              exit 1
+            fi
+          fi
           export PYTHONDONTWRITEBYTECODE=1
           if ! dist/tbc-tools.app/Contents/MacOS/tbc-video-export --version >/tmp/tbc-video-export-version.log 2>&1; then
             echo "Vendored exporter tool failed launch smoke test."
