@@ -289,6 +289,18 @@ jobs:
             local symbol="$2"
             nm -gU "$file" 2>/dev/null | grep -Eq "(^|[[:space:]])${symbol}$"
           }
+          dep_unique_name() {
+            local dep="$1"
+            if [[ "$dep" == /nix/store/* ]]; then
+              local store_entry
+              store_entry=$(echo "$dep" | sed -E 's|^/nix/store/([^/]+)/.*$|\1|')
+              local store_hash
+              store_hash=$(echo "$store_entry" | sed -E 's|^([^-]+)-.*$|\1|')
+              echo "${store_hash}_$(basename "$dep")"
+            else
+              echo "$(basename "$dep")"
+            fi
+          }
 
           newref_for_dep() {
             local dep="$1"
@@ -303,9 +315,9 @@ jobs:
               bin_name=$(basename "$dep")
               echo "@rpath/$framework_name/Versions/$version/$bin_name"
             else
-              local base
-              base=$(basename "$dep")
-              echo "@rpath/$base"
+              local unique_name
+              unique_name=$(dep_unique_name "$dep")
+              echo "@rpath/$unique_name"
             fi
           }
 
@@ -330,27 +342,14 @@ jobs:
               install_name_tool -id "@rpath/$framework_name/Versions/$version/$bin_name" "$target" 2>/dev/null || true
               echo "$target"
             else
-              local base
-              base=$(basename "$dep")
-              local target="$FW_DIR/$base"
+              local unique_name
+              unique_name=$(dep_unique_name "$dep")
+              local target="$FW_DIR/$unique_name"
               if [ ! -f "$target" ]; then
                 cp "$dep" "$target" 2>/dev/null || true
                 chmod u+w "$target" 2>/dev/null || true
-              elif ! cmp -s "$dep" "$target" 2>/dev/null; then
-                # Different Nix packages can install identically named dylibs.
-                # Keep the first copy unless we detect the libiconv provider
-                # needed by libidn2 (_libiconv symbol) is currently missing.
-                if [ "$base" = "libiconv.2.dylib" ] \
-                  && exports_symbol "$dep" "_libiconv" \
-                  && ! exports_symbol "$target" "_libiconv"; then
-                  echo "Replacing collided libiconv.2.dylib with provider exporting _libiconv: $dep"
-                  cp "$dep" "$target" 2>/dev/null || true
-                  chmod u+w "$target" 2>/dev/null || true
-                else
-                  echo "Keeping existing collided dylib $base; skipping alternate provider: $dep"
-                fi
               fi
-              install_name_tool -id "@rpath/$base" "$target" 2>/dev/null || true
+              install_name_tool -id "@rpath/$unique_name" "$target" 2>/dev/null || true
               echo "$target"
             fi
           }
@@ -460,6 +459,99 @@ jobs:
             echo "Missing vendored exporter package payload: dist/tbc-tools.app/Contents/share/tbc-video-export/src/tbc_video_export"
             exit 1
           fi
+          FW_DIR="dist/tbc-tools.app/Contents/Frameworks"
+          SYMBOL_EXPORT_CACHE_DIR=$(mktemp -d)
+          symbol_export_cache_file() {
+            local lib="$1"
+            local key
+            key=$(printf '%s' "$lib" | shasum | awk '{print $1}')
+            echo "$SYMBOL_EXPORT_CACHE_DIR/$key.exports"
+          }
+          cache_exported_symbols() {
+            local lib="$1"
+            local cache_file
+            cache_file=$(symbol_export_cache_file "$lib")
+            if [ ! -f "$cache_file" ]; then
+              nm -gUj "$lib" 2>/dev/null | sed '/^$/d' | sort -u > "$cache_file" || true
+            fi
+          }
+          resolve_bundled_dep_path() {
+            local dep="$1"
+            case "$dep" in
+              /System/*|/usr/lib/*|dynamically\ looked\ up|flat\ namespace)
+                return 1
+                ;;
+            esac
+            if [[ "$dep" == @rpath/* ]]; then
+              local rel="${dep#@rpath/}"
+              if [ -f "$FW_DIR/$rel" ]; then
+                echo "$FW_DIR/$rel"
+                return 0
+              fi
+            fi
+            local base
+            base=$(basename "$dep")
+            local found
+            found=$(find "$FW_DIR" -type f -name "$base" -print -quit 2>/dev/null || true)
+            if [ -n "$found" ]; then
+              echo "$found"
+              return 0
+            fi
+            return 1
+          }
+          verify_bundled_symbol_links() {
+            local failures=0
+            while IFS= read -r -d '' macho_file; do
+              if ! file "$macho_file" 2>/dev/null | grep -q "Mach-O"; then
+                continue
+              fi
+              while IFS=$'\t' read -r symbol dep; do
+                [ -n "$symbol" ] || continue
+                [ -n "$dep" ] || continue
+                local dep_path
+                dep_path=$(resolve_bundled_dep_path "$dep" || true)
+                if [ -z "$dep_path" ]; then
+                  continue
+                fi
+                cache_exported_symbols "$dep_path"
+                local cache_file
+                cache_file=$(symbol_export_cache_file "$dep_path")
+                if ! grep -Fxq "$symbol" "$cache_file"; then
+                  echo "Missing bundled symbol reference:"
+                  echo "  Symbol: $symbol"
+                  echo "  Required by: $macho_file"
+                  echo "  Declared dependency: $dep"
+                  echo "  Resolved bundled dylib: $dep_path"
+                  failures=1
+                fi
+              done < <(
+                nm -m "$macho_file" 2>/dev/null | awk '
+                  /\(undefined\)/ && /\(from / && $0 !~ / weak / {
+                    sym=""; dep="";
+                    if (match($0, / (external|private external) ([^ ]+)/, m)) {
+                      sym=m[2];
+                    }
+                    if (match($0, /\(from ([^)]+)\)/, d)) {
+                      dep=d[1];
+                    }
+                    if (sym != "" && dep != "") {
+                      print sym "\t" dep;
+                    }
+                  }'
+              )
+            done < <(find dist/tbc-tools.app/Contents -type f -print0)
+            if [ "$failures" -ne 0 ]; then
+              echo "Bundled symbol verification failed."
+              return 1
+            fi
+            echo "Bundled symbol verification passed."
+            return 0
+          }
+          if ! verify_bundled_symbol_links; then
+            rm -rf "$SYMBOL_EXPORT_CACHE_DIR"
+            exit 1
+          fi
+          rm -rf "$SYMBOL_EXPORT_CACHE_DIR"
           for tool in ffmpeg ffprobe; do
             tool_path="dist/tbc-tools.app/Contents/MacOS/$tool"
             if [ ! -x "$tool_path" ]; then
@@ -483,19 +575,6 @@ jobs:
               exit 1
             fi
           done
-          if [ -f "dist/tbc-tools.app/Contents/Frameworks/libidn2.0.dylib" ]; then
-            ICONV_LIB="dist/tbc-tools.app/Contents/Frameworks/libiconv.2.dylib"
-            if [ ! -f "$ICONV_LIB" ]; then
-              echo "libidn2 is bundled but libiconv.2.dylib is missing from Frameworks."
-              exit 1
-            fi
-            if ! nm -gU "$ICONV_LIB" 2>/dev/null | grep -Eq '(^|[[:space:]])_libiconv$'; then
-              echo "Bundled libiconv.2.dylib is missing _libiconv export required by libidn2."
-              otool -L dist/tbc-tools.app/Contents/Frameworks/libidn2.0.dylib 2>/dev/null || true
-              nm -gU "$ICONV_LIB" 2>/dev/null | sed -n '1,80p' || true
-              exit 1
-            fi
-          fi
           export PYTHONDONTWRITEBYTECODE=1
           if ! dist/tbc-tools.app/Contents/MacOS/tbc-video-export --version >/tmp/tbc-video-export-version.log 2>&1; then
             echo "Vendored exporter tool failed launch smoke test."

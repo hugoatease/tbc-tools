@@ -89,8 +89,10 @@ class ContractCoverageTests(unittest.TestCase):
             "result/share/tbc-video-export",
             "tbc-tools.app/Contents/MacOS/tbc-video-export --version",
             "/nix/store/*)",
-            "Replacing collided libiconv.2.dylib with provider exporting _libiconv",
-            "Bundled libiconv.2.dylib is missing _libiconv export required by libidn2.",
+            "dep_unique_name()",
+            "verify_bundled_symbol_links()",
+            "Missing bundled symbol reference:",
+            "Bundled symbol verification failed.",
         }
         self.assertTrue(expected.issubset(set(check_ci_contracts.MACOS_REQUIRED_SNIPPETS)))
 

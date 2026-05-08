@@ -58,8 +58,10 @@ MACOS_REQUIRED_SNIPPETS = (
     "Missing vendored exporter package payload: dist/tbc-tools.app/Contents/share/tbc-video-export/src/tbc_video_export",
     "tbc-tools.app/Contents/MacOS/tbc-video-export --version",
     "/nix/store/*)",
-    "Replacing collided libiconv.2.dylib with provider exporting _libiconv",
-    "Bundled libiconv.2.dylib is missing _libiconv export required by libidn2.",
+    "dep_unique_name()",
+    "verify_bundled_symbol_links()",
+    "Missing bundled symbol reference:",
+    "Bundled symbol verification failed.",
 )
 
 RELEASE_REQUIRED_SNIPPETS = (
