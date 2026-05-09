@@ -32,6 +32,7 @@
 #include <QFileInfo>
 #include <QProcess>
 #include <QProcessEnvironment>
+#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QTextStream>
@@ -90,9 +91,63 @@ QString resolveTeletextVendorDirectory()
 
     return QString();
 }
+QString runPythonProbe(const QString &pythonExecutable,
+                       const QString &script,
+                       const QProcessEnvironment &environment,
+                       bool *ok)
+{
+    if (ok) {
+        *ok = false;
+    }
+
+    QProcess probeProcess;
+    probeProcess.setProcessEnvironment(environment);
+    probeProcess.start(pythonExecutable, QStringList() << QStringLiteral("-c") << script);
+
+    if (!probeProcess.waitForStarted(5000)) {
+        return QStringLiteral("python probe failed to start");
+    }
+    if (!probeProcess.waitForFinished(30000)) {
+        probeProcess.kill();
+        probeProcess.waitForFinished(1000);
+        return QStringLiteral("python probe timed out");
+    }
+
+    const QString stdoutText = QString::fromLocal8Bit(probeProcess.readAllStandardOutput()).trimmed();
+    const QString stderrText = QString::fromLocal8Bit(probeProcess.readAllStandardError()).trimmed();
+
+    if (probeProcess.exitStatus() != QProcess::NormalExit || probeProcess.exitCode() != 0) {
+        QString errorDetails = stderrText;
+        if (errorDetails.isEmpty()) {
+            errorDetails = stdoutText;
+        }
+        if (errorDetails.isEmpty()) {
+            errorDetails = QStringLiteral("unknown error");
+        }
+        return errorDetails;
+    }
+
+    if (ok) {
+        *ok = true;
+    }
+    return stdoutText;
+}
 
 QString resolvePythonExecutable()
 {
+    const QString overrideValue =
+        qEnvironmentVariable(QStringLiteral("TELETEXT_PYTHON")).trimmed();
+    if (!overrideValue.isEmpty()) {
+        const QString overrideExecutable = QStandardPaths::findExecutable(overrideValue);
+        if (!overrideExecutable.isEmpty()) {
+            return overrideExecutable;
+        }
+
+        const QFileInfo overrideInfo(overrideValue);
+        if (overrideInfo.exists() && overrideInfo.isFile() && overrideInfo.isExecutable()) {
+            return overrideInfo.absoluteFilePath();
+        }
+    }
     const QStringList candidates = {
         QStringLiteral("python3"),
         QStringLiteral("python")
@@ -116,7 +171,6 @@ bool runPythonStep(const QString &pythonExecutable,
 {
     QProcess process;
     process.setProcessEnvironment(environment);
-    process.setProcessChannelMode(QProcess::MergedChannels);
     process.start(pythonExecutable, arguments);
 
     if (!process.waitForStarted(5000)) {
@@ -131,9 +185,13 @@ bool runPythonStep(const QString &pythonExecutable,
         return false;
     }
 
-    const QString commandOutput = QString::fromLocal8Bit(process.readAllStandardOutput()).trimmed();
-    if (!commandOutput.isEmpty()) {
-        qInfo().noquote() << commandOutput;
+    const QString standardOutput = QString::fromLocal8Bit(process.readAllStandardOutput()).trimmed();
+    const QString standardError = QString::fromLocal8Bit(process.readAllStandardError()).trimmed();
+    if (!standardOutput.isEmpty()) {
+        qInfo().noquote() << standardOutput;
+    }
+    if (!standardError.isEmpty()) {
+        qWarning().noquote() << standardError;
     }
 
     if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
@@ -223,6 +281,11 @@ bool runTeletextHtmlExport(const TeletextIntegrationOptions &options, QString *e
         setError(errorMessage, QObject::tr("Could not locate Python interpreter (python3/python)."));
         return false;
     }
+    qInfo() << "Teletext export: using Python executable:" << pythonExecutable;
+    if (!qEnvironmentVariableIsEmpty("TELETEXT_PYTHON")) {
+        qInfo() << "Teletext export: TELETEXT_PYTHON override set to"
+                << qEnvironmentVariable("TELETEXT_PYTHON");
+    }
 
     QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
     const QString existingPythonPath = environment.value(QStringLiteral("PYTHONPATH"));
@@ -231,6 +294,58 @@ bool runTeletextHtmlExport(const TeletextIntegrationOptions &options, QString *e
     } else {
         environment.insert(QStringLiteral("PYTHONPATH"),
                            vendorDirectory + QDir::listSeparator() + existingPythonPath);
+    }
+    const QString forceCpuRaw = qEnvironmentVariable("TELETEXT_FORCE_CPU").trimmed().toLower();
+    const bool forceCpu =
+        (forceCpuRaw == QStringLiteral("1")
+         || forceCpuRaw == QStringLiteral("true")
+         || forceCpuRaw == QStringLiteral("yes"));
+    environment.insert(QStringLiteral("USE_GPU"), forceCpu ? QStringLiteral("0") : QStringLiteral("1"));
+    if (forceCpu) {
+        qInfo() << "Teletext export: GPU acceleration disabled by TELETEXT_FORCE_CPU";
+    }
+
+    const QString dependencyProbeScript = QStringLiteral(R"PY(
+import importlib,sys
+required=("numpy","scipy","matplotlib","click","tqdm","zmq","watchdog","serial")
+missing=[m for m in required if importlib.util.find_spec(m) is None]
+if missing:
+    print("missing:"+",".join(missing))
+    sys.exit(2)
+print("ok")
+)PY");
+    bool dependencyProbeOk = false;
+    const QString dependencyProbeOutput =
+        runPythonProbe(pythonExecutable, dependencyProbeScript, environment, &dependencyProbeOk);
+    if (!dependencyProbeOk) {
+        setError(errorMessage,
+                 QObject::tr("Teletext Python dependency check failed: %1")
+                     .arg(dependencyProbeOutput));
+        return false;
+    }
+    if (dependencyProbeOutput.startsWith(QStringLiteral("missing:"))) {
+        setError(errorMessage,
+                 QObject::tr("Teletext Python dependencies missing: %1")
+                     .arg(dependencyProbeOutput.mid(QStringLiteral("missing:").size())));
+        return false;
+    }
+
+    const QString backendProbeScript = QStringLiteral(R"PY(
+import importlib.util
+print("pycuda=" + ("yes" if importlib.util.find_spec("pycuda") else "no"))
+print("pyopencl=" + ("yes" if importlib.util.find_spec("pyopencl") else "no"))
+)PY");
+    bool backendProbeOk = false;
+    const QString backendProbeOutput =
+        runPythonProbe(pythonExecutable, backendProbeScript, environment, &backendProbeOk);
+    if (backendProbeOk) {
+        const QStringList backendLines = backendProbeOutput.split(
+            QRegularExpression(QStringLiteral("[\\r\\n]+")), Qt::SkipEmptyParts);
+        for (const QString &line : backendLines) {
+            qInfo() << "Teletext export backend probe:" << line.trimmed();
+        }
+    } else {
+        qWarning() << "Teletext export: GPU backend probe failed:" << backendProbeOutput;
     }
 
     const qint32 teletextThreads = qMax<qint32>(1, options.maxThreads);
@@ -242,7 +357,11 @@ bool runTeletextHtmlExport(const TeletextIntegrationOptions &options, QString *e
     const QString rawStreamPath = outputDirectory.filePath(QStringLiteral("teletext_raw.t42"));
     const QString squashedStreamPath = outputDirectory.filePath(QStringLiteral("teletext_squashed.t42"));
 
-    qInfo() << "Teletext export: starting deconvolution (CUDA/OpenCL auto-detect enabled)";
+    if (forceCpu) {
+        qInfo() << "Teletext export: starting deconvolution with CPU backend";
+    } else {
+        qInfo() << "Teletext export: starting deconvolution (CUDA/OpenCL auto-detect enabled)";
+    }
     const QStringList deconvolveArguments = {
         QStringLiteral("-m"), QStringLiteral("teletext"),
         QStringLiteral("deconvolve"),

@@ -17,7 +17,12 @@
 
 class QCheckBox;
 class QComboBox;
+class QDragEnterEvent;
+class QDragMoveEvent;
+class QDropEvent;
+class QEvent;
 class QLineEdit;
+class QMimeData;
 class QPushButton;
 class QTextBrowser;
 class QTimer;
@@ -30,6 +35,11 @@ public:
     explicit TeletextViewerDialog(QWidget *parent = nullptr);
     void setDirectory(const QString &directoryPath);
     QString directory() const;
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dragMoveEvent(QDragMoveEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
 
 private slots:
     void browseForDirectory();
@@ -40,6 +50,8 @@ private slots:
     void handlePeriodicRefresh();
 
 private:
+    bool canAcceptDrop(const QMimeData *mimeData) const;
+    bool handleDrop(const QMimeData *mimeData);
     bool directoryContainsHtml() const;
     QString selectedPagePath() const;
 

@@ -145,6 +145,13 @@
             libGL
             python3
             python3Packages.numpy
+            python3Packages.scipy
+            python3Packages.matplotlib
+            python3Packages.click
+            python3Packages.tqdm
+            python3Packages.pyzmq
+            python3Packages.watchdog
+            python3Packages.pyserial
             onnxruntimePackage
           ] ++ pkgs.lib.optionals isLinux [
             cudaPackages.cudatoolkit
@@ -154,6 +161,8 @@
             cudaPackages.libcurand
             cudaPackages.libcublas
             cudaCudnnPackage
+            python3Packages.pycuda
+            python3Packages.pyopencl
           ];
           EZPWD_DIR = "${ezpwdSrc}/c++";
           ONNXRUNTIME_ROOT = "${onnxruntimePackage}";

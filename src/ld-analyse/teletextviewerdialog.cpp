@@ -15,17 +15,156 @@
 #include <QComboBox>
 #include <QDesktopServices>
 #include <QDir>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
+#include <QEvent>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QPushButton>
 #include <QTextBrowser>
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
+namespace {
+void appendUniqueCandidate(QStringList &candidates, const QString &candidate)
+{
+    if (candidate.isEmpty()) {
+        return;
+    }
+    for (const QString &existing : candidates) {
+        if (existing.compare(candidate, Qt::CaseInsensitive) == 0) {
+            return;
+        }
+    }
+    candidates.append(candidate);
+}
+
+QString normalizedTeletextBaseName(const QFileInfo &pathInfo)
+{
+    QString baseName = pathInfo.completeBaseName();
+    QString baseNameLower = baseName.toLower();
+    const QStringList suffixesToStrip = {
+        QStringLiteral(".tbc"),
+        QStringLiteral(".ytbc"),
+        QStringLiteral(".ctbc"),
+        QStringLiteral(".tbcy"),
+        QStringLiteral(".tbcc")
+    };
+    for (const QString &suffix : suffixesToStrip) {
+        if (!baseNameLower.endsWith(suffix)) {
+            continue;
+        }
+        baseName.chop(suffix.size());
+        break;
+    }
+    return baseName;
+}
+
+bool directoryContainsHtmlPages(const QString &directoryPath)
+{
+    if (directoryPath.trimmed().isEmpty()) {
+        return false;
+    }
+    const QDir directory(directoryPath);
+    if (!directory.exists()) {
+        return false;
+    }
+    const QStringList htmlPages = directory.entryList(
+        QStringList() << QStringLiteral("*.html"),
+        QDir::Files,
+        QDir::Name | QDir::IgnoreCase
+    );
+    return !htmlPages.isEmpty();
+}
+
+QString resolveTeletextDirectoryFromHint(const QString &pathHint)
+{
+    const QFileInfo pathInfo(pathHint);
+    if (!pathInfo.exists()) {
+        return QString();
+    }
+
+    if (pathInfo.isFile() && pathInfo.suffix().compare(QStringLiteral("html"), Qt::CaseInsensitive) == 0) {
+        const QDir htmlDirectory(pathInfo.absolutePath());
+        if (directoryContainsHtmlPages(htmlDirectory.absolutePath())) {
+            return htmlDirectory.absolutePath();
+        }
+    }
+
+    if (pathInfo.isDir() && directoryContainsHtmlPages(pathInfo.absoluteFilePath())) {
+        return QDir(pathInfo.absoluteFilePath()).absolutePath();
+    }
+
+    QDir baseDirectory;
+    if (pathInfo.isDir()) {
+        baseDirectory = QDir(pathInfo.absoluteFilePath());
+    } else {
+        baseDirectory = pathInfo.absoluteDir();
+    }
+
+    QStringList candidateDirectories;
+    QStringList baseNames;
+    if (pathInfo.isDir()) {
+        appendUniqueCandidate(baseNames, pathInfo.fileName());
+    } else {
+        appendUniqueCandidate(baseNames, normalizedTeletextBaseName(pathInfo));
+        appendUniqueCandidate(baseNames, pathInfo.completeBaseName());
+    }
+
+    for (const QString &baseName : baseNames) {
+        if (baseName.isEmpty()) {
+            continue;
+        }
+        appendUniqueCandidate(candidateDirectories, baseDirectory.filePath(baseName + QStringLiteral("_teletext_html")));
+        appendUniqueCandidate(candidateDirectories, baseDirectory.filePath(baseName + QStringLiteral(".teletext_html")));
+        appendUniqueCandidate(candidateDirectories, baseDirectory.filePath(baseName + QStringLiteral("_teletext")));
+    }
+    appendUniqueCandidate(candidateDirectories, baseDirectory.filePath(QStringLiteral("teletext_html")));
+    appendUniqueCandidate(candidateDirectories, baseDirectory.filePath(QStringLiteral("teletext")));
+
+    for (const QString &candidate : candidateDirectories) {
+        if (!directoryContainsHtmlPages(candidate)) {
+            continue;
+        }
+        return QDir(candidate).absolutePath();
+    }
+
+    return QString();
+}
+
+QString resolveTeletextDirectoryFromHints(const QStringList &pathHints)
+{
+    for (const QString &pathHint : pathHints) {
+        const QString resolvedDirectory = resolveTeletextDirectoryFromHint(pathHint);
+        if (!resolvedDirectory.isEmpty()) {
+            return resolvedDirectory;
+        }
+    }
+    return QString();
+}
+
+QStringList droppedLocalFiles(const QMimeData *mimeData)
+{
+    QStringList filePaths;
+    if (!mimeData || !mimeData->hasUrls()) {
+        return filePaths;
+    }
+
+    for (const QUrl &url : mimeData->urls()) {
+        if (!url.isLocalFile()) {
+            continue;
+        }
+        appendUniqueCandidate(filePaths, url.toLocalFile());
+    }
+    return filePaths;
+}
+} // namespace
 
 TeletextViewerDialog::TeletextViewerDialog(QWidget *parent)
     : QDialog(parent)
@@ -34,6 +173,7 @@ TeletextViewerDialog::TeletextViewerDialog(QWidget *parent)
     setModal(false);
     setAttribute(Qt::WA_DeleteOnClose, false);
     setMinimumSize(900, 650);
+    setAcceptDrops(true);
 
     auto *mainLayout = new QVBoxLayout(this);
 
@@ -88,6 +228,22 @@ TeletextViewerDialog::TeletextViewerDialog(QWidget *parent)
             this, &TeletextViewerDialog::setAutoRefreshEnabled);
     connect(refreshTimer, &QTimer::timeout,
             this, &TeletextViewerDialog::handlePeriodicRefresh);
+    const QList<QWidget *> dropTargets = {
+        directoryLineEdit,
+        pageComboBox,
+        pageViewer
+    };
+    for (QWidget *dropTarget : dropTargets) {
+        if (!dropTarget) {
+            continue;
+        }
+        dropTarget->setAcceptDrops(true);
+        dropTarget->installEventFilter(this);
+    }
+    if (pageViewer && pageViewer->viewport()) {
+        pageViewer->viewport()->setAcceptDrops(true);
+        pageViewer->viewport()->installEventFilter(this);
+    }
 
     setAutoRefreshEnabled(autoRefreshCheckBox->isChecked());
 }
@@ -107,6 +263,70 @@ void TeletextViewerDialog::setDirectory(const QString &directoryPath)
 QString TeletextViewerDialog::directory() const
 {
     return currentDirectoryPath;
+}
+bool TeletextViewerDialog::eventFilter(QObject *watched, QEvent *event)
+{
+    if (!event) {
+        return QDialog::eventFilter(watched, event);
+    }
+
+    if (event->type() == QEvent::DragEnter) {
+        auto *dragEnterEvent = static_cast<QDragEnterEvent *>(event);
+        if (canAcceptDrop(dragEnterEvent->mimeData())) {
+            dragEnterEvent->acceptProposedAction();
+            return true;
+        }
+    } else if (event->type() == QEvent::DragMove) {
+        auto *dragMoveEvent = static_cast<QDragMoveEvent *>(event);
+        if (canAcceptDrop(dragMoveEvent->mimeData())) {
+            dragMoveEvent->acceptProposedAction();
+            return true;
+        }
+    } else if (event->type() == QEvent::Drop) {
+        auto *dropEvent = static_cast<QDropEvent *>(event);
+        if (handleDrop(dropEvent->mimeData())) {
+            dropEvent->acceptProposedAction();
+            return true;
+        }
+    }
+
+    return QDialog::eventFilter(watched, event);
+}
+
+void TeletextViewerDialog::dragEnterEvent(QDragEnterEvent *event)
+{
+    if (!event) {
+        return;
+    }
+    if (canAcceptDrop(event->mimeData())) {
+        event->acceptProposedAction();
+    } else {
+        event->ignore();
+    }
+}
+
+void TeletextViewerDialog::dragMoveEvent(QDragMoveEvent *event)
+{
+    if (!event) {
+        return;
+    }
+    if (canAcceptDrop(event->mimeData())) {
+        event->acceptProposedAction();
+    } else {
+        event->ignore();
+    }
+}
+
+void TeletextViewerDialog::dropEvent(QDropEvent *event)
+{
+    if (!event) {
+        return;
+    }
+    if (handleDrop(event->mimeData())) {
+        event->acceptProposedAction();
+    } else {
+        event->ignore();
+    }
 }
 
 void TeletextViewerDialog::browseForDirectory()
@@ -215,24 +435,59 @@ void TeletextViewerDialog::handlePeriodicRefresh()
 {
     refreshPageList();
 }
+bool TeletextViewerDialog::canAcceptDrop(const QMimeData *mimeData) const
+{
+    const QStringList filePaths = droppedLocalFiles(mimeData);
+    if (filePaths.isEmpty()) {
+        return false;
+    }
+
+    const QString resolvedDirectory = resolveTeletextDirectoryFromHints(filePaths);
+    return !resolvedDirectory.isEmpty();
+}
+
+bool TeletextViewerDialog::handleDrop(const QMimeData *mimeData)
+{
+    const QStringList filePaths = droppedLocalFiles(mimeData);
+    if (filePaths.isEmpty()) {
+        return false;
+    }
+
+    const QString resolvedDirectory = resolveTeletextDirectoryFromHints(filePaths);
+    if (resolvedDirectory.isEmpty()) {
+        return false;
+    }
+
+    QString droppedHtmlPageName;
+    for (const QString &filePath : filePaths) {
+        const QFileInfo fileInfo(filePath);
+        if (!fileInfo.exists() || !fileInfo.isFile()) {
+            continue;
+        }
+        if (fileInfo.suffix().compare(QStringLiteral("html"), Qt::CaseInsensitive) != 0) {
+            continue;
+        }
+        if (fileInfo.absolutePath().compare(resolvedDirectory, Qt::CaseInsensitive) == 0) {
+            droppedHtmlPageName = fileInfo.fileName();
+            break;
+        }
+    }
+
+    setDirectory(resolvedDirectory);
+    if (!droppedHtmlPageName.isEmpty()) {
+        const qint32 pageIndex = pageComboBox->findText(droppedHtmlPageName, Qt::MatchFixedString);
+        if (pageIndex >= 0 && pageComboBox->currentIndex() != pageIndex) {
+            pageComboBox->setCurrentIndex(pageIndex);
+        } else if (pageIndex >= 0) {
+            loadSelectedPage();
+        }
+    }
+    return true;
+}
 
 bool TeletextViewerDialog::directoryContainsHtml() const
 {
-    if (currentDirectoryPath.trimmed().isEmpty()) {
-        return false;
-    }
-
-    const QDir directory(currentDirectoryPath);
-    if (!directory.exists()) {
-        return false;
-    }
-
-    const QStringList htmlPages = directory.entryList(
-        QStringList() << QStringLiteral("*.html"),
-        QDir::Files,
-        QDir::Name | QDir::IgnoreCase
-    );
-    return !htmlPages.isEmpty();
+    return directoryContainsHtmlPages(currentDirectoryPath);
 }
 
 QString TeletextViewerDialog::selectedPagePath() const

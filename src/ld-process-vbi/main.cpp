@@ -98,6 +98,13 @@ QString backupFilenameForMetadata(const QString &inputMetadataFilename, const QS
     }
     return backupFilename;
 }
+
+QString defaultTeletextHtmlDirectoryForInput(const QString &inputFilename)
+{
+    const QFileInfo inputInfo(inputFilename);
+    return QDir(inputInfo.absolutePath())
+        .filePath(inputInfo.completeBaseName() + QStringLiteral("_teletext_html"));
+}
 }
 
 int main(int argc, char *argv[])
@@ -160,12 +167,16 @@ int main(int argc, char *argv[])
                                         QCoreApplication::translate("main", "number"));
     parser.addOption(threadsOption);
 
-    // Optional teletext HTML export integration
+    // Teletext HTML export integration
     QCommandLineOption teletextHtmlDirOption(QStringList() << "teletext-html-dir",
                                              QCoreApplication::translate("main",
-                                                                         "Decode teletext and write generated HTML pages to the specified directory"),
+                                                                         "Decode teletext and write generated HTML pages to the specified directory (default: <input>_teletext_html beside input TBC)"),
                                              QCoreApplication::translate("main", "directory"));
     parser.addOption(teletextHtmlDirOption);
+    QCommandLineOption noTeletextHtmlOption(QStringList() << "no-teletext-html",
+                                            QCoreApplication::translate("main",
+                                                                        "Disable integrated teletext HTML export"));
+    parser.addOption(noTeletextHtmlOption);
     QCommandLineOption teletextTapeFormatOption(QStringList() << "teletext-tape-format",
                                                 QCoreApplication::translate("main",
                                                                             "Teletext decoder tape format profile (default: vhs)"),
@@ -267,13 +278,19 @@ int main(int argc, char *argv[])
     DecoderPool decoderPool(inputFilename, outputMetadataFilename, maxThreads, metaData);
     if (!decoderPool.process()) return 1;
 
-    if (parser.isSet(teletextHtmlDirOption)) {
+    const bool teletextExportEnabled = !parser.isSet(noTeletextHtmlOption);
+    if (teletextExportEnabled) {
         TeletextIntegrationOptions teletextOptions;
         teletextOptions.inputFilename = inputFilename;
-        teletextOptions.outputDirectory = parser.value(teletextHtmlDirOption);
+        if (parser.isSet(teletextHtmlDirOption)) {
+            teletextOptions.outputDirectory = parser.value(teletextHtmlDirOption);
+        } else {
+            teletextOptions.outputDirectory = defaultTeletextHtmlDirectoryForInput(inputFilename);
+        }
         teletextOptions.maxThreads = maxThreads;
         teletextOptions.tapeFormat = parser.value(teletextTapeFormatOption);
         teletextOptions.minDuplicates = teletextMinDuplicates;
+        qInfo().nospace().noquote() << "Teletext export output directory: " << teletextOptions.outputDirectory;
 
         QString teletextError;
         if (!runTeletextHtmlExport(teletextOptions, &teletextError)) {

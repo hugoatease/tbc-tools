@@ -366,6 +366,118 @@ void appendUniqueCandidate(QStringList &candidates, const QString &candidate)
     candidates.append(candidate);
 }
 
+QString normalizedTeletextBaseName(const QFileInfo &pathInfo)
+{
+    QString baseName = pathInfo.completeBaseName();
+    QString baseNameLower = baseName.toLower();
+    const QStringList suffixesToStrip = {
+        QStringLiteral(".tbc"),
+        QStringLiteral(".ytbc"),
+        QStringLiteral(".ctbc"),
+        QStringLiteral(".tbcy"),
+        QStringLiteral(".tbcc")
+    };
+    for (const QString &suffix : suffixesToStrip) {
+        if (!baseNameLower.endsWith(suffix)) {
+            continue;
+        }
+        baseName.chop(suffix.size());
+        break;
+    }
+    return baseName;
+}
+
+QString defaultTeletextHtmlDirectoryForInput(const QString &inputPath)
+{
+    const QFileInfo inputInfo(inputPath);
+    if (inputInfo.absolutePath().isEmpty()) {
+        return QString();
+    }
+
+    QString baseName = normalizedTeletextBaseName(inputInfo);
+    if (baseName.isEmpty()) {
+        baseName = inputInfo.completeBaseName();
+    }
+    if (baseName.isEmpty()) {
+        return QString();
+    }
+    return QDir(inputInfo.absolutePath()).filePath(baseName + QStringLiteral("_teletext_html"));
+}
+
+QString resolveTeletextHtmlDirectoryFromHint(const QString &pathHint)
+{
+    const QFileInfo pathInfo(pathHint);
+    if (!pathInfo.exists()) {
+        return QString();
+    }
+
+    if (pathInfo.isFile() && pathInfo.suffix().compare(QStringLiteral("html"), Qt::CaseInsensitive) == 0) {
+        const QDir htmlDirectory(pathInfo.absolutePath());
+        const QStringList htmlPages = htmlDirectory.entryList(
+            QStringList() << QStringLiteral("*.html"),
+            QDir::Files,
+            QDir::Name | QDir::IgnoreCase
+        );
+        if (!htmlPages.isEmpty()) {
+            return htmlDirectory.absolutePath();
+        }
+    }
+
+    QDir baseDirectory;
+    if (pathInfo.isDir()) {
+        baseDirectory = QDir(pathInfo.absoluteFilePath());
+    } else {
+        baseDirectory = pathInfo.absoluteDir();
+    }
+
+    QStringList candidateDirectories;
+    QStringList baseNames;
+    if (pathInfo.isDir()) {
+        appendUniqueCandidate(baseNames, pathInfo.fileName());
+    } else {
+        appendUniqueCandidate(baseNames, normalizedTeletextBaseName(pathInfo));
+        appendUniqueCandidate(baseNames, pathInfo.completeBaseName());
+    }
+
+    for (const QString &baseName : baseNames) {
+        if (baseName.isEmpty()) {
+            continue;
+        }
+        appendUniqueCandidate(candidateDirectories, baseDirectory.filePath(baseName + QStringLiteral("_teletext_html")));
+        appendUniqueCandidate(candidateDirectories, baseDirectory.filePath(baseName + QStringLiteral(".teletext_html")));
+        appendUniqueCandidate(candidateDirectories, baseDirectory.filePath(baseName + QStringLiteral("_teletext")));
+    }
+    appendUniqueCandidate(candidateDirectories, baseDirectory.filePath(QStringLiteral("teletext_html")));
+    appendUniqueCandidate(candidateDirectories, baseDirectory.filePath(QStringLiteral("teletext")));
+
+    for (const QString &candidate : candidateDirectories) {
+        const QDir candidateDirectory(candidate);
+        if (!candidateDirectory.exists()) {
+            continue;
+        }
+        const QStringList htmlPages = candidateDirectory.entryList(
+            QStringList() << QStringLiteral("*.html"),
+            QDir::Files,
+            QDir::Name | QDir::IgnoreCase
+        );
+        if (!htmlPages.isEmpty()) {
+            return candidateDirectory.absolutePath();
+        }
+    }
+
+    return QString();
+}
+
+QString resolveTeletextHtmlDirectoryFromHints(const QStringList &pathHints)
+{
+    for (const QString &pathHint : pathHints) {
+        const QString resolvedDirectory = resolveTeletextHtmlDirectoryFromHint(pathHint);
+        if (!resolvedDirectory.isEmpty()) {
+            return resolvedDirectory;
+        }
+    }
+    return QString();
+}
 QString resolveSourceFilenameForMetadata(const QString &metadataFilename)
 {
     const QFileInfo metadataInfo(metadataFilename);
@@ -4299,6 +4411,11 @@ void MainWindow::on_actionProcess_VBI_triggered()
     if (!noBackupOption.isEmpty()) {
         toolArguments << noBackupOption;
     }
+    const QString teletextOutputDirectory = defaultTeletextHtmlDirectoryForInput(inputFileName);
+    if (!teletextOutputDirectory.isEmpty()
+        && toolHelpListsOption(toolPath, QStringLiteral("--teletext-html-dir"))) {
+        toolArguments << QStringLiteral("--teletext-html-dir") << teletextOutputDirectory;
+    }
     toolArguments << inputFileName;
 
     QString errorMessage;
@@ -4316,10 +4433,36 @@ void MainWindow::on_actionProcess_VBI_triggered()
 
     const bool reloadingCurrentSource = tbcSource.getIsSourceLoaded()
                                         && sameFilePath(inputFileName, tbcSource.getCurrentSourceFilename());
+
+    const QString autoTeletextDirectory = resolveTeletextHtmlDirectoryFromHints({
+        teletextOutputDirectory,
+        inputFileName,
+        metadataFilename
+    });
+    if (!autoTeletextDirectory.isEmpty()) {
+        if (!teletextViewerDialog) {
+            teletextViewerDialog = new TeletextViewerDialog(this);
+            teletextViewerDialog->setWindowFlag(Qt::Window, true);
+        }
+        if (teletextViewerDialog->directory().compare(autoTeletextDirectory, Qt::CaseInsensitive) != 0) {
+            teletextViewerDialog->setDirectory(autoTeletextDirectory);
+        }
+        teletextViewerDialog->show();
+        teletextViewerDialog->raise();
+        teletextViewerDialog->activateWindow();
+    }
     if (reloadingCurrentSource) {
         queueAnalysisRefreshPreservingUserState(inputFileName);
     } else {
-        statusBar()->showMessage(tr("VBI processing completed for %1").arg(inputFileName), 4000);
+        if (!autoTeletextDirectory.isEmpty()) {
+            statusBar()->showMessage(
+                tr("VBI processing completed for %1 (teletext loaded from %2)")
+                    .arg(inputFileName, autoTeletextDirectory),
+                5000
+            );
+        } else {
+            statusBar()->showMessage(tr("VBI processing completed for %1").arg(inputFileName), 4000);
+        }
     }
 }
 
@@ -4786,60 +4929,11 @@ void MainWindow::on_actionTeletext_Viewer_triggered()
         teletextViewerDialog = new TeletextViewerDialog(this);
         teletextViewerDialog->setWindowFlag(Qt::Window, true);
     }
-
-    const auto findTeletextHtmlDirectory = [](const QString &pathHint) -> QString {
-        const QFileInfo pathInfo(pathHint);
-        if (!pathInfo.exists()) {
-            return QString();
-        }
-
-        QDir baseDirectory;
-        QString baseName;
-        if (pathInfo.isDir()) {
-            baseDirectory = QDir(pathInfo.absoluteFilePath());
-            baseName = pathInfo.fileName();
-        } else {
-            baseDirectory = QDir(pathInfo.absolutePath());
-            baseName = pathInfo.completeBaseName();
-        }
-
-        QStringList candidates;
-        if (!baseName.isEmpty()) {
-            candidates << baseDirectory.filePath(baseName + QStringLiteral("_teletext_html"));
-            candidates << baseDirectory.filePath(baseName + QStringLiteral(".teletext_html"));
-            candidates << baseDirectory.filePath(baseName + QStringLiteral("_teletext"));
-        }
-        candidates << baseDirectory.filePath(QStringLiteral("teletext_html"));
-        candidates << baseDirectory.filePath(QStringLiteral("teletext"));
-
-        for (const QString &candidate : candidates) {
-            const QDir candidateDirectory(candidate);
-            if (!candidateDirectory.exists()) {
-                continue;
-            }
-            const QStringList htmlPages = candidateDirectory.entryList(
-                QStringList() << QStringLiteral("*.html"),
-                QDir::Files,
-                QDir::Name | QDir::IgnoreCase
-            );
-            if (!htmlPages.isEmpty()) {
-                return candidateDirectory.absolutePath();
-            }
-        }
-
-        return QString();
-    };
-
-    QString suggestedDirectory;
-    if (tbcSource.getIsSourceLoaded()) {
-        suggestedDirectory = findTeletextHtmlDirectory(tbcSource.getCurrentSourceFilename());
-    }
-    if (suggestedDirectory.isEmpty() && !lastFilename.isEmpty()) {
-        suggestedDirectory = findTeletextHtmlDirectory(lastFilename);
-    }
-    if (suggestedDirectory.isEmpty()) {
-        suggestedDirectory = findTeletextHtmlDirectory(configuration.getSourceDirectory());
-    }
+    const QString suggestedDirectory = resolveTeletextHtmlDirectoryFromHints({
+        tbcSource.getCurrentSourceFilename(),
+        lastFilename,
+        configuration.getSourceDirectory()
+    });
 
     if (!suggestedDirectory.isEmpty()
         && teletextViewerDialog->directory().compare(suggestedDirectory, Qt::CaseInsensitive) != 0) {
