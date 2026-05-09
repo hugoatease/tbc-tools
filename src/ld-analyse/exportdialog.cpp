@@ -68,6 +68,14 @@ QString bt601NonSquareSarForSystem(int system)
     return (system == PAL) ? QStringLiteral("128/117")
                            : QStringLiteral("12/13");
 }
+
+QString sd480SarForMode(const QString &outputResolutionMode)
+{
+    if (outputResolutionMode == QStringLiteral("ntsc_480_169")) {
+        return QStringLiteral("32/27");
+    }
+    return QStringLiteral("8/9");
+}
 QString stripAnsiSequences(const QString &input)
 {
     static const QRegularExpression ansiPattern(QStringLiteral("\\x1B\\[[0-9;?]*[A-Za-z]"));
@@ -730,6 +738,12 @@ OutputResamplePlan outputResamplePlanForModes(int system,
         || outputResolutionMode == QStringLiteral("bt601_720")) {
         plan.width = 720;
         plan.sampleAspectRatio = bt601NonSquareSarForSystem(system);
+    } else if ((outputResolutionMode == QStringLiteral("ntsc_480_43")
+                || outputResolutionMode == QStringLiteral("ntsc_480_169"))
+               && system != PAL) {
+        plan.width = 720;
+        plan.height = 480;
+        plan.sampleAspectRatio = sd480SarForMode(outputResolutionMode);
     } else if (outputResolutionMode == QStringLiteral("bt601_702")) {
         plan.width = 702;
         plan.sampleAspectRatio = bt601NonSquareSarForSystem(system);
@@ -2157,6 +2171,12 @@ void ExportDialog::refreshOutputResolutionModeOptions()
                                                   QStringLiteral("tool_native"));
     } else {
         ui->outputResolutionModeComboBox->addItem(tr("D1 720x%1").arg(standardHeight), QStringLiteral("default_safe"));
+        if (system != PAL) {
+            ui->outputResolutionModeComboBox->addItem(tr("SD 720x480 (4:3)"),
+                                                      QStringLiteral("ntsc_480_43"));
+            ui->outputResolutionModeComboBox->addItem(tr("SD 720x480 (16:9)"),
+                                                      QStringLiteral("ntsc_480_169"));
+        }
         ui->outputResolutionModeComboBox->addItem(tr("Native %1x%2")
                                                       .arg(activeNativeWidth)
                                                       .arg(activeNativeHeight),
@@ -3052,10 +3072,6 @@ void ExportDialog::on_exportButton_clicked()
         const QString outputResolutionMode = effectiveOutputResolutionMode(ui ? ui->outputResolutionModeComboBox : nullptr);
         const bool supportsAppendVideoFilter = executableSupportsOption(exportPath, QStringLiteral("--append-video-filter"));
         const bool supportsD1OutputSizing = executableSupportsD1OutputSizing(exportPath);
-        const LdDecodeMetaData::VideoParameters &previewVideoParameters = tbcSource->getVideoParameters();
-        const bool hasAnyVerticalLineAdjustment = hasAnyNonDefaultVerticalFraming(previewVideoParameters);
-        const bool isDefaultActiveAreaFraming =
-            ExportArguments::isDefaultActiveAreaFraming(resolutionMode, hasAnyVerticalLineAdjustment);
         const bool deinterlacedOutputProfile = isWebProfileName(selectedProfile);
         if (dropoutMode == QStringLiteral("heavy")
             && !executableSupportsOption(exportPath, QStringLiteral("--overcorrect"))) {
@@ -3080,8 +3096,7 @@ void ExportDialog::on_exportButton_clicked()
         const bool useD1OutputSizing = outputResamplePlan.enabled
                                        && shouldUseD1OutputSizing(resolutionMode, outputResolutionMode)
                                        && supportsD1OutputSizing
-                                       && !deinterlacedOutputProfile
-                                       && isDefaultActiveAreaFraming;
+                                       && !deinterlacedOutputProfile;
         if (outputResamplePlan.enabled) {
             if (useD1OutputSizing) {
                 appendLog(tr("Output resolution mode '%1' will export %2x%3 with SAR %4 using --d1.")
@@ -3091,9 +3106,6 @@ void ExportDialog::on_exportButton_clicked()
                               .arg(outputResamplePlan.width)
                               .arg(outputResamplePlan.height)
                               .arg(outputResamplePlan.sampleAspectRatio));
-            } else if (!isDefaultActiveAreaFraming
-                       && shouldUseD1OutputSizing(resolutionMode, outputResolutionMode)) {
-                appendLog(tr("D1 output sizing is unavailable when active-area framing has custom line adjustments; using filter-based or native sizing instead."));
             } else if (supportsAppendVideoFilter) {
                 appendLog(tr("Output resolution mode '%1' will export %2x%3 with SAR %4.")
                               .arg(ui->outputResolutionModeComboBox
@@ -5188,8 +5200,7 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
         const bool useD1OutputSizing = outputResamplePlan.enabled
                                        && shouldUseD1OutputSizing(resolutionMode, outputResolutionMode)
                                        && executableSupportsD1OutputSizing(exportPath)
-                                       && !deinterlacedOutputProfile
-                                       && isDefaultActiveAreaFraming;
+                                       && !deinterlacedOutputProfile;
         if (useD1OutputSizing) {
             args << QStringLiteral("--d1");
         } else if (outputResamplePlan.enabled
