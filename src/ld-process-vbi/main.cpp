@@ -3,7 +3,8 @@
     main.cpp
 
     ld-process-vbi - VBI and IEC NTSC specific processor for ld-decode
-    Copyright (C) 2018-2025 Simon Inns
+    Copyright (C) 2018-2026 Simon Inns
+    Copyright (C) 2026 Harry Munday
 
     This file is part of ld-decode-tools.
 
@@ -34,6 +35,7 @@
 
 #include "tbc/logging.h"
 #include "decoderpool.h"
+#include "teletextintegration.h"
 namespace {
 void appendMetadataCandidate(QStringList &candidates, const QString &candidate)
 {
@@ -119,7 +121,7 @@ int main(int argc, char *argv[])
     parser.setApplicationDescription(
                 "ld-process-vbi - VBI and IEC NTSC specific processor for ld-decode\n"
                 "\n"
-                "(c)2018-2025 Simon Inns\n"
+                "(c)2018-2026 Simon Inns, Harry Munday\n"
                 "GPLv3 Open-Source - github: https://github.com/happycube/ld-decode");
     parser.addHelpOption();
     parser.addVersionOption();
@@ -158,6 +160,25 @@ int main(int argc, char *argv[])
                                         QCoreApplication::translate("main", "number"));
     parser.addOption(threadsOption);
 
+    // Optional teletext HTML export integration
+    QCommandLineOption teletextHtmlDirOption(QStringList() << "teletext-html-dir",
+                                             QCoreApplication::translate("main",
+                                                                         "Decode teletext and write generated HTML pages to the specified directory"),
+                                             QCoreApplication::translate("main", "directory"));
+    parser.addOption(teletextHtmlDirOption);
+    QCommandLineOption teletextTapeFormatOption(QStringList() << "teletext-tape-format",
+                                                QCoreApplication::translate("main",
+                                                                            "Teletext decoder tape format profile (default: vhs)"),
+                                                QCoreApplication::translate("main", "name"),
+                                                QCoreApplication::translate("main", "vhs"));
+    parser.addOption(teletextTapeFormatOption);
+    QCommandLineOption teletextMinDuplicatesOption(QStringList() << "teletext-min-duplicates",
+                                                   QCoreApplication::translate("main",
+                                                                               "Minimum duplicate subpages used when squashing teletext packets (default: 1)"),
+                                                   QCoreApplication::translate("main", "number"),
+                                                   QCoreApplication::translate("main", "1"));
+    parser.addOption(teletextMinDuplicatesOption);
+
     // Positional argument to specify input TBC file
     parser.addPositionalArgument("input", QCoreApplication::translate("main", "Specify input TBC file"));
 
@@ -179,6 +200,12 @@ int main(int argc, char *argv[])
             qCritical("Specified number of threads must be greater than zero");
             return -1;
         }
+    }
+
+    qint32 teletextMinDuplicates = parser.value(teletextMinDuplicatesOption).toInt();
+    if (teletextMinDuplicates < 1) {
+        qCritical("Specified teletext minimum duplicates must be greater than zero");
+        return -1;
     }
 
     // Get the arguments from the parser
@@ -239,6 +266,21 @@ int main(int argc, char *argv[])
     qInfo() << "Beginning VBI processing...";
     DecoderPool decoderPool(inputFilename, outputMetadataFilename, maxThreads, metaData);
     if (!decoderPool.process()) return 1;
+
+    if (parser.isSet(teletextHtmlDirOption)) {
+        TeletextIntegrationOptions teletextOptions;
+        teletextOptions.inputFilename = inputFilename;
+        teletextOptions.outputDirectory = parser.value(teletextHtmlDirOption);
+        teletextOptions.maxThreads = maxThreads;
+        teletextOptions.tapeFormat = parser.value(teletextTapeFormatOption);
+        teletextOptions.minDuplicates = teletextMinDuplicates;
+
+        QString teletextError;
+        if (!runTeletextHtmlExport(teletextOptions, &teletextError)) {
+            qCritical().noquote() << "Teletext export failed:" << teletextError;
+            return 1;
+        }
+    }
 
     // Quit with success
     return 0;

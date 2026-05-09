@@ -754,6 +754,7 @@
     <addaction name="actionSNR_analysis"/>
     <addaction name="actionWhite_SNR_analysis"/>
     <addaction name="actionVBI"/>
+    <addaction name="actionTeletext_Viewer"/>
     <addaction name="actionClosed_Captions"/>
     <addaction name="separator"/>
     <addaction name="actionVideo_parameters"/>
@@ -925,6 +926,11 @@
    </property>
    <property name="shortcut">
     <string>Ctrl+I</string>
+   </property>
+  </action>
+  <action name="actionTeletext_Viewer">
+   <property name="text">
+    <string>Teletext Viewer...</string>
    </property>
   </action>
   <action name="actionNTSC">

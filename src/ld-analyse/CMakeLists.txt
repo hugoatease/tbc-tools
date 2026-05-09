@@ -13,6 +13,7 @@ set(ld-analyse_SOURCES
     metadataconversiondialog.cpp metadataconversiondialog.ui
     metadatastatusdialog.cpp metadatastatusdialog.ui
     notesviewerdialog.cpp notesviewerdialog.h
+    teletextviewerdialog.cpp teletextviewerdialog.h
     main.cpp
     mainwindow.cpp mainwindow.ui
     timelinemarkerslider.cpp timelinemarkerslider.h

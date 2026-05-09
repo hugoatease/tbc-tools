@@ -3,7 +3,8 @@
  * ld-analyse - TBC output analysis GUI
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
- * SPDX-FileCopyrightText: 2018-2025 Simon Inns
+ * SPDX-FileCopyrightText: 2018-2026 Simon Inns
+ * SPDX-FileCopyrightText: 2026 Harry Munday
  *
  * This file is part of ld-decode-tools.
  ******************************************************************************/
@@ -60,6 +61,7 @@ class AudioAlignmentDialog;
 class EfmHandlerDialog;
 class MetadataExportDialog;
 class NotesViewerDialog;
+class TeletextViewerDialog;
 class TimelineMarkerSlider;
 
 class MainWindow : public QMainWindow
@@ -108,6 +110,7 @@ private slots:
     void on_actionFix_JSON_SNR_triggered();
     void on_actionAuto_Audio_Align_triggered();
     void on_actionEFM_Handler_triggered();
+    void on_actionTeletext_Viewer_triggered();
 
     // Media control frame handlers
     void on_previousPushButton_clicked();
@@ -222,6 +225,7 @@ private:
     EfmHandlerDialog *efmHandlerDialog = nullptr;
     MetadataExportDialog *metadataExportDialog = nullptr;
     NotesViewerDialog *notesViewerDialog = nullptr;
+    TeletextViewerDialog *teletextViewerDialog = nullptr;
 
     // Class globals
     Configuration configuration;

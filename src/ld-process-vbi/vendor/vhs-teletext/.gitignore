@@ -1,0 +1,12 @@
+/.idea
+/.coverage
+/venv
+/*.vbi
+*.pyc
+/build
+/dist
+/MANIFEST
+/*.egg-info
+/vbi
+/teletext/vbi/data/*-*
+

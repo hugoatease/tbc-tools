@@ -1,0 +1,11 @@
+Upstream project: https://github.com/ali1234/vhs-teletext
+Vendored commit: f470629a3d5d3b0a577153832505e187beeb7204
+Primary upstream author: Alistair Buxton
+Upstream license: GPL-3.0-or-later (see LICENSE)
+Integration owner in this repository:
+  - Harry Munday (2026)
+Included components:
+  - teletext Python package runtime
+  - misc/teletext.css
+  - misc/teletext-noscanlines.css
+  - upstream LICENSE and documentation

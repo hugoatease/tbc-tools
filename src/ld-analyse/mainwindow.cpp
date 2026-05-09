@@ -3,8 +3,9 @@
  * ld-analyse - TBC output analysis GUI
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
- * SPDX-FileCopyrightText: 2018-2025 Simon Inns
+ * SPDX-FileCopyrightText: 2018-2026 Simon Inns
  * SPDX-FileCopyrightText: 2022 Adam Sampson
+ * SPDX-FileCopyrightText: 2026 Harry Munday
  *
  * This file is part of ld-decode-tools.
  ******************************************************************************/
@@ -74,6 +75,7 @@
 
 #include "metadataconverterutil.h"
 #include "notesviewerdialog.h"
+#include "teletextviewerdialog.h"
 #include "timelinemarkerslider.h"
 #include "efmhandlerdialog.h"
 #include "../audio-align/audioalignmentdialog.h"
@@ -4777,6 +4779,76 @@ void MainWindow::on_actionTBC_Tools_Wiki_triggered()
 void MainWindow::on_actionAbout_ld_analyse_triggered()
 {
     aboutDialog->show();
+}
+void MainWindow::on_actionTeletext_Viewer_triggered()
+{
+    if (!teletextViewerDialog) {
+        teletextViewerDialog = new TeletextViewerDialog(this);
+        teletextViewerDialog->setWindowFlag(Qt::Window, true);
+    }
+
+    const auto findTeletextHtmlDirectory = [](const QString &pathHint) -> QString {
+        const QFileInfo pathInfo(pathHint);
+        if (!pathInfo.exists()) {
+            return QString();
+        }
+
+        QDir baseDirectory;
+        QString baseName;
+        if (pathInfo.isDir()) {
+            baseDirectory = QDir(pathInfo.absoluteFilePath());
+            baseName = pathInfo.fileName();
+        } else {
+            baseDirectory = QDir(pathInfo.absolutePath());
+            baseName = pathInfo.completeBaseName();
+        }
+
+        QStringList candidates;
+        if (!baseName.isEmpty()) {
+            candidates << baseDirectory.filePath(baseName + QStringLiteral("_teletext_html"));
+            candidates << baseDirectory.filePath(baseName + QStringLiteral(".teletext_html"));
+            candidates << baseDirectory.filePath(baseName + QStringLiteral("_teletext"));
+        }
+        candidates << baseDirectory.filePath(QStringLiteral("teletext_html"));
+        candidates << baseDirectory.filePath(QStringLiteral("teletext"));
+
+        for (const QString &candidate : candidates) {
+            const QDir candidateDirectory(candidate);
+            if (!candidateDirectory.exists()) {
+                continue;
+            }
+            const QStringList htmlPages = candidateDirectory.entryList(
+                QStringList() << QStringLiteral("*.html"),
+                QDir::Files,
+                QDir::Name | QDir::IgnoreCase
+            );
+            if (!htmlPages.isEmpty()) {
+                return candidateDirectory.absolutePath();
+            }
+        }
+
+        return QString();
+    };
+
+    QString suggestedDirectory;
+    if (tbcSource.getIsSourceLoaded()) {
+        suggestedDirectory = findTeletextHtmlDirectory(tbcSource.getCurrentSourceFilename());
+    }
+    if (suggestedDirectory.isEmpty() && !lastFilename.isEmpty()) {
+        suggestedDirectory = findTeletextHtmlDirectory(lastFilename);
+    }
+    if (suggestedDirectory.isEmpty()) {
+        suggestedDirectory = findTeletextHtmlDirectory(configuration.getSourceDirectory());
+    }
+
+    if (!suggestedDirectory.isEmpty()
+        && teletextViewerDialog->directory().compare(suggestedDirectory, Qt::CaseInsensitive) != 0) {
+        teletextViewerDialog->setDirectory(suggestedDirectory);
+    }
+
+    teletextViewerDialog->show();
+    teletextViewerDialog->raise();
+    teletextViewerDialog->activateWindow();
 }
 
 // Show the VBI window
