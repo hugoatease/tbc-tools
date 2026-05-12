@@ -31,6 +31,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
+#include <QIODevice>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
@@ -169,10 +170,14 @@ bool runPythonStep(const QString &pythonExecutable,
                    const QProcessEnvironment &environment,
                    const QString &stepDescription,
                    QString *errorMessage,
-                   qint64 timeoutMilliseconds = -1)
+                   qint64 timeoutMilliseconds = -1,
+                   const QString &standardOutputFile = QString())
 {
     QProcess process;
     process.setProcessEnvironment(environment);
+    if (!standardOutputFile.trimmed().isEmpty()) {
+        process.setStandardOutputFile(standardOutputFile, QIODevice::Truncate);
+    }
     process.start(pythonExecutable, arguments);
 
     if (!process.waitForStarted(5000)) {
@@ -250,6 +255,80 @@ bool copyFileReplacing(const QString &sourcePath, const QString &targetPath, QSt
         return false;
     }
 
+    return true;
+}
+
+QString embeddedTeletextFontFace(const QString &fontFamily, const QByteArray &fontData)
+{
+    return QStringLiteral(
+               "@font-face {font-family:%1; src:url(\"data:font/ttf;base64,%2\") format(\"truetype\"); font-display:block;}")
+        .arg(fontFamily, QString::fromLatin1(fontData.toBase64()));
+}
+
+bool embedTeletextFontsInCss(const QString &outputDirectoryPath, QString *errorMessage)
+{
+    QDir outputDirectory(outputDirectoryPath);
+    const QString cssPath = outputDirectory.filePath(QStringLiteral("teletext-noscanlines.css"));
+    QFile cssFile(cssPath);
+    if (!cssFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        setError(errorMessage, QObject::tr("Could not open teletext CSS for font embedding: %1").arg(cssPath));
+        return false;
+    }
+    QString cssContent = QString::fromUtf8(cssFile.readAll());
+    cssFile.close();
+
+    auto readFont = [&](const QString &fontFilename, QByteArray *fontData) {
+        const QString fontPath = outputDirectory.filePath(fontFilename);
+        QFile fontFile(fontPath);
+        if (!fontFile.open(QIODevice::ReadOnly)) {
+            setError(errorMessage, QObject::tr("Could not open teletext font for embedding: %1").arg(fontPath));
+            return false;
+        }
+        *fontData = fontFile.readAll();
+        return true;
+    };
+
+    QByteArray teletext2Data;
+    QByteArray teletext4Data;
+    if (!readFont(QStringLiteral("teletext2.ttf"), &teletext2Data)
+        || !readFont(QStringLiteral("teletext4.ttf"), &teletext4Data)) {
+        return false;
+    }
+
+    const QString teletext2ExternalRule =
+        QStringLiteral("@font-face {font-family:teletext2; src:url('teletext2.ttf')}");
+    const QString teletext4ExternalRule =
+        QStringLiteral("@font-face {font-family:teletext4; src:url('teletext4.ttf')}");
+    const QString teletext2EmbeddedRule = embeddedTeletextFontFace(QStringLiteral("teletext2"), teletext2Data);
+    const QString teletext4EmbeddedRule = embeddedTeletextFontFace(QStringLiteral("teletext4"), teletext4Data);
+
+    if (cssContent.contains(teletext2ExternalRule)) {
+        cssContent.replace(teletext2ExternalRule, teletext2EmbeddedRule);
+    } else if (!cssContent.contains(QStringLiteral("font-family:teletext2"), Qt::CaseInsensitive)) {
+        cssContent.prepend(teletext2EmbeddedRule + QLatin1Char('\n'));
+    }
+    if (cssContent.contains(teletext4ExternalRule)) {
+        cssContent.replace(teletext4ExternalRule, teletext4EmbeddedRule);
+    } else if (!cssContent.contains(QStringLiteral("font-family:teletext4"), Qt::CaseInsensitive)) {
+        cssContent.prepend(teletext4EmbeddedRule + QLatin1Char('\n'));
+    }
+
+    cssContent.replace(
+        QStringLiteral("font-family: teletext2;"),
+        QStringLiteral("font-family: teletext2, \"Courier New\", \"Liberation Mono\", \"DejaVu Sans Mono\", monospace;")
+    );
+    cssContent.replace(
+        QStringLiteral("font-family: teletext4;"),
+        QStringLiteral("font-family: teletext4, teletext2, \"Courier New\", \"Liberation Mono\", \"DejaVu Sans Mono\", monospace;")
+    );
+
+    if (!cssFile.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        setError(errorMessage, QObject::tr("Could not write teletext CSS after font embedding: %1").arg(cssPath));
+        return false;
+    }
+    QTextStream cssStream(&cssFile);
+    cssStream << cssContent;
+    cssFile.close();
     return true;
 }
 
@@ -501,7 +580,6 @@ else:
                   << QStringLiteral("--tape-format") << tapeFormat
                   << QStringLiteral("--threads") << QString::number(teletextThreads)
                   << QStringLiteral("--no-progress")
-                  << QStringLiteral("-o") << QStringLiteral("bytes") << rawStreamPath
                   << inputFilename;
         return arguments;
     };
@@ -599,7 +677,8 @@ else:
                           deconvolutionEnvironment(attempt.useCpuMode, attempt.preferOpenClMode),
                           attempt.stepLabel,
                           &attemptError,
-                          deconvolutionTimeoutMilliseconds)) {
+                          deconvolutionTimeoutMilliseconds,
+                          rawStreamPath)) {
             if (attemptIndex > 0) {
                 qInfo() << "Teletext export: deconvolution succeeded after fallback to"
                         << attempt.description;
@@ -626,11 +705,11 @@ else:
         QStringLiteral("squash"),
         QStringLiteral("--min-duplicates"), QString::number(minDuplicates),
         QStringLiteral("--no-progress"),
-        QStringLiteral("-o"), QStringLiteral("bytes"), squashedStreamPath,
         rawStreamPath
     };
     if (!runPythonStep(pythonExecutable, squashArguments, environment,
-                       QObject::tr("Teletext squash"), errorMessage)) {
+                       QObject::tr("Teletext squash"), errorMessage,
+                       -1, squashedStreamPath)) {
         return false;
     }
 
@@ -665,6 +744,9 @@ else:
     if (!copyFileReplacing(QDir(vendorDirectory).filePath(QStringLiteral("misc/teletext4.ttf")),
                            outputDirectory.filePath(QStringLiteral("teletext4.ttf")),
                            errorMessage)) {
+        return false;
+    }
+    if (!embedTeletextFontsInCss(outputDirectoryPath, errorMessage)) {
         return false;
     }
     ensureCssSwitchScript(outputDirectoryPath);
