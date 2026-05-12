@@ -5197,14 +5197,26 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
         const OutputResamplePlan outputResamplePlan = outputResamplePlanForModes(videoParameters.system,
                                                                                   resolutionMode,
                                                                                   outputResolutionMode);
-        const bool useD1OutputSizing = outputResamplePlan.enabled
-                                       && shouldUseD1OutputSizing(resolutionMode, outputResolutionMode)
-                                       && executableSupportsD1OutputSizing(exportPath)
-                                       && !deinterlacedOutputProfile;
+        const bool supportsD1OutputSizing = executableSupportsD1OutputSizing(exportPath);
+        const bool supportsAppendVideoFilter =
+            executableSupportsOption(exportPath, QStringLiteral("--append-video-filter"));
+        const bool requiresD1OutputSizing = outputResamplePlan.enabled
+                                            && shouldUseD1OutputSizing(resolutionMode,
+                                                                       outputResolutionMode);
+        const bool mainProfileIsDeinterlaced = isWebProfileName(selectedExportProfileName());
+        const bool proxyNtscD1Fallback = requiresD1OutputSizing
+                                         && usingProfileOverride
+                                         && deinterlacedOutputProfile
+                                         && isNtscSystem
+                                         && !mainProfileIsDeinterlaced
+                                         && !supportsAppendVideoFilter
+                                         && supportsD1OutputSizing;
+        const bool useD1OutputSizing = requiresD1OutputSizing
+                                       && supportsD1OutputSizing
+                                       && (!deinterlacedOutputProfile || proxyNtscD1Fallback);
         if (useD1OutputSizing) {
             args << QStringLiteral("--d1");
-        } else if (outputResamplePlan.enabled
-                   && executableSupportsOption(exportPath, QStringLiteral("--append-video-filter"))) {
+        } else if (outputResamplePlan.enabled && supportsAppendVideoFilter) {
             const QString filterExpr = outputResampleFilter(outputResamplePlan,
                                                             !deinterlacedOutputProfile);
             if (!filterExpr.isEmpty()) {

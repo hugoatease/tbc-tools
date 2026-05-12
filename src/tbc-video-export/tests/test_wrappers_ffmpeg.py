@@ -99,6 +99,16 @@ class TestWrappersFFmpeg:
             expected_str=["scale=720:486:flags=lanczos:interl=1,setsar=12/13"],
         ),
         WrapperTestCase(
+            id="standard output (ntsc h264 web no quarter-height pad)",
+            input_tbc=f"{get_path('ntsc_svideo')}.tbc",
+            input_opts=["--profile", "h264_web", "--standard"],
+            expected_str=[
+                "scale=720:486:flags=lanczos:interl=1,setsar=12/13",
+                "pad=ceil(iw/2)*2:ceil(ih/2)*2:(ow-iw)/2:(oh-ih)/2",
+            ],
+            unexpected_str=["pad=ceil(iw/2)*2:ceil(ih/4)*4:(ow-iw)/2:(oh-ih)/2"],
+        ),
+        WrapperTestCase(
             id="d1 alias output (pal-m)",
             input_tbc=f"{get_path('palm_svideo')}.tbc",
             input_opts=["--d1"],

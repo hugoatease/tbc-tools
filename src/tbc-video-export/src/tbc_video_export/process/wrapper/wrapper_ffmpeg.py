@@ -451,6 +451,11 @@ class WrapperFFmpeg(Wrapper):
             else "scale=720:486:flags=lanczos:interl=1,setsar=12/13"
         )
 
+    def _is_web_profile(self) -> bool:
+        """Return True when encoding with a web/deinterlaced profile."""
+        profile_name = self._get_profile().name.lower()
+        return profile_name == "web" or profile_name.endswith("_web")
+
     def _get_chroma_alignment_filter(self) -> str | None:
         """Return padding filter when selected codec/pix_fmt requires even dimensions."""
         codec = self._get_video_profile().codec.lower()
@@ -469,7 +474,10 @@ class WrapperFFmpeg(Wrapper):
         # 4:2:0 needs even width and height.
         if "420" in video_format:
             # Interlaced H.264 commonly requires height divisible by 4.
+            # Web profiles are deinterlaced and only require even height.
             if is_h264_family:
+                if self._is_web_profile():
+                    return "pad=ceil(iw/2)*2:ceil(ih/2)*2:(ow-iw)/2:(oh-ih)/2"
                 return "pad=ceil(iw/2)*2:ceil(ih/4)*4:(ow-iw)/2:(oh-ih)/2"
             return "pad=ceil(iw/2)*2:ceil(ih/2)*2:(ow-iw)/2:(oh-ih)/2"
 
