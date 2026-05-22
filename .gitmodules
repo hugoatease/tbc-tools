@@ -4,3 +4,6 @@
 [submodule "src/efm-decoder/libs/ezpwd"]
 	path = src/efm-decoder/libs/ezpwd
 	url = https://github.com/pjkundert/ezpwd-reed-solomon.git
+[submodule "src/ld-process-vbi/vendor/cc_decoder"]
+	path = src/ld-process-vbi/vendor/cc_decoder
+	url = https://github.com/eshaz/cc_decoder.git
