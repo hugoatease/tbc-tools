@@ -41,20 +41,71 @@ void SourceField::loadFields(SourceVideo &sourceVideo, LdDecodeMetaData &ldDecod
 
     // Populate fields
     const qint32 numInputFrames = ldDecodeMetaData.getNumberOfFrames();
+    const qint32 numMetadataFields = ldDecodeMetaData.getNumberOfFields();
+    const qint32 numSourceFields = sourceVideo.getNumberOfAvailableFields();
+    bool warnedMetadataFieldRange = false;
+    bool warnedSourceFieldRange = false;
     qint32 frameNumber = firstFrameNumber - lookBehindFrames;
     for (qint32 i = 0; i < fields.size(); i += 2) {
 
         // Is this frame outside the bounds of the input file?
         // If so, use real metadata (from frame 1) and black fields.
-        const bool useBlankFrame = frameNumber < 1 || frameNumber > numInputFrames;
+        bool useBlankFrame = frameNumber < 1 || frameNumber > numInputFrames;
 
-        // Get the first frame from the file (using frame 1 if outside bounds)
-        qint32 firstFieldNumber = ldDecodeMetaData.getFirstFieldNumber(useBlankFrame ? 1 : frameNumber);
-        qint32 secondFieldNumber = ldDecodeMetaData.getSecondFieldNumber(useBlankFrame ? 1 : frameNumber);
+        // Resolve field numbers for this frame.
+        qint32 metadataFrame = useBlankFrame ? 1 : frameNumber;
+        qint32 firstFieldNumber = ldDecodeMetaData.getFirstFieldNumber(metadataFrame);
+        qint32 secondFieldNumber = ldDecodeMetaData.getSecondFieldNumber(metadataFrame);
 
-        // Fetch the input metadata
-        fields[i].field = ldDecodeMetaData.getField(firstFieldNumber);
-        fields[i + 1].field = ldDecodeMetaData.getField(secondFieldNumber);
+        auto fieldNumbersAreMetadataSafe = [numMetadataFields](qint32 firstField, qint32 secondField) {
+            return firstField >= 1 && secondField >= 1
+                   && firstField <= numMetadataFields && secondField <= numMetadataFields;
+        };
+
+        bool metadataFieldRangeInvalid = !fieldNumbersAreMetadataSafe(firstFieldNumber, secondFieldNumber);
+        bool sourceFieldRangeInvalid = numSourceFields != -1
+                                       && (firstFieldNumber > numSourceFields || secondFieldNumber > numSourceFields);
+
+        // Metadata and source files can become mismatched (for example if the source
+        // TBC is truncated while metadata still references more fields).  In that case,
+        // fall back to blank frames instead of requesting out-of-range field data.
+        if (!useBlankFrame && (metadataFieldRangeInvalid || sourceFieldRangeInvalid)) {
+            if (metadataFieldRangeInvalid && !warnedMetadataFieldRange) {
+                qWarning() << "SourceField::loadFields(): Metadata field range invalid for frame"
+                           << frameNumber << "(first=" << firstFieldNumber
+                           << "second=" << secondFieldNumber
+                           << "metadata fields=" << numMetadataFields << "). Using blank fallback frames.";
+                warnedMetadataFieldRange = true;
+            }
+
+            if (sourceFieldRangeInvalid && !warnedSourceFieldRange) {
+                qWarning() << "SourceField::loadFields(): Source file has fewer fields than metadata for frame"
+                           << frameNumber << "(first=" << firstFieldNumber
+                           << "second=" << secondFieldNumber
+                           << "source fields=" << numSourceFields
+                           << "). Source file appears damaged or truncated; using blank fallback frames.";
+                warnedSourceFieldRange = true;
+            }
+
+            useBlankFrame = true;
+            metadataFrame = 1;
+            firstFieldNumber = ldDecodeMetaData.getFirstFieldNumber(metadataFrame);
+            secondFieldNumber = ldDecodeMetaData.getSecondFieldNumber(metadataFrame);
+            metadataFieldRangeInvalid = !fieldNumbersAreMetadataSafe(firstFieldNumber, secondFieldNumber);
+        }
+
+        if (!metadataFieldRangeInvalid) {
+            fields[i].field = ldDecodeMetaData.getField(firstFieldNumber);
+            fields[i + 1].field = ldDecodeMetaData.getField(secondFieldNumber);
+        } else {
+            // If metadata is irrecoverably inconsistent, synthesize minimal field
+            // metadata and continue with blank picture data.
+            fields[i].field = LdDecodeMetaData::Field();
+            fields[i + 1].field = LdDecodeMetaData::Field();
+            fields[i].field.isFirstField = true;
+            fields[i + 1].field.isFirstField = false;
+            useBlankFrame = true;
+        }
 
         const quint16 black = videoParameters.black16bIre;
 
