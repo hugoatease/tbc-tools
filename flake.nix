@@ -25,14 +25,15 @@
         isLinux = pkgsUnstable.stdenv.hostPlatform.isLinux;
         isDarwin = pkgsUnstable.stdenv.hostPlatform.isDarwin;
         isLinuxX86_64 = isLinux && pkgsUnstable.stdenv.hostPlatform.isx86_64;
+        enableCuda = isLinuxX86_64;
         pkgs = if isLinux then legacyPkgs else pkgsUnstable;
         # Vendor older CUDA package sets from legacy nixpkgs for Pascal/GTX 1000 support.
         # Keep both sets available; default to CUDA 11.8 for pre-Volta compatibility.
-        vendoredCudaPackages11 = if isLinux then legacyPkgs.cudaPackages_11_8 else null;
-        vendoredCudaPackages12 = if isLinux then legacyPkgs.cudaPackages_12_4 else null;
+        vendoredCudaPackages11 = if enableCuda then legacyPkgs.cudaPackages_11_8 else null;
+        vendoredCudaPackages12 = if enableCuda then legacyPkgs.cudaPackages_12_4 else null;
         cudaPackages = vendoredCudaPackages11;
-        cudaHostCompiler = if isLinux then legacyPkgs.gcc11 else null;
-        cudaCudnnPackage = if isLinux then cudaPackages.cudnn_8_9 else null;
+        cudaHostCompiler = if enableCuda then legacyPkgs.gcc11 else null;
+        cudaCudnnPackage = if enableCuda then cudaPackages.cudnn_8_9 else null;
         onnxruntimePackage =
           if isLinuxX86_64 then
             legacyPkgs.stdenvNoCC.mkDerivation rec {
@@ -101,7 +102,7 @@
             }
           else
             pkgs.onnxruntime;
-        cudaRuntimeDependencies = pkgs.lib.optionals isLinux [
+        cudaRuntimeDependencies = pkgs.lib.optionals enableCuda [
           cudaPackages.cuda_cudart
           cudaPackages.libcufft
           cudaPackages.libcurand
@@ -119,10 +120,10 @@
         nixCommit = "${shortRev}${dirtySuffix}";
       in
       assert pkgs.lib.assertMsg
-        (!isLinux || pkgs.lib.versionAtLeast cudaPackages.cudatoolkit.version "11.8")
+        (!enableCuda || pkgs.lib.versionAtLeast cudaPackages.cudatoolkit.version "11.8")
         "CUDA toolkit must be >= 11.8";
       assert pkgs.lib.assertMsg
-        (!isLinux || pkgs.lib.versionAtLeast vendoredCudaPackages12.cudatoolkit.version "12.4")
+        (!enableCuda || pkgs.lib.versionAtLeast vendoredCudaPackages12.cudatoolkit.version "12.4")
         "Vendored CUDA 12 package set must provide toolkit >= 12.4";
       {
         packages.ffmpeg = pkgs.ffmpeg;
@@ -143,7 +144,7 @@
             ninja
             pkg-config
             qt6.wrapQtAppsHook
-          ] ++ pkgs.lib.optionals isLinux [
+          ] ++ pkgs.lib.optionals enableCuda [
             cudaPackages.cuda_nvcc
           ];
 
@@ -155,7 +156,7 @@
             sqlite
             libGL
             onnxruntimePackage
-          ] ++ pkgs.lib.optionals isLinux [
+          ] ++ pkgs.lib.optionals enableCuda [
             cudaPackages.cudatoolkit
             cudaPackages.cuda_cudart
             cudaPackages.libcufft
@@ -174,9 +175,12 @@
             "-DLDCHROMA_ENABLE_CUDA=OFF"
             "-DONNXRUNTIME_ROOT=${onnxruntimePackage}"
           ] ++ pkgs.lib.optionals isLinux [
+            "-DONNXRUNTIME_ROOT=${onnxruntimePackage}"
+          ] ++ pkgs.lib.optionals enableCuda [
             "-DCUDAToolkit_ROOT=${cudaPackages.cudatoolkit}"
             "-DCMAKE_CUDA_HOST_COMPILER=${cudaHostCompiler}/bin/g++"
-            "-DONNXRUNTIME_ROOT=${onnxruntimePackage}"
+          ] ++ pkgs.lib.optionals (isLinux && !enableCuda) [
+            "-DLDCHROMA_ENABLE_CUDA=OFF"
           ];
         };
 
@@ -201,7 +205,7 @@
             python3Packages.watchdog
             python3Packages.pyserial
             onnxruntimePackage
-          ] ++ pkgs.lib.optionals isLinux [
+          ] ++ pkgs.lib.optionals enableCuda [
             cudaPackages.cudatoolkit
             cudaPackages.cuda_nvcc
             cudaPackages.cuda_cudart
@@ -217,9 +221,9 @@
           ];
           EZPWD_DIR = "${ezpwdSrc}/c++";
           ONNXRUNTIME_ROOT = "${onnxruntimePackage}";
-          CUDAToolkit_ROOT = pkgs.lib.optionalString isLinux "${cudaPackages.cudatoolkit}";
-          CUDA_PATH = pkgs.lib.optionalString isLinux "${cudaPackages.cudatoolkit}";
-          shellHook = pkgs.lib.optionalString isLinux ''
+          CUDAToolkit_ROOT = pkgs.lib.optionalString enableCuda "${cudaPackages.cudatoolkit}";
+          CUDA_PATH = pkgs.lib.optionalString enableCuda "${cudaPackages.cudatoolkit}";
+          shellHook = pkgs.lib.optionalString enableCuda ''
             export CUDATOOLKIT_ROOT="$CUDAToolkit_ROOT"
             export CUDAHOSTCXX="${cudaHostCompiler}/bin/g++"
             export CMAKE_CUDA_HOST_COMPILER="${cudaHostCompiler}/bin/g++"

@@ -554,6 +554,15 @@ jobs:
     runs-on: ubuntu-24.04-arm
 
     steps:
+      - name: Reclaim runner disk space
+        run: |
+          df -h
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+          sudo apt-get clean || true
+          df -h
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
@@ -580,7 +589,7 @@ jobs:
           restore-prefixes-first-match: |
             nix-${{ runner.os }}-arm64-
             nix-${{ runner.os }}-
-          gc-max-store-size-linux: 8G
+          gc-max-store-size-linux: 6G
 
       - name: Create release directory
         run: mkdir -p release/bin release/lib release/plugins release/share
