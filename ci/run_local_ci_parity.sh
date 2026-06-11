@@ -7,7 +7,7 @@ ACTIONLINT_FALLBACK_VERSION="1.7.12"
 MODE="${1:---all}"
 
 usage() {
-  echo "Usage: $0 [--all|--guardrails-only|--qt6-only]" >&2
+  echo "Usage: $0 [--all|--guardrails-only|--build-test-only]" >&2
 }
 
 require_cmd() {
@@ -153,17 +153,13 @@ run_guardrails() {
   bash -n ci/verify_linux_bundle.sh
 }
 
-run_qt6_build_and_test() {
+run_full_build_and_test() {
   cd "$ROOT_DIR"
   require_cmd nix
   nix --version
-  nix build .#
-  nix develop -c bash -lc "
-    cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo &&
-    cmake --build build --verbose &&
-    cmake --install build --prefix /tmp/staging &&
-    ctest --test-dir build --output-on-failure
-  "
+  nix develop -c cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+  nix develop -c ninja -C build
+  nix develop -c ctest --test-dir build --output-on-failure
 }
 
 if [[ "$#" -gt 1 ]]; then
@@ -174,13 +170,13 @@ fi
 case "$MODE" in
   --all)
     run_guardrails
-    run_qt6_build_and_test
+    run_full_build_and_test
     ;;
   --guardrails-only)
     run_guardrails
     ;;
-  --qt6-only)
-    run_qt6_build_and_test
+  --build-test-only)
+    run_full_build_and_test
     ;;
   *)
     usage

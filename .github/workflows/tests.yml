@@ -20,8 +20,8 @@ jobs:
         run: python3 -m unittest -v ci.tests.test_check_ci_contracts
       - name: Run CI guardrails
         run: bash ci/run_local_ci_parity.sh --guardrails-only
-  qt6:
-    name: Build with Qt 6
+  full-build-test:
+    name: Full build and test
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -40,6 +40,6 @@ jobs:
             nix-${{ runner.os }}-${{ runner.arch }}-
             nix-${{ runner.os }}-
           gc-max-store-size-linux: 6G
-      - name: Build and test Qt6 parity flow
+      - name: Build and test full parity flow
         timeout-minutes: 20
-        run: bash ci/run_local_ci_parity.sh --qt6-only
+        run: bash ci/run_local_ci_parity.sh --build-test-only

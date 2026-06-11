@@ -129,7 +129,7 @@ If you do not want to install system-wide, run tools directly from `build/bin/`.
 
 ## Local CI parity checks
 
-To keep local validation aligned with GitHub Actions, run the same guardrails and Qt6 build/test flow locally before pushing:
+To keep local validation aligned with GitHub Actions, run the same guardrails and full build/test flow locally before pushing:
 
 ```bash
 bash ci/run_local_ci_parity.sh
@@ -139,7 +139,7 @@ Useful scoped modes:
 
 ```bash
 bash ci/run_local_ci_parity.sh --guardrails-only
-bash ci/run_local_ci_parity.sh --qt6-only
+bash ci/run_local_ci_parity.sh --build-test-only
 ```
 
 ## Important Notes
