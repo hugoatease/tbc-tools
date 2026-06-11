@@ -197,9 +197,22 @@ class WrapperFFmpeg(Wrapper):
         """Return -ss and -t values for trimming audio inputs to match --start/--length."""  # noqa: E501
         if self._state.opts.start is None and self._state.opts.length is None:
             return None, None
+        start_frame_one_based = self._state.opts.start
+        if start_frame_one_based is None:
+            start_frame_one_based = 1
+
+        if (
+            audio_trim_seconds := self._state.tbc_json.get_audio_trim_seconds(
+                start_frame_one_based=start_frame_one_based,
+                total_frames=self._state.total_frames,
+            )
+        ) is not None:
+            audio_start_seconds, audio_duration_seconds = audio_trim_seconds
+            ss = f"{audio_start_seconds:.6f}" if audio_start_seconds > 0 else None
+            t = f"{audio_duration_seconds:.6f}" if audio_duration_seconds > 0 else None
+            return ss, t
 
         fps = self._state.video_system_data.fps_fraction
-        start_frame_one_based = self._state.opts.start
         start_frame_zero_based = (
             max(0, start_frame_one_based - 1)
             if start_frame_one_based is not None

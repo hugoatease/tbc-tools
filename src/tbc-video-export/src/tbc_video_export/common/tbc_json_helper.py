@@ -133,11 +133,96 @@ class TBCJsonHelper:
     def field_count(self) -> int:
         """Get total # of fields in TBC."""
         return len(self._json_data["fields"])
+    @cached_property
+    def pcm_audio_sample_rate(self) -> float | None:
+        """Return PCM audio sample rate from metadata when available."""
+        pcm_audio_parameters = self._json_data.get("pcmAudioParameters")
+        if not isinstance(pcm_audio_parameters, dict):
+            return None
+
+        sample_rate = pcm_audio_parameters.get("sampleRate")
+        if sample_rate is None:
+            return None
+
+        try:
+            parsed_sample_rate = float(sample_rate)
+        except (TypeError, ValueError):
+            return None
+
+        return parsed_sample_rate if parsed_sample_rate > 0 else None
+
+    @cached_property
+    def audio_samples_per_field(self) -> list[int] | None:
+        """Return per-field PCM audio sample counts when available."""
+        fields = self._json_data.get("fields")
+        if not isinstance(fields, list) or not fields:
+            return None
+
+        samples: list[int] = []
+        has_non_zero_value = False
+        for field in fields:
+            if not isinstance(field, dict):
+                return None
+            audio_samples = field.get("audioSamples")
+            if audio_samples is None:
+                return None
+            if not isinstance(audio_samples, int):
+                return None
+            if audio_samples < 0:
+                return None
+            if audio_samples > 0:
+                has_non_zero_value = True
+            samples.append(audio_samples)
+
+        return samples if has_non_zero_value else None
+
+    @cached_property
+    def audio_samples_prefix_sums(self) -> list[int] | None:
+        """Return prefix sums for per-field audio samples when available."""
+        if (samples := self.audio_samples_per_field) is None:
+            return None
+
+        prefix_sums = [0]
+        running_total = 0
+        for value in samples:
+            running_total += value
+            prefix_sums.append(running_total)
+
+        return prefix_sums
 
     @cached_property
     def frame_count(self) -> int:
         """Get total # of frames in TBC."""
         return int(self.field_count / 2)
+
+    def get_audio_trim_seconds(
+        self, start_frame_one_based: int, total_frames: int
+    ) -> tuple[float, float] | None:
+        """Return (start_seconds, duration_seconds) from per-field audio metadata."""
+        if start_frame_one_based < 1 or total_frames < 1:
+            return None
+
+        sample_rate = self.pcm_audio_sample_rate
+        prefix_sums = self.audio_samples_prefix_sums
+        if sample_rate is None or prefix_sums is None:
+            return None
+
+        # Fields are zero-based in this calculation; each frame has 2 fields.
+        start_field_index = (start_frame_one_based - 1) * 2
+        end_field_index = start_field_index + (total_frames * 2)
+        available_fields = len(prefix_sums) - 1
+        if start_field_index >= available_fields:
+            return None
+
+        clamped_end_field_index = min(end_field_index, available_fields)
+        start_samples = prefix_sums[start_field_index]
+        duration_samples = (
+            prefix_sums[clamped_end_field_index] - prefix_sums[start_field_index]
+        )
+        if duration_samples <= 0:
+            return None
+
+        return start_samples / sample_rate, duration_samples / sample_rate
 
     @cached_property
     def timecode(self) -> str:

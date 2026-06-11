@@ -237,6 +237,92 @@ QString normalizeAudioTrackPathInput(const QString &path)
     return QDir::toNativeSeparators(normalized);
 }
 
+QString pythonQuotedStringLiteral(const QString &value)
+{
+    QString escaped = value;
+    escaped.replace(QStringLiteral("\\"), QStringLiteral("\\\\"));
+    escaped.replace(QStringLiteral("'"), QStringLiteral("\\'"));
+    return QStringLiteral("'%1'").arg(escaped);
+}
+
+QString pythonLiteralFromJsonValue(const QJsonValue &value)
+{
+    if (value.isUndefined() || value.isNull()) {
+        return QStringLiteral("None");
+    }
+    if (value.isBool()) {
+        return value.toBool() ? QStringLiteral("True") : QStringLiteral("False");
+    }
+    if (value.isDouble()) {
+        const double number = value.toDouble();
+        return qIsFinite(number)
+                   ? QString::number(number, 'g', 16)
+                   : QStringLiteral("None");
+    }
+    if (value.isString()) {
+        return pythonQuotedStringLiteral(value.toString());
+    }
+    if (value.isArray()) {
+        const QJsonArray nestedArray = value.toArray();
+        QStringList nestedItems;
+        nestedItems.reserve(nestedArray.size());
+        for (const QJsonValue &nestedValue : nestedArray) {
+            nestedItems << pythonLiteralFromJsonValue(nestedValue);
+        }
+        return QStringLiteral("[%1]").arg(nestedItems.join(QStringLiteral(",")));
+    }
+    return QStringLiteral("None");
+}
+
+QString pythonLiteralFromJsonArray(const QJsonArray &array)
+{
+    QStringList items;
+    items.reserve(array.size());
+    for (const QJsonValue &value : array) {
+        items << pythonLiteralFromJsonValue(value);
+    }
+    return QStringLiteral("[%1]").arg(items.join(QStringLiteral(",")));
+}
+
+QString normalizedProresProfileName(const QString &variantOrProfileName)
+{
+    const QString normalized = variantOrProfileName.trimmed().toLower();
+    if (normalized == QStringLiteral("hq") || normalized == QStringLiteral("prores_hq")) {
+        return QStringLiteral("prores_hq");
+    }
+    if (normalized == QStringLiteral("4444xq")
+        || normalized == QStringLiteral("prores_4444xq")) {
+        return QStringLiteral("prores_4444xq");
+    }
+    if (normalized == QStringLiteral("std")
+        || normalized == QStringLiteral("standard")
+        || normalized == QStringLiteral("prores_standard")
+        || normalized == QStringLiteral("prores_422")
+        || normalized == QStringLiteral("prores")) {
+        return QStringLiteral("prores");
+    }
+    if (normalized == QStringLiteral("lt") || normalized == QStringLiteral("prores_lt")) {
+        return QStringLiteral("prores_lt");
+    }
+    if (normalized == QStringLiteral("proxy") || normalized == QStringLiteral("prores_proxy")) {
+        return QStringLiteral("prores_proxy");
+    }
+    return QString();
+}
+
+bool isLossyProresProfileName(const QString &profileName)
+{
+    const QString normalized = normalizedProresProfileName(profileName);
+    return normalized == QStringLiteral("prores")
+           || normalized == QStringLiteral("prores_lt")
+           || normalized == QStringLiteral("prores_proxy");
+}
+
+QString proresLossyWarningText()
+{
+    return QStringLiteral("WARNING THESE ARE LOSSY, Please use ProRes HQ for visually trasparent and 4444XQ for losless");
+}
+
 void normalizeAudioTrackLineEditPath(QLineEdit *lineEdit)
 {
     if (!lineEdit) {
@@ -1349,9 +1435,12 @@ ExportDialog::ExportDialog(QWidget *parent) :
     }
     if (ui->proresVariantComboBox) {
         ui->proresVariantComboBox->clear();
-        ui->proresVariantComboBox->addItem(tr("422 HQ"), QStringLiteral("hq"));
-        ui->proresVariantComboBox->addItem(tr("4444 XQ"), QStringLiteral("4444xq"));
-        const int defaultIndex = ui->proresVariantComboBox->findData(QStringLiteral("hq"));
+        ui->proresVariantComboBox->addItem(tr("422 (STD/Standard)"), QStringLiteral("prores"));
+        ui->proresVariantComboBox->addItem(tr("422 LT"), QStringLiteral("prores_lt"));
+        ui->proresVariantComboBox->addItem(tr("422 Proxy"), QStringLiteral("prores_proxy"));
+        ui->proresVariantComboBox->addItem(tr("422 HQ"), QStringLiteral("prores_hq"));
+        ui->proresVariantComboBox->addItem(tr("4444 XQ"), QStringLiteral("prores_4444xq"));
+        const int defaultIndex = ui->proresVariantComboBox->findData(QStringLiteral("prores_hq"));
         ui->proresVariantComboBox->setCurrentIndex(defaultIndex >= 0 ? defaultIndex : 0);
     }
     if (ui->webCodecComboBox) {
@@ -1941,6 +2030,7 @@ void ExportDialog::setExportProfileConfigPreference(bool enabled, const QString 
     }
 
     updateExportProfileConfigPathUi();
+    refreshProfiles();
     updateProfileDependentControls();
 }
 
@@ -2492,6 +2582,95 @@ void ExportDialog::updateFromSource()
 
 void ExportDialog::refreshProfiles()
 {
+    const QString previousMainCodec = selectedMainCodecId();
+    const QString previousAudioProfile = ui && ui->audioProfileComboBox
+                                             ? ui->audioProfileComboBox->currentData().toString().trimmed()
+                                             : QString();
+
+    QStringList audioProfileIds;
+    QStringList audioProfileLabels;
+    const auto appendAudioProfile = [&audioProfileIds, &audioProfileLabels](const QString &profileId,
+                                                                             const QString &profileLabel) {
+        const QString normalizedProfileId = profileId.trimmed();
+        if (normalizedProfileId.isEmpty() || listContainsCaseInsensitive(audioProfileIds, normalizedProfileId)) {
+            return;
+        }
+        audioProfileIds << normalizedProfileId;
+        audioProfileLabels << profileLabel.trimmed();
+    };
+    appendAudioProfile(QStringLiteral("flac_16"), tr("FLAC 16-bit"));
+    appendAudioProfile(QStringLiteral("flac_24"), tr("FLAC 24-bit"));
+    appendAudioProfile(QStringLiteral("pcm_16"), tr("PCM 16-bit"));
+    appendAudioProfile(QStringLiteral("pcm_24"), tr("PCM 24-bit"));
+    appendAudioProfile(QStringLiteral("aac_16"), tr("AAC 16-bit"));
+    appendAudioProfile(QStringLiteral("aac_24"), tr("AAC 24-bit"));
+    appendAudioProfile(QStringLiteral("opus_16"), tr("Opus 16-bit"));
+    appendAudioProfile(QStringLiteral("opus_24"), tr("Opus 24-bit"));
+
+    QString selectedProfileConfigError;
+    const QString selectedProfileConfigPath = selectedExportProfileConfigPath(&selectedProfileConfigError);
+    if (!selectedProfileConfigError.isEmpty()) {
+        appendLog(selectedProfileConfigError);
+    }
+    if (!selectedProfileConfigPath.isEmpty()) {
+        QFile configFile(selectedProfileConfigPath);
+        if (!configFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            appendLog(tr("Failed to read external profile set; using built-in audio profile options: %1")
+                          .arg(QDir::toNativeSeparators(selectedProfileConfigPath)));
+        } else {
+            QJsonParseError parseError;
+            const QJsonDocument configDoc = QJsonDocument::fromJson(configFile.readAll(), &parseError);
+            if (configDoc.isNull() || !configDoc.isObject()) {
+                appendLog(tr("External profile set is invalid JSON (%1); using built-in audio profile options.")
+                              .arg(parseError.errorString()));
+            } else {
+                const QJsonArray jsonAudioProfiles = configDoc.object().value(QStringLiteral("audio_profiles")).toArray();
+                QStringList loadedAudioProfileIds;
+                QStringList loadedAudioProfileLabels;
+                for (const QJsonValue &profileValue : jsonAudioProfiles) {
+                    if (!profileValue.isObject()) {
+                        continue;
+                    }
+                    const QJsonObject profileObject = profileValue.toObject();
+                    const QString profileId = profileObject.value(QStringLiteral("name")).toString().trimmed();
+                    if (profileId.isEmpty() || listContainsCaseInsensitive(loadedAudioProfileIds, profileId)) {
+                        continue;
+                    }
+                    QString profileLabel = profileObject.value(QStringLiteral("description")).toString().trimmed();
+                    if (profileLabel.isEmpty()) {
+                        profileLabel = profileId;
+                    }
+                    loadedAudioProfileIds << profileId;
+                    loadedAudioProfileLabels << profileLabel;
+                }
+                if (!loadedAudioProfileIds.isEmpty()) {
+                    audioProfileIds = loadedAudioProfileIds;
+                    audioProfileLabels = loadedAudioProfileLabels;
+                } else {
+                    appendLog(tr("External profile set did not define any audio profiles; using built-in audio profile options."));
+                }
+            }
+        }
+    }
+    if (ui && ui->audioProfileComboBox) {
+        const QSignalBlocker blocker(ui->audioProfileComboBox);
+        ui->audioProfileComboBox->clear();
+        for (int i = 0; i < audioProfileIds.size(); ++i) {
+            const QString profileId = audioProfileIds.at(i);
+            const QString profileLabel = audioProfileLabels.value(i, profileId);
+            ui->audioProfileComboBox->addItem(profileLabel, profileId);
+        }
+        int targetIndex = ui->audioProfileComboBox->findData(previousAudioProfile);
+        if (targetIndex < 0) {
+            targetIndex = ui->audioProfileComboBox->findData(QStringLiteral("pcm_24"));
+        }
+        if (targetIndex < 0 && ui->audioProfileComboBox->count() > 0) {
+            targetIndex = 0;
+        }
+        if (targetIndex >= 0) {
+            ui->audioProfileComboBox->setCurrentIndex(targetIndex);
+        }
+    }
 
     const QString exportPath = resolveVideoExportPath();
     if (exportPath.isEmpty()) {
@@ -2504,7 +2683,12 @@ void ExportDialog::refreshProfiles()
 
     QProcess listProcess;
     listProcess.setProcessChannelMode(QProcess::MergedChannels);
-    listProcess.start(exportPath, QStringList() << QStringLiteral("--list-profiles"));
+    QStringList listArguments;
+    if (!selectedProfileConfigPath.isEmpty()) {
+        listArguments << QStringLiteral("--config-file") << selectedProfileConfigPath;
+    }
+    listArguments << QStringLiteral("--list-profiles");
+    listProcess.start(exportPath, listArguments);
     if (!listProcess.waitForStarted(3000)) {
         appendLog(tr("Failed to start profile listing; using built-in condensed profile options."));
     } else if (!listProcess.waitForFinished(10000)) {
@@ -2523,7 +2707,6 @@ void ExportDialog::refreshProfiles()
         }
     }
 
-    const QString previousMainCodec = selectedMainCodecId();
     if (ui->profileComboBox) {
         const QSignalBlocker blocker(ui->profileComboBox);
         ui->profileComboBox->clear();
@@ -2549,7 +2732,8 @@ void ExportDialog::refreshProfiles()
 
     if (!availableProfiles.isEmpty()) {
         const QString resolvedProfile = selectedExportProfileName();
-        if (!listContainsCaseInsensitive(availableProfiles, resolvedProfile)) {
+        if (!isLossyProresProfileName(resolvedProfile)
+            && !listContainsCaseInsensitive(availableProfiles, resolvedProfile)) {
             appendLog(tr("Selected condensed profile maps to '%1', which was not found in tbc-video-export profile list.")
                           .arg(resolvedProfile));
         }
@@ -2565,6 +2749,8 @@ void ExportDialog::updateProfileDependentControls()
     const bool webSelected = mainCodecId == QStringLiteral("web");
     const bool avcSelected = mainCodecId == QStringLiteral("avc");
     const bool hevcSelected = mainCodecId == QStringLiteral("hevc");
+    const bool lossyProresSelected = proresSelected && isLossyProresProfileName(selectedExportProfileName());
+    const QString proresVariantTooltip = lossyProresSelected ? proresLossyWarningText() : QString();
     const bool canEdit = exportAvailable
                          && exportProcess
                          && exportProcess->state() == QProcess::NotRunning;
@@ -2582,10 +2768,12 @@ void ExportDialog::updateProfileDependentControls()
     if (ui->proresVariantLabel) {
         ui->proresVariantLabel->setVisible(proresSelected);
         ui->proresVariantLabel->setEnabled(canEdit && proresSelected);
+        ui->proresVariantLabel->setToolTip(proresVariantTooltip);
     }
     if (ui->proresVariantComboBox) {
         ui->proresVariantComboBox->setVisible(proresSelected);
         ui->proresVariantComboBox->setEnabled(canEdit && proresSelected);
+        ui->proresVariantComboBox->setToolTip(proresVariantTooltip);
     }
     if (ui->webCodecLabel) {
         ui->webCodecLabel->setVisible(webSelected);
@@ -2758,6 +2946,7 @@ void ExportDialog::on_exportProfileConfigCheckBox_toggled(bool checked)
         exportProfileConfigPath.clear();
     }
     updateExportProfileConfigPathUi();
+    refreshProfiles();
     updateProfileDependentControls();
     emitExportProfileConfigPreferenceChanged();
 }
@@ -2803,6 +2992,7 @@ void ExportDialog::on_exportProfileConfigLoadButton_clicked()
         ui->exportProfileConfigCheckBox->setChecked(true);
     }
     updateExportProfileConfigPathUi();
+    refreshProfiles();
     updateProfileDependentControls();
     emitExportProfileConfigPreferenceChanged();
 }
@@ -2844,7 +3034,7 @@ void ExportDialog::on_exportProfileConfigEjectButton_clicked()
         return;
     }
 
-    QString dumpDirPath = QDir::temp().filePath(
+    QString dumpDirPath = sourceStorageTemporaryPath(
         QStringLiteral("ld-analyse-export-config-dump-%1")
             .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
     const auto cleanupDumpDir = [&dumpDirPath]() {
@@ -2931,6 +3121,7 @@ void ExportDialog::on_exportProfileConfigEjectButton_clicked()
         ui->exportProfileConfigCheckBox->setChecked(true);
     }
     updateExportProfileConfigPathUi();
+    refreshProfiles();
     updateProfileDependentControls();
     emitExportProfileConfigPreferenceChanged();
 
@@ -3001,6 +3192,22 @@ void ExportDialog::on_exportButton_clicked()
         appendLog(tr("No export profile selected."));
         QMessageBox::warning(this, tr("Error"), tr("Please select a valid export profile."));
         return;
+    }
+    if (isLossyProresProfileName(selectedProfile)) {
+        const QString lossyWarning = proresLossyWarningText();
+        const QString promptText = tr("%1\n\nContinue with export?").arg(lossyWarning);
+        const QMessageBox::StandardButton warningChoice = QMessageBox::warning(
+            this,
+            tr("Lossy ProRes profile selected"),
+            promptText,
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No);
+        if (warningChoice != QMessageBox::Yes) {
+            appendStatus(tr("Export cancelled: lossy ProRes profile warning not accepted."));
+            appendLog(tr("Export cancelled by user after lossy ProRes warning."));
+            return;
+        }
+        appendLog(lossyWarning);
     }
     QString exportProfileConfigErrorMessage;
     const QString baseConfigOverridePath = selectedExportProfileConfigPath(&exportProfileConfigErrorMessage);
@@ -3242,6 +3449,7 @@ void ExportDialog::on_exportButton_clicked()
     }
 
     QStringList exportAudioTracks = collectAudioTracks();
+    audioConfiguredForCurrentRun = !exportAudioTracks.isEmpty();
 
     QString errorMessage;
     const QStringList arguments = buildArguments(&errorMessage,
@@ -4149,6 +4357,36 @@ QString ExportDialog::defaultOutputBaseName(const QString &inputFile) const
     }
     return QDir(dir).filePath(baseName);
 }
+QString ExportDialog::sourceDataDirectory() const
+{
+    QString sourcePath = currentInputFile.trimmed();
+    if (sourcePath.isEmpty() && tbcSource) {
+        sourcePath = tbcSource->getCurrentSourceFilename().trimmed();
+    }
+    if (sourcePath.isEmpty()) {
+        return QString();
+    }
+    return QFileInfo(sourcePath).absolutePath();
+}
+
+QString ExportDialog::sourceStorageTemporaryRoot() const
+{
+    const QString sourceDirectory = sourceDataDirectory();
+    if (!sourceDirectory.isEmpty()) {
+        const QString sourceLocalTempRoot =
+            QDir(sourceDirectory).filePath(QStringLiteral(".ld-analyse-temp"));
+        if (QDir().mkpath(sourceLocalTempRoot)) {
+            return sourceLocalTempRoot;
+        }
+        return sourceDirectory;
+    }
+    return QDir::tempPath();
+}
+
+QString ExportDialog::sourceStorageTemporaryPath(const QString &fileName) const
+{
+    return QDir(sourceStorageTemporaryRoot()).filePath(fileName);
+}
 
 bool ExportDialog::findExistingOutputFiles(const QString &outputBase, QStringList *existingFiles) const
 {
@@ -4261,11 +4499,10 @@ QString ExportDialog::selectedExportProfileName() const
     }
     if (mainCodecId == QStringLiteral("prores")) {
         const QString proresVariant = ui && ui->proresVariantComboBox
-                                          ? ui->proresVariantComboBox->currentData().toString().trimmed().toLower()
-                                          : QStringLiteral("hq");
-        return proresVariant == QStringLiteral("4444xq")
-                   ? QStringLiteral("prores_4444xq")
-                   : QStringLiteral("prores_hq");
+                                          ? ui->proresVariantComboBox->currentData().toString().trimmed()
+                                          : QStringLiteral("prores_hq");
+        const QString normalizedProfileName = normalizedProresProfileName(proresVariant);
+        return normalizedProfileName.isEmpty() ? QStringLiteral("prores_hq") : normalizedProfileName;
     }
     if (mainCodecId == QStringLiteral("web")) {
         const QString webCodec = ui && ui->webCodecComboBox
@@ -4525,9 +4762,13 @@ QStringList ExportDialog::buildProxyArguments(QString *errorMessage,
          << QStringLiteral("-nostdin")
          << (overwriteExisting ? QStringLiteral("-y") : QStringLiteral("-n"))
          << QStringLiteral("-i") << sourceVideoPath
-         << QStringLiteral("-map") << QStringLiteral("0:v:0")
-         << QStringLiteral("-map") << QStringLiteral("0:a?")
-         << QStringLiteral("-map_metadata") << QStringLiteral("0")
+         << QStringLiteral("-map") << QStringLiteral("0:v:0");
+    if (audioConfiguredForCurrentRun) {
+        args << QStringLiteral("-map") << QStringLiteral("0:a?");
+    } else {
+        args << QStringLiteral("-an");
+    }
+    args << QStringLiteral("-map_metadata") << QStringLiteral("0")
          << QStringLiteral("-map_chapters") << QStringLiteral("0")
          << QStringLiteral("-max_muxing_queue_size") << QStringLiteral("4096")
          << QStringLiteral("-vf") << filterChain.join(QStringLiteral(","))
@@ -4567,10 +4808,12 @@ QStringList ExportDialog::buildProxyArguments(QString *errorMessage,
              << QStringLiteral("-bufsize") << QStringLiteral("6000k");
     }
 
-    args << QStringLiteral("-pix_fmt") << QStringLiteral("yuv420p")
-         << QStringLiteral("-c:a") << QStringLiteral("aac")
-         << QStringLiteral("-b:a") << QStringLiteral("160k")
-         << QStringLiteral("-movflags") << QStringLiteral("+faststart")
+    args << QStringLiteral("-pix_fmt") << QStringLiteral("yuv420p");
+    if (audioConfiguredForCurrentRun) {
+        args << QStringLiteral("-c:a") << QStringLiteral("aac")
+             << QStringLiteral("-b:a") << QStringLiteral("160k");
+    }
+    args << QStringLiteral("-movflags") << QStringLiteral("+faststart")
          << proxyOutputPathValue;
     return args;
 }
@@ -4686,6 +4929,7 @@ void ExportDialog::clearRunState()
     }
     activeRunStage = RunStage::Idle;
     generateProxyForCurrentRun = false;
+    audioConfiguredForCurrentRun = false;
     overwriteExistingForCurrentRun = false;
     outputBaseForCurrentRun.clear();
     proxyCodecForCurrentRun.clear();
@@ -4794,7 +5038,7 @@ bool ExportDialog::prepareTrimmedAudioTracks(int zeroBasedStartFrame,
             return false;
         }
 
-        const QString trimmedPath = QDir::temp().filePath(
+        const QString trimmedPath = sourceStorageTemporaryPath(
             QStringLiteral("ld-analyse-audio-range-%1-%2.wav")
                 .arg(index + 1)
                 .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
@@ -5040,7 +5284,7 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
             advancedTrack.append(QStringLiteral("s16le"));
             advancedTrack.append(2);
             args << QStringLiteral("--audio-track-advanced")
-                 << QString::fromUtf8(QJsonDocument(advancedTrack).toJson(QJsonDocument::Compact));
+                 << pythonLiteralFromJsonArray(advancedTrack);
             continue;
         }
         if (!title.isEmpty()) {
@@ -5048,7 +5292,7 @@ QStringList ExportDialog::buildArguments(QString *errorMessage, const QString &i
             advancedTrack.append(track);
             advancedTrack.append(title);
             args << QStringLiteral("--audio-track-advanced")
-                 << QString::fromUtf8(QJsonDocument(advancedTrack).toJson(QJsonDocument::Compact));
+                 << pythonLiteralFromJsonArray(advancedTrack);
             continue;
         }
         args << QStringLiteral("--audio-track") << track;
@@ -5283,7 +5527,7 @@ QString ExportDialog::createTemporaryExportConfig(QString *errorMessage,
             return QString();
         }
 
-        dumpDirPath = QDir::temp().filePath(
+        dumpDirPath = sourceStorageTemporaryPath(
             QStringLiteral("ld-analyse-export-config-dump-%1")
                 .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
         if (!QDir().mkpath(dumpDirPath)) {
@@ -5465,6 +5709,119 @@ QString ExportDialog::createTemporaryExportConfig(QString *errorMessage,
     }
 
     QJsonArray profiles = root.value(QStringLiteral("profiles")).toArray();
+    QJsonArray videoProfiles = root.value(QStringLiteral("video_profiles")).toArray();
+    const auto profileObjectByNameExists = [](const QJsonArray &profileArray, const QString &targetName) {
+        for (const QJsonValue &profileValue : profileArray) {
+            if (!profileValue.isObject()) {
+                continue;
+            }
+            const QJsonObject profileObject = profileValue.toObject();
+            const QString profileName = profileObject.value(QStringLiteral("name")).toString();
+            if (profileName.compare(targetName, Qt::CaseInsensitive) == 0) {
+                return true;
+            }
+        }
+        return false;
+    };
+    const auto appendProfileObjectIfMissing = [&profileObjectByNameExists](QJsonArray *profileArray,
+                                                                            const QJsonObject &profileObject) {
+        if (!profileArray) {
+            return;
+        }
+        const QString profileName = profileObject.value(QStringLiteral("name")).toString();
+        if (profileName.isEmpty() || profileObjectByNameExists(*profileArray, profileName)) {
+            return;
+        }
+        profileArray->append(profileObject);
+    };
+    const auto buildProresVideoProfileObject = [](const QString &profileName,
+                                                  const QString &profileDescription,
+                                                  int ffmpegProfileValue,
+                                                  bool useVideoToolbox) {
+        QJsonObject videoProfileObject;
+        videoProfileObject.insert(QStringLiteral("name"), profileName);
+        videoProfileObject.insert(
+            QStringLiteral("description"),
+            useVideoToolbox
+                ? QStringLiteral("%1 - Apple Video Toolbox").arg(profileDescription)
+                : profileDescription);
+        videoProfileObject.insert(QStringLiteral("codec"),
+                                  useVideoToolbox
+                                      ? QStringLiteral("prores_videotoolbox")
+                                      : QStringLiteral("prores_ks"));
+        videoProfileObject.insert(QStringLiteral("video_format"),
+                                  useVideoToolbox
+                                      ? QStringLiteral("uyvy422")
+                                      : QStringLiteral("yuv422p10le"));
+        videoProfileObject.insert(QStringLiteral("container"), QStringLiteral("mov"));
+        QJsonArray opts;
+        opts.append(QStringLiteral("-profile:v"));
+        opts.append(QString::number(ffmpegProfileValue));
+        if (!useVideoToolbox) {
+            opts.append(QStringLiteral("-vendor"));
+            opts.append(QStringLiteral("apl0"));
+        }
+        opts.append(QStringLiteral("-flags"));
+        opts.append(QStringLiteral("+ildct+ilme"));
+        videoProfileObject.insert(QStringLiteral("opts"), opts);
+        if (useVideoToolbox) {
+            videoProfileObject.insert(QStringLiteral("hardware_accel"), QStringLiteral("videotoolbox"));
+        }
+        return videoProfileObject;
+    };
+    const auto ensureProresVariantProfile = [&appendProfileObjectIfMissing,
+                                             &buildProresVideoProfileObject,
+                                             &profiles,
+                                             &videoProfiles](const QString &profileName,
+                                                             const QString &profileDescription,
+                                                             const QString &videoProfileName,
+                                                             const QString &videoProfileVideoToolboxName,
+                                                             int ffmpegProfileValue) {
+        appendProfileObjectIfMissing(
+            &videoProfiles,
+            buildProresVideoProfileObject(videoProfileName,
+                                          profileDescription,
+                                          ffmpegProfileValue,
+                                          false));
+        appendProfileObjectIfMissing(
+            &videoProfiles,
+            buildProresVideoProfileObject(videoProfileVideoToolboxName,
+                                          profileDescription,
+                                          ffmpegProfileValue,
+                                          true));
+
+        QJsonObject profileObject;
+        profileObject.insert(QStringLiteral("name"), profileName);
+        QJsonArray profileVideoProfiles;
+        profileVideoProfiles.append(videoProfileName);
+        profileVideoProfiles.append(videoProfileVideoToolboxName);
+        profileObject.insert(QStringLiteral("video_profile"), profileVideoProfiles);
+        profileObject.insert(QStringLiteral("audio_profile"), QStringLiteral("pcm_24"));
+        appendProfileObjectIfMissing(&profiles, profileObject);
+    };
+    const QString normalizedSelectedProresProfile = normalizedProresProfileName(selectedProfile);
+    if (normalizedSelectedProresProfile == QStringLiteral("prores")) {
+        ensureProresVariantProfile(QStringLiteral("prores"),
+                                   QStringLiteral("ProRes 422"),
+                                   QStringLiteral("prores_422"),
+                                   QStringLiteral("prores_422_videotoolbox"),
+                                   2);
+        root.insert(QStringLiteral("video_profiles"), videoProfiles);
+    } else if (normalizedSelectedProresProfile == QStringLiteral("prores_lt")) {
+        ensureProresVariantProfile(QStringLiteral("prores_lt"),
+                                   QStringLiteral("ProRes 422 LT"),
+                                   QStringLiteral("prores_422_lt"),
+                                   QStringLiteral("prores_422_lt_videotoolbox"),
+                                   1);
+        root.insert(QStringLiteral("video_profiles"), videoProfiles);
+    } else if (normalizedSelectedProresProfile == QStringLiteral("prores_proxy")) {
+        ensureProresVariantProfile(QStringLiteral("prores_proxy"),
+                                   QStringLiteral("ProRes 422 Proxy"),
+                                   QStringLiteral("prores_422_proxy"),
+                                   QStringLiteral("prores_422_proxy_videotoolbox"),
+                                   0);
+        root.insert(QStringLiteral("video_profiles"), videoProfiles);
+    }
     bool profileFound = false;
     QJsonObject selectedProfileObject;
     for (int i = 0; i < profiles.size(); ++i) {
@@ -5567,7 +5924,7 @@ QString ExportDialog::createTemporaryExportConfig(QString *errorMessage,
         }
     }
 
-    const QString configPath = QDir::temp().filePath(
+    const QString configPath = sourceStorageTemporaryPath(
         QStringLiteral("ld-analyse-export-config-%1.json")
             .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
     QFile outputConfigFile(configPath);
@@ -5597,7 +5954,7 @@ QString ExportDialog::createTemporaryMetadataSnapshot(QString *errorMessage)
         return QString();
     }
 
-    const QString tempPath = QDir::temp().filePath(
+    const QString tempPath = sourceStorageTemporaryPath(
         QStringLiteral("ld-analyse-export-%1.tbc.json")
             .arg(QUuid::createUuid().toString(QUuid::WithoutBraces)));
 

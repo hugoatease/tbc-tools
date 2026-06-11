@@ -96,6 +96,9 @@ private:
     QString resolveVideoExportPath() const;
     QString resolveFfmpegPath() const;
     QString defaultOutputBaseName(const QString &inputFile) const;
+    QString sourceDataDirectory() const;
+    QString sourceStorageTemporaryRoot() const;
+    QString sourceStorageTemporaryPath(const QString &fileName) const;
     QString sanitizeOutputBaseName(const QString &path) const;
     bool findExistingOutputFiles(const QString &outputBase, QStringList *existingFiles) const;
     QString selectedMainCodecId() const;
@@ -178,6 +181,7 @@ private:
     QStringList temporaryAudioTrackPaths;
     RunStage activeRunStage = RunStage::Idle;
     bool generateProxyForCurrentRun = false;
+    bool audioConfiguredForCurrentRun = false;
     bool overwriteExistingForCurrentRun = false;
     QString outputBaseForCurrentRun;
     QString proxyCodecForCurrentRun;

@@ -220,6 +220,28 @@ class TestWrappersFFmpeg:
             ],
         ),
         WrapperTestCase(
+            id="audio trim uses metadata sample timing when available",
+            input_tbc=f"{get_path('pal_svideo')}.tbc",
+            input_opts=[
+                "--input-tbc-json",
+                "tests/files/pal_svideo_5.tbc.json",
+                "--start",
+                "3",
+                "--length",
+                "1",
+                "--audio-track",
+                audio_file,
+            ],
+            expected_opts=[
+                {"-ss", "0.078549"},
+                {"-t", "0.041451"},
+            ],
+            unexpected_opts=[
+                {"-ss", "0.080000"},
+                {"-t", "0.040000"},
+            ],
+        ),
+        WrapperTestCase(
             id="advanced audio track",
             input_tbc=f"{get_path('pal_svideo')}.tbc",
             input_opts=[
