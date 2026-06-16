@@ -122,11 +122,19 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           TAG_NAME="${{ steps.version.outputs.tag }}"
+          NOTES_FILE="$(mktemp)"
+
+          gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${{ github.repository }}/releases/generate-notes" \
+            -f tag_name="${TAG_NAME}" \
+            --jq '.body' > "${NOTES_FILE}"
           gh release create "${TAG_NAME}" \
             --repo "${{ github.repository }}" \
             --title "${TAG_NAME}" \
             --draft \
-            --generate-notes
+            --notes-file "${NOTES_FILE}"
 
       - name: Dispatch Release workflow for artifact build/upload
         env:

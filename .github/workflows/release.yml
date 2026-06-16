@@ -185,6 +185,26 @@ jobs:
               --generate-notes
           fi
 
+      - name: Refresh release notes on draft release
+        run: |
+          IS_DRAFT="$(gh release view "$RELEASE_TAG" --repo "${{ github.repository }}" --json isDraft --jq '.isDraft')"
+          if [ "$IS_DRAFT" != "true" ]; then
+            echo "Release $RELEASE_TAG is not a draft; skipping note refresh."
+            exit 0
+          fi
+
+          NOTES_FILE="$(mktemp)"
+          gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${{ github.repository }}/releases/generate-notes" \
+            -f tag_name="$RELEASE_TAG" \
+            --jq '.body' > "$NOTES_FILE"
+
+          gh release edit "$RELEASE_TAG" \
+            --repo "${{ github.repository }}" \
+            --notes-file "$NOTES_FILE"
+
       - name: Upload release assets
         run: |
           gh release upload "$RELEASE_TAG" ./artifacts/release/* --repo "${{ github.repository }}" --clobber
