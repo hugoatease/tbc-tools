@@ -468,6 +468,19 @@ class TestWrappersFFmpeg:
             expected_opts=[{"out_file.mkv"}],
         ),
         WrapperTestCase(
+            id="j2k profile opts",
+            input_tbc=f"{get_path('pal_svideo')}.tbc",
+            input_opts=["--j2k"],
+            expected_opts=[
+                {"-c:v", "jpeg2000"},
+                {"-q:v", "18"},
+                {"-pred", "dwt97int"},
+                {"-prog", "lrcp"},
+                {"-layer_rates", "20"},
+                {"out_file.mov"},
+            ],
+        ),
+        WrapperTestCase(
             id="verbosity (std)",
             input_tbc=f"{get_path('pal_svideo')}.tbc",
             input_opts=[],

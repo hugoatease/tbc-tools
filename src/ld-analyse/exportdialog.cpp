@@ -2716,6 +2716,7 @@ void ExportDialog::refreshProfiles()
         ui->profileComboBox->addItem(tr("ProRes"), QStringLiteral("prores"));
         ui->profileComboBox->addItem(tr("D10 MPEG-2"), QStringLiteral("d10"));
         ui->profileComboBox->addItem(tr("V210"), QStringLiteral("v210"));
+        ui->profileComboBox->addItem(tr("J2K (JPEG 2000)"), QStringLiteral("j2k"));
         ui->profileComboBox->addItem(tr("AVC/H.264"), QStringLiteral("avc"));
         ui->profileComboBox->addItem(tr("HEVC/H.265"), QStringLiteral("hevc"));
         ui->profileComboBox->addItem(tr("Web"), QStringLiteral("web"));
@@ -4495,6 +4496,9 @@ QString ExportDialog::selectedExportProfileName() const
     }
     if (mainCodecId == QStringLiteral("v210")) {
         return QStringLiteral("v210");
+    }
+    if (mainCodecId == QStringLiteral("j2k")) {
+        return QStringLiteral("j2k");
     }
     if (mainCodecId == QStringLiteral("d10")) {
         return QStringLiteral("d10");

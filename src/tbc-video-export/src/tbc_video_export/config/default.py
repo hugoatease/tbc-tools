@@ -40,6 +40,11 @@ DEFAULT_CONFIG: JsonConfig = {
             "audio_profile": "pcm_24",
         },
         {
+            "name": "j2k",
+            "video_profile": "j2k",
+            "audio_profile": "pcm_24",
+        },
+        {
             "name": "d10",
             "video_profile": [
                 "d10_mpeg2_pal",
@@ -310,6 +315,23 @@ DEFAULT_CONFIG: JsonConfig = {
             "codec": "v410",
             "video_format": "yuv422p10le",
             "container": "mov",
+        },
+        {
+            "name": "j2k",
+            "description": "JPEG 2000 (J2K) - Compression Optimized",
+            "codec": "jpeg2000",
+            "video_format": "yuv422p10le",
+            "container": "mov",
+            "opts": [
+                "-q:v",
+                18,
+                "-pred",
+                "dwt97int",
+                "-prog",
+                "lrcp",
+                "-layer_rates",
+                "20",
+            ],
         },
         {
             "name": "d10_mpeg2_pal",
