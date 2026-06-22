@@ -30,11 +30,18 @@ MACOS_FORBIDDEN_SNIPPETS = (
 WINDOWS_REQUIRED_SNIPPETS = (
     "workflow_dispatch:",
     "workflow_call:",
+    'CACHE_REPOSITORY:',
     'VCPKG_COMMIT:',
+    'VCPKG_BINARY_CACHE_ROOT: "${{ github.workspace }}\\\\external-cache\\\\vcpkg"',
     'cache: "pip"',
     "requirements-build-windows.txt",
+    "repository: ${{ env.CACHE_REPOSITORY }}",
+    "path: external-cache",
     "import pywintypes, win32file, win32pipe",
+    "Initialize dedicated repository vcpkg cache",
     "vcpkg-binary-cache-${{ env.VCPKG_COMMIT }}",
+    "Commit updated dedicated cache repository (workflow_dispatch only)",
+    "CI_CACHE_REPO_TOKEN",
     "tbc-video-export.exe --dump-default-config",
 )
 

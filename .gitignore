@@ -54,6 +54,7 @@ __pycache__
 # ld-decode data files
 *.tbc
 testout
+ci/cache/
 
 # Pre-generated test data - DO NOT IGNORE
 # test-data/ contains pre-generated TBC files needed for testing
