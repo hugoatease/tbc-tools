@@ -10,12 +10,12 @@ on:
   workflow_dispatch:
     inputs:
       create_release:
-        description: "Create a GitHub release and upload built assets"
+        description: "Bump version, create tag, and upload built assets"
         required: false
         default: false
         type: boolean
-      tag_name:
-        description: "Tag to release when manually dispatched (example: v0.6.0)"
+      version:
+        description: "Version to release when enabled (example: 0.6.0 or v0.6.0)"
         required: false
         type: string
 env:
@@ -30,31 +30,137 @@ jobs:
       checkout_ref: ${{ steps.resolve.outputs.checkout_ref }}
       publish_release: ${{ steps.resolve.outputs.publish_release }}
     steps:
-      - name: Resolve and validate release tag
-        id: resolve
+      - name: Determine release mode
+        id: mode
         run: |
-          PUBLISH_RELEASE="true"
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             if [ "${{ github.event.inputs.create_release }}" = "true" ]; then
-              RAW_TAG="${{ github.event.inputs.tag_name }}"
-              if [ -z "$RAW_TAG" ]; then
-                echo "tag_name is required when Create a GitHub release and upload built assets is enabled."
+              RAW_INPUT="${{ github.event.inputs.version }}"
+              if [ -z "$RAW_INPUT" ]; then
+                echo "version is required when create_release is enabled."
                 exit 1
               fi
+
+              NORMALIZED_VERSION="${RAW_INPUT#v}"
+              if [[ ! "$NORMALIZED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                echo "Invalid version: '$RAW_INPUT'. Use SemVer like 7.3.0 or v7.3.0."
+                exit 1
+              fi
+
+              RELEASE_TAG="v${NORMALIZED_VERSION}"
+              MODE="manual_release"
             else
-              PUBLISH_RELEASE="false"
-              RAW_TAG="${{ github.ref }}"
+              RELEASE_TAG=""
+              MODE="build_only"
             fi
           else
-            RAW_TAG="${{ github.ref_name }}"
+            RELEASE_TAG="${{ github.ref_name }}"
+            MODE="tag_push"
           fi
 
-          if [ "$PUBLISH_RELEASE" = "true" ]; then
-            RAW_TAG="${RAW_TAG#refs/tags/}"
-            if [[ "$RAW_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              RAW_TAG="v${RAW_TAG}"
-            fi
-            RELEASE_TAG="${RAW_TAG#refs/tags/}"
+          echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "mode=${MODE}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout repository
+        if: ${{ steps.mode.outputs.mode == 'manual_release' }}
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          submodules: true
+
+      - name: Ensure tag and release do not already exist
+        if: ${{ steps.mode.outputs.mode == 'manual_release' }}
+        env:
+          RELEASE_TAG: ${{ steps.mode.outputs.release_tag }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Tag '${RELEASE_TAG}' already exists on origin."
+            exit 1
+          fi
+
+          if gh release view "${RELEASE_TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release '${RELEASE_TAG}' already exists."
+            exit 1
+          fi
+
+      - name: Configure git identity
+        if: ${{ steps.mode.outputs.mode == 'manual_release' }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Update codebase version tags
+        if: ${{ steps.mode.outputs.mode == 'manual_release' }}
+        env:
+          VERSION: ${{ steps.mode.outputs.release_tag }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import pathlib
+          import re
+
+          repo_root = pathlib.Path(".")
+          version = os.environ["VERSION"].removeprefix("v")
+
+          flake_path = repo_root / "flake.nix"
+          flake_content = flake_path.read_text(encoding="utf-8")
+          updated_flake_content, replacements = re.subn(
+              r'packageVersion = "[0-9]+\.[0-9]+\.[0-9]+";',
+              f'packageVersion = "{version}";',
+              flake_content,
+              count=1,
+          )
+          if replacements != 1:
+              raise SystemExit("Failed to update packageVersion in flake.nix")
+          flake_path.write_text(updated_flake_content, encoding="utf-8")
+
+          vcpkg_path = repo_root / "vcpkg.json"
+          vcpkg_data = json.loads(vcpkg_path.read_text(encoding="utf-8"))
+          vcpkg_data["version"] = version
+          vcpkg_path.write_text(
+              json.dumps(vcpkg_data, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Commit version updates
+        if: ${{ steps.mode.outputs.mode == 'manual_release' }}
+        env:
+          RELEASE_TAG: ${{ steps.mode.outputs.release_tag }}
+        run: |
+          git add flake.nix vcpkg.json
+
+          if git diff --cached --quiet; then
+            echo "Version files were already up to date."
+          else
+            git commit -m "chore(release): prepare ${RELEASE_TAG}"
+            git push origin "HEAD:${{ github.ref_name }}"
+          fi
+
+      - name: Create and push release tag
+        if: ${{ steps.mode.outputs.mode == 'manual_release' }}
+        env:
+          RELEASE_TAG: ${{ steps.mode.outputs.release_tag }}
+        run: |
+          git tag -a "${RELEASE_TAG}" -m "Release ${RELEASE_TAG}"
+          git push origin "${RELEASE_TAG}"
+
+      - name: Resolve and validate release tag
+        id: resolve
+        env:
+          MODE: ${{ steps.mode.outputs.mode }}
+          MODE_RELEASE_TAG: ${{ steps.mode.outputs.release_tag }}
+        run: |
+          PUBLISH_RELEASE="true"
+          if [ "$MODE" = "build_only" ]; then
+            RELEASE_TAG=""
+            CHECKOUT_REF="${{ github.ref }}"
+            PUBLISH_RELEASE="false"
+          else
+            RELEASE_TAG="${MODE_RELEASE_TAG#refs/tags/}"
             if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
               echo "Invalid tag '$RELEASE_TAG'. Expected vMAJOR.MINOR.PATCH"
               exit 1
@@ -70,13 +176,9 @@ jobs:
             done
             if [ "$TAG_READY" != "true" ]; then
               echo "Tag refs/tags/${RELEASE_TAG} does not exist on origin."
-              echo "Create it first via Prepare Release Draft, then re-run Release for that tag."
               exit 1
             fi
             CHECKOUT_REF="refs/tags/${RELEASE_TAG}"
-          else
-            RELEASE_TAG=""
-            CHECKOUT_REF="${{ github.ref }}"
           fi
           echo "release_tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
           echo "checkout_ref=${CHECKOUT_REF}" >> "$GITHUB_OUTPUT"
@@ -174,36 +276,22 @@ jobs:
           mv ./artifacts/tbc-tools_arm64.dmg "./artifacts/release/tbc-tools_${RELEASE_TAG}_macos_arm64.dmg"
           mv ./artifacts/tbc-tools_universal.dmg "./artifacts/release/tbc-tools_${RELEASE_TAG}_macos_universal.dmg"
 
-      - name: Ensure GitHub release exists
+      - name: Ensure published GitHub release exists
         run: |
           if gh release view "$RELEASE_TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "Release $RELEASE_TAG already exists."
+            IS_DRAFT="$(gh release view "$RELEASE_TAG" --repo "${{ github.repository }}" --json isDraft --jq '.isDraft')"
+            if [ "$IS_DRAFT" = "true" ]; then
+              echo "Release $RELEASE_TAG exists as draft; publishing it."
+              gh release edit "$RELEASE_TAG" --repo "${{ github.repository }}" --draft=false
+            else
+              echo "Release $RELEASE_TAG already exists."
+            fi
           else
             gh release create "$RELEASE_TAG" \
               --repo "${{ github.repository }}" \
               --title "$RELEASE_TAG" \
               --generate-notes
           fi
-
-      - name: Refresh release notes on draft release
-        run: |
-          IS_DRAFT="$(gh release view "$RELEASE_TAG" --repo "${{ github.repository }}" --json isDraft --jq '.isDraft')"
-          if [ "$IS_DRAFT" != "true" ]; then
-            echo "Release $RELEASE_TAG is not a draft; skipping note refresh."
-            exit 0
-          fi
-
-          NOTES_FILE="$(mktemp)"
-          gh api \
-            --method POST \
-            -H "Accept: application/vnd.github+json" \
-            "/repos/${{ github.repository }}/releases/generate-notes" \
-            -f tag_name="$RELEASE_TAG" \
-            --jq '.body' > "$NOTES_FILE"
-
-          gh release edit "$RELEASE_TAG" \
-            --repo "${{ github.repository }}" \
-            --notes-file "$NOTES_FILE"
 
       - name: Upload release assets
         run: |

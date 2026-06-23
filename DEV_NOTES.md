@@ -98,37 +98,39 @@ If AppImage improvements are needed, they must be made by:
 3. Testing incrementally at each change
 4. **Never** modifying the working 36973ee file
 
-## HARD DEV NOTE - RELEASE WORKFLOW/UI CONTRACT (2026-04-04)
+## HARD DEV NOTE - RELEASE WORKFLOW/UI CONTRACT (2026-06-23)
 
-This repository now depends on a strict release workflow UI and run-order contract. Do not change this behavior without explicit confirmation.
+This repository now depends on a strict single-workflow release contract. Do not change this behavior without explicit confirmation.
 
 ### Required workflow files and entry points
-- `.github/workflows/prepare_release.yml` is the release preparation entry point.
-- `.github/workflows/release.yml` is the artifact build/publish workflow.
+- `.github/workflows/release.yml` is the only release entry point.
 
 ### Required `Release` manual UI fields
 `release.yml` must keep `workflow_dispatch` with these inputs:
 - `create_release` (boolean)
-  - Description: `Create a GitHub release and upload built assets`
-- `tag_name` (string)
-  - Description: `Tag to release when manually dispatched (example: v0.6.0)`
+  - Description: `Bump version, create tag, and upload built assets`
+- `version` (string)
+  - Description: `Version to release when enabled (example: 0.6.0 or v0.6.0)`
 
 Removing or renaming these inputs breaks the expected Actions modal and causes operator error.
 
 ### Required behavior
 - If `create_release=false`: manual run is a build/sanity run only (no release upload).
-- If `create_release=true`: `tag_name` is required, must normalize to `vMAJOR.MINOR.PATCH`, and must already exist on origin.
+- If `create_release=true`: `version` is required and must normalize to `vMAJOR.MINOR.PATCH`; workflow must update version files, commit, create/push tag, then build/upload release assets.
 - Tag push matching `v*` must continue to run the release publish path automatically.
 
 ### Required release sequence (full release)
-1. Run `Prepare Release Draft` with a version (`3.0.0` or `v3.0.0`).
-2. Workflow updates version files, commits, creates/pushes tag, and creates draft release.
-3. Tag push triggers `Release` workflow to build artifacts and upload release assets.
+1. Run `Release` with `create_release=true` and `version` (`3.0.0` or `v3.0.0`).
+2. Workflow updates version files, commits changes, creates/pushes release tag.
+3. Workflow builds artifacts and uploads them to a published GitHub release for that tag.
 
 ### Verification checklist after any release-workflow edit
-1. In Actions → `Release` → `Run workflow`, verify checkbox and tag input appear exactly as above.
+1. In Actions → `Release` → `Run workflow`, verify checkbox and version input appear exactly as above.
 2. Run manual `Release` with checkbox off and confirm build-only path.
-3. Run full path via `Prepare Release Draft` and confirm artifact upload into the draft release.
+3. Run manual `Release` with checkbox on + version and confirm:
+   - `flake.nix` and `vcpkg.json` are version-bumped
+   - release tag is pushed
+   - release assets upload to the versioned release
 
 ## HARD DEV NOTE - LD-ANALYSE METADATA EXPORT WINDOWING FIX (2026-04-04)
 
