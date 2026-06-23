@@ -29,7 +29,8 @@ RgbScopeDialog::RgbScopeDialog(QWidget *parent)
 
     scopeLabel_ = new QLabel(this);
     scopeLabel_->setAlignment(Qt::AlignCenter);
-    scopeLabel_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    scopeLabel_->setMinimumSize(1, 1);
+    scopeLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     scopeLabel_->setScaledContents(false);
     scopeLabel_->setText(tr("No RGB scope data"));
     mainLayout->addWidget(scopeLabel_);
