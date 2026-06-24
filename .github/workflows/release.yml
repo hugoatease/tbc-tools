@@ -218,6 +218,12 @@ jobs:
       GITHUB_TOKEN: ${{ github.token }}
     
     steps:
+      - name: Checkout release tag history
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve-tag.outputs.checkout_ref }}
+          fetch-depth: 0
+          fetch-tags: true
       - name: Download Linux artifacts
         uses: actions/download-artifact@v8
         with:
@@ -275,22 +281,59 @@ jobs:
           mv ./artifacts/tbc-tools_x86_64.dmg "./artifacts/release/tbc-tools_${RELEASE_TAG}_macos_x86_64.dmg"
           mv ./artifacts/tbc-tools_arm64.dmg "./artifacts/release/tbc-tools_${RELEASE_TAG}_macos_arm64.dmg"
           mv ./artifacts/tbc-tools_universal.dmg "./artifacts/release/tbc-tools_${RELEASE_TAG}_macos_universal.dmg"
+      - name: Determine previous release tag
+        id: previous-tag
+        run: |
+          PREVIOUS_TAG="$(git describe --tags --abbrev=0 --match "v*" "${RELEASE_TAG}^" 2>/dev/null || true)"
+          if [ -n "$PREVIOUS_TAG" ]; then
+            echo "Using release notes range: ${PREVIOUS_TAG}..${RELEASE_TAG}"
+          else
+            echo "No previous release tag found before ${RELEASE_TAG}; generating notes from full history."
+          fi
+          echo "previous_tag=${PREVIOUS_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes
+        id: generate-notes
+        env:
+          PREVIOUS_TAG: ${{ steps.previous-tag.outputs.previous_tag }}
+        run: |
+          NOTES_FILE="$(mktemp)"
+          if [ -n "$PREVIOUS_TAG" ]; then
+            gh api \
+              --method POST \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${{ github.repository }}/releases/generate-notes" \
+              -f tag_name="$RELEASE_TAG" \
+              -f previous_tag_name="$PREVIOUS_TAG" \
+              --jq '.body' > "$NOTES_FILE"
+          else
+            gh api \
+              --method POST \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${{ github.repository }}/releases/generate-notes" \
+              -f tag_name="$RELEASE_TAG" \
+              --jq '.body' > "$NOTES_FILE"
+          fi
+          echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
 
       - name: Ensure published GitHub release exists
+        env:
+          NOTES_FILE: ${{ steps.generate-notes.outputs.notes_file }}
         run: |
           if gh release view "$RELEASE_TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             IS_DRAFT="$(gh release view "$RELEASE_TAG" --repo "${{ github.repository }}" --json isDraft --jq '.isDraft')"
             if [ "$IS_DRAFT" = "true" ]; then
               echo "Release $RELEASE_TAG exists as draft; publishing it."
-              gh release edit "$RELEASE_TAG" --repo "${{ github.repository }}" --draft=false
+              gh release edit "$RELEASE_TAG" --repo "${{ github.repository }}" --draft=false --notes-file "$NOTES_FILE"
             else
-              echo "Release $RELEASE_TAG already exists."
+              echo "Release $RELEASE_TAG already exists; refreshing release notes."
+              gh release edit "$RELEASE_TAG" --repo "${{ github.repository }}" --notes-file "$NOTES_FILE"
             fi
           else
             gh release create "$RELEASE_TAG" \
               --repo "${{ github.repository }}" \
               --title "$RELEASE_TAG" \
-              --generate-notes
+              --notes-file "$NOTES_FILE"
           fi
 
       - name: Upload release assets
