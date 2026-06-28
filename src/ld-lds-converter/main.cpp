@@ -30,6 +30,7 @@
 #include <QFileInfo>
 #include <QColor>
 #include <QPalette>
+#include <QSet>
 #include <QStringList>
 #include <QUrl>
 #include <QtGlobal>
@@ -196,6 +197,150 @@ QString normalizePathForCurrentPlatform(const QString &path)
     return QDir::toNativeSeparators(normalized);
 }
 
+void appendUniqueInputPath(QStringList &inputPaths, const QString &candidatePath)
+{
+    if (candidatePath.isEmpty()) {
+        return;
+    }
+    for (const QString &existingPath : inputPaths) {
+        if (existingPath.compare(candidatePath, Qt::CaseInsensitive) == 0) {
+            return;
+        }
+    }
+    inputPaths << candidatePath;
+}
+
+QString stripWrappingQuotes(const QString &value)
+{
+    QString strippedValue = value.trimmed();
+    while (strippedValue.size() >= 2) {
+        const QChar firstCharacter = strippedValue.front();
+        const QChar lastCharacter = strippedValue.back();
+        const bool wrappedInDoubleQuotes =
+            firstCharacter == QLatin1Char('"') && lastCharacter == QLatin1Char('"');
+        const bool wrappedInSingleQuotes =
+            firstCharacter == QLatin1Char('\'') && lastCharacter == QLatin1Char('\'');
+        if (!wrappedInDoubleQuotes && !wrappedInSingleQuotes) {
+            break;
+        }
+        strippedValue = strippedValue.mid(1, strippedValue.size() - 2).trimmed();
+    }
+    return strippedValue;
+}
+
+void appendWhitespaceSeparatedCandidates(QStringList &candidateInputs, const QString &rawSegment)
+{
+    QString currentCandidate;
+    for (const QChar character : rawSegment) {
+        if (character.isSpace()) {
+            const QString normalizedCandidate = stripWrappingQuotes(currentCandidate);
+            if (!normalizedCandidate.isEmpty()) {
+                candidateInputs << normalizedCandidate;
+            }
+            currentCandidate.clear();
+            continue;
+        }
+        currentCandidate.append(character);
+    }
+
+    const QString normalizedCandidate = stripWrappingQuotes(currentCandidate);
+    if (!normalizedCandidate.isEmpty()) {
+        candidateInputs << normalizedCandidate;
+    }
+}
+
+QStringList splitInputCandidates(const QString &rawInput)
+{
+    QStringList candidateInputs;
+    const QString normalizedInput = stripWrappingQuotes(rawInput);
+    if (normalizedInput.isEmpty()) {
+        return candidateInputs;
+    }
+
+    const QString fileSchemePrefix = QStringLiteral("file://");
+    if (!normalizedInput.contains(fileSchemePrefix, Qt::CaseInsensitive)) {
+        candidateInputs << normalizedInput;
+        return candidateInputs;
+    }
+
+    int scanPosition = 0;
+    while (scanPosition < normalizedInput.size()) {
+        const int fileSchemeStart =
+            normalizedInput.indexOf(fileSchemePrefix, scanPosition, Qt::CaseInsensitive);
+        if (fileSchemeStart < 0) {
+            appendWhitespaceSeparatedCandidates(candidateInputs, normalizedInput.mid(scanPosition));
+            break;
+        }
+
+        appendWhitespaceSeparatedCandidates(
+            candidateInputs, normalizedInput.mid(scanPosition, fileSchemeStart - scanPosition));
+
+        int fileSchemeEnd = normalizedInput.size();
+        for (int characterIndex = fileSchemeStart; characterIndex < normalizedInput.size();
+             characterIndex++) {
+            if (normalizedInput.at(characterIndex).isSpace()) {
+                fileSchemeEnd = characterIndex;
+                break;
+            }
+        }
+
+        const int nextEmbeddedScheme = normalizedInput.indexOf(
+            fileSchemePrefix, fileSchemeStart + fileSchemePrefix.size(), Qt::CaseInsensitive);
+        if (nextEmbeddedScheme >= 0 && nextEmbeddedScheme < fileSchemeEnd) {
+            fileSchemeEnd = nextEmbeddedScheme;
+        }
+
+        const QString fileUriToken =
+            stripWrappingQuotes(normalizedInput.mid(fileSchemeStart, fileSchemeEnd - fileSchemeStart));
+        if (!fileUriToken.isEmpty()) {
+            candidateInputs << fileUriToken;
+        }
+        scanPosition = fileSchemeEnd;
+    }
+
+    return candidateInputs;
+}
+
+void appendUniqueInputPathsFromRaw(QStringList &inputPaths, const QString &rawInput)
+{
+    const QStringList candidateInputs = splitInputCandidates(rawInput);
+    for (const QString &candidateInput : candidateInputs) {
+        appendUniqueInputPath(inputPaths, normalizePathForCurrentPlatform(candidateInput));
+    }
+}
+
+QString outputPathCollisionKey(const QString &path)
+{
+    return QDir::cleanPath(QDir::fromNativeSeparators(path)).toLower();
+}
+
+QString reserveUniqueBatchOutputPath(const QString &baseOutputPath, QSet<QString> &reservedOutputPaths)
+{
+    const QFileInfo outputInfo(baseOutputPath);
+    const QString outputDirectory = outputInfo.absolutePath();
+    const QString outputStem = outputInfo.completeBaseName();
+    const QString outputSuffix = outputInfo.completeSuffix();
+
+    QString candidateOutputPath = baseOutputPath;
+    int duplicateCounter = 2;
+    QString collisionKey = outputPathCollisionKey(candidateOutputPath);
+    while (reservedOutputPaths.contains(collisionKey)) {
+        const QString suffixToken = outputSuffix.isEmpty()
+                                        ? QString()
+                                        : QStringLiteral(".") + outputSuffix;
+        candidateOutputPath = QDir(outputDirectory).filePath(
+            QStringLiteral("%1_%2%3")
+                .arg(outputStem)
+                .arg(duplicateCounter)
+                .arg(suffixToken));
+        collisionKey = outputPathCollisionKey(candidateOutputPath);
+        duplicateCounter++;
+    }
+
+    reservedOutputPaths.insert(collisionKey);
+    return candidateOutputPath;
+}
+
 DataConverter::OutputFormat parseOutputFormat(const QString &formatString, bool *ok = nullptr)
 {
     const QString normalizedFormat = formatString.trimmed().toLower();
@@ -281,9 +426,9 @@ bool wantsGui(int argc, char *argv[])
         }
     }
 
-    // If only one positional argument is passed (common for desktop drag/drop),
-    // treat this as a GUI launch and pre-fill that file.
-    if (!hasExplicitCliOption && positionalArgumentCount == 1) {
+    // If positional arguments are passed without explicit CLI mode options
+    // (common for desktop drag/drop/open-with), launch GUI and pre-fill queue.
+    if (!hasExplicitCliOption && positionalArgumentCount >= 1) {
         return true;
     }
 
@@ -350,20 +495,22 @@ int main(int argc, char *argv[])
             return -1;
         }
 
-        QString inputFileName = normalizePathForCurrentPlatform(parser.value(sourceVideoFileOption));
-        if (inputFileName.isEmpty()) {
-            const QStringList positionalArguments = parser.positionalArguments();
-            if (!positionalArguments.isEmpty()) {
-                inputFileName = normalizePathForCurrentPlatform(positionalArguments.first());
-            }
+        QStringList inputFileNames;
+        const QStringList optionInputs = parser.values(sourceVideoFileOption);
+        for (const QString &optionInput : optionInputs) {
+            appendUniqueInputPathsFromRaw(inputFileNames, optionInput);
+        }
+        const QStringList positionalArguments = parser.positionalArguments();
+        for (const QString &positionalInput : positionalArguments) {
+            appendUniqueInputPathsFromRaw(inputFileNames, positionalInput);
         }
 
         const QString outputFileName = normalizePathForCurrentPlatform(parser.value(targetVideoFileOption));
 
         ConverterDialog dialog;
         dialog.setDefaultFormat(outputFormat);
-        if (!inputFileName.isEmpty()) {
-            dialog.setDefaultInput(inputFileName);
+        if (!inputFileNames.isEmpty()) {
+            dialog.setDefaultInputs(inputFileNames);
         }
         if (!outputFileName.isEmpty()) {
             dialog.setDefaultOutput(outputFileName);
@@ -518,25 +665,80 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    QString inputFileName = normalizePathForCurrentPlatform(parser.value(sourceVideoFileOption));
     QString outputFileName = normalizePathForCurrentPlatform(parser.value(targetVideoFileOption));
-    if (inputFileName.isEmpty()) {
-        const QStringList positionalArguments = parser.positionalArguments();
-        if (!positionalArguments.isEmpty()) {
-            inputFileName = normalizePathForCurrentPlatform(positionalArguments.first());
+    QStringList inputFileNames;
+    const QStringList optionInputs = parser.values(sourceVideoFileOption);
+    for (const QString &optionInput : optionInputs) {
+        appendUniqueInputPathsFromRaw(inputFileNames, optionInput);
+    }
+    const QStringList positionalArguments = parser.positionalArguments();
+    for (const QString &positionalInput : positionalArguments) {
+        appendUniqueInputPathsFromRaw(inputFileNames, positionalInput);
+    }
+
+    if (inputFileNames.size() > 1) {
+        bool useOutputDirectoryOverride = false;
+        QString outputDirectoryOverride;
+        if (!outputFileName.isEmpty()) {
+            const QFileInfo outputInfo(outputFileName);
+            if (outputInfo.exists() && outputInfo.isDir()) {
+                useOutputDirectoryOverride = true;
+                outputDirectoryOverride = outputFileName;
+            } else {
+                qCritical("When multiple inputs are provided, --output must be an existing directory.");
+                return -1;
+            }
         }
-    }
 
-    if (outputFileName.isEmpty() && !inputFileName.isEmpty()) {
-        outputFileName = normalizePathForCurrentPlatform(DataConverter::defaultOutputPath(inputFileName, modePacking, outputFormat));
-    }
+        qint32 failedConversions = 0;
+        QSet<QString> reservedOutputPaths;
+        for (const QString &inputFileName : inputFileNames) {
+            QString resolvedOutputFileName;
+            if (useOutputDirectoryOverride) {
+                const QFileInfo inputInfo(inputFileName);
+                resolvedOutputFileName = QDir(outputDirectoryOverride).filePath(
+                    inputInfo.completeBaseName() + DataConverter::outputExtensionForFormat(outputFormat));
+            } else {
+                resolvedOutputFileName = normalizePathForCurrentPlatform(
+                    DataConverter::defaultOutputPath(inputFileName, modePacking, outputFormat));
+            }
+            resolvedOutputFileName = reserveUniqueBatchOutputPath(resolvedOutputFileName,
+                                                                  reservedOutputPaths);
 
-    // Initialise the data conversion object
-    DataConverter dataConverter(inputFileName, outputFileName, modePacking, outputFormat, flacSampleRate, flacCompressionLevel);
+            DataConverter dataConverter(inputFileName,
+                                        resolvedOutputFileName,
+                                        modePacking,
+                                        outputFormat,
+                                        flacSampleRate,
+                                        flacCompressionLevel);
+            if (!dataConverter.process()) {
+                qWarning() << "Conversion failed for input:" << inputFileName;
+                failedConversions++;
+            }
+        }
 
-    // Process the data conversion
-    if (!dataConverter.process()) {
-        return 1;
+        if (failedConversions > 0) {
+            return 1;
+        }
+    } else {
+        const QString inputFileName = inputFileNames.isEmpty() ? QString() : inputFileNames.constFirst();
+        if (outputFileName.isEmpty() && !inputFileName.isEmpty()) {
+            outputFileName = normalizePathForCurrentPlatform(
+                DataConverter::defaultOutputPath(inputFileName, modePacking, outputFormat));
+        }
+
+        // Initialise the data conversion object
+        DataConverter dataConverter(inputFileName,
+                                    outputFileName,
+                                    modePacking,
+                                    outputFormat,
+                                    flacSampleRate,
+                                    flacCompressionLevel);
+
+        // Process the data conversion
+        if (!dataConverter.process()) {
+            return 1;
+        }
     }
 
     // Quit with success

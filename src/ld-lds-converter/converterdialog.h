@@ -26,6 +26,11 @@
 #define CONVERTERDIALOG_H
 
 #include <QDialog>
+#include <QHash>
+#include <QMutex>
+#include <QSet>
+
+#include <atomic>
 
 #include "dataconverter.h"
 
@@ -37,6 +42,7 @@ QT_END_NAMESPACE
 
 class QDragEnterEvent;
 class QDropEvent;
+class QCloseEvent;
 
 class ConverterDialog : public QDialog
 {
@@ -47,12 +53,14 @@ public:
     ~ConverterDialog();
 
     void setDefaultInput(const QString &inputFilename);
+    void setDefaultInputs(const QStringList &inputFilenames);
     void setDefaultOutput(const QString &outputFilename);
     void setDefaultFormat(DataConverter::OutputFormat outputFormat);
 
 protected:
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dropEvent(QDropEvent *event) override;
+    void closeEvent(QCloseEvent *event) override;
 
 private slots:
     void on_inputBrowseButton_clicked();
@@ -62,6 +70,14 @@ private slots:
     void on_outputFormatComboBox_currentIndexChanged(int index);
 
 private:
+    void setInputQueue(const QStringList &inputFilenames);
+    QStringList normalizedUniqueInputs(const QStringList &inputFilenames) const;
+    void refreshQueuedInputDisplay();
+    void resetQueuedProgressDisplay();
+    void updateQueuedFileProgress(const QString &inputFileName, qint64 processedBytes, qint64 totalBytes);
+    void setQueuedFileStatus(const QString &inputFileName, const QString &statusText, int percentage = -1);
+    QString queuedFileKey(const QString &inputFileName) const;
+    void requestCancellationForActiveParallelConverters();
     void updateOutputPathFromInput(bool forceUpdate);
     bool isLikelyLdsFile(const QString &filePath) const;
     DataConverter::OutputFormat selectedOutputFormat() const;
@@ -72,8 +88,12 @@ private:
     Ui::ConverterDialog *ui;
     QString sourceDirectory;
     bool userEditedOutput;
-    DataConverter *activeConverter;
-    bool cancelRequestedByUser;
+    std::atomic_bool conversionInProgress;
+    std::atomic_bool cancelRequestedByUser;
+    QSet<DataConverter *> activeParallelConverters;
+    QMutex activeParallelConvertersMutex;
+    QStringList queuedInputFiles;
+    QHash<QString, int> queuedInputRowIndex;
 };
 
 #endif // CONVERTERDIALOG_H

@@ -29,6 +29,8 @@
 #include <QDebug>
 #include <QFile>
 #include <FLAC/stream_encoder.h>
+#include <atomic>
+#include <cstdio>
 
 class DataConverter : public QObject
 {
@@ -46,6 +48,7 @@ public:
                            OutputFormat outputFormatParam,
                            int flacSampleRateParam = 40000,
                            int flacCompressionLevelParam = 8,
+                           bool verifyOutputEnabledParam = false,
                            QObject *parent = nullptr);
     bool process(void);
     void requestCancel();
@@ -71,14 +74,20 @@ private:
     FLAC__StreamEncoder *flacEncoder;
     qint64 totalInputBytes;
     qint64 processedInputBytes;
-    bool cancelRequested;
-    bool conversionCancelled;
+    qint64 nextOutputFlushInputBytes;
+    bool verifyOutputEnabled;
+    std::atomic_bool cancelRequested;
+    std::atomic_bool conversionCancelled;
+    FILE *flacOutputFileHandle;
+    bool closeFlacOutputFileHandle;
 
     // Private methods
     bool openInputFile(void);
     void closeInputFile(void);
     bool openOutputFile(void);
     void closeOutputFile(void);
+    bool flushOutputBuffersIfNeeded(bool forceFlush = false);
+    bool verifyOutputFile(void) const;
     bool openFlacEncoder(void);
     bool writeRiffHeader(void);
     bool writeUnpackedSamples(const qint16 *samples, qint32 sampleCount);

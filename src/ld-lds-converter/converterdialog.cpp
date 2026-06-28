@@ -26,21 +26,122 @@
 #include "ui_converterdialog.h"
 
 #include <QDir>
+#include <QCloseEvent>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFile>
+#include <QHeaderView>
 #include <QCoreApplication>
 #include <QEventLoop>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QMutexLocker>
 #include <QPalette>
+#include <QProgressBar>
 #include <QSignalBlocker>
+#include <QSet>
+#include <QTableWidgetItem>
+#include <QThread>
 #include <QUrl>
 #include <algorithm>
+#include <chrono>
+#include <future>
+#include <vector>
 
 namespace {
+QString stripWrappingQuotes(const QString &value)
+{
+    QString strippedValue = value.trimmed();
+    while (strippedValue.size() >= 2) {
+        const QChar firstCharacter = strippedValue.front();
+        const QChar lastCharacter = strippedValue.back();
+        const bool wrappedInDoubleQuotes =
+            firstCharacter == QLatin1Char('"') && lastCharacter == QLatin1Char('"');
+        const bool wrappedInSingleQuotes =
+            firstCharacter == QLatin1Char('\'') && lastCharacter == QLatin1Char('\'');
+        if (!wrappedInDoubleQuotes && !wrappedInSingleQuotes) {
+            break;
+        }
+        strippedValue = strippedValue.mid(1, strippedValue.size() - 2).trimmed();
+    }
+    return strippedValue;
+}
+
+void appendWhitespaceSeparatedCandidates(QStringList &candidateInputs, const QString &rawSegment)
+{
+    QString currentCandidate;
+    for (const QChar character : rawSegment) {
+        if (character.isSpace()) {
+            const QString normalizedCandidate = stripWrappingQuotes(currentCandidate);
+            if (!normalizedCandidate.isEmpty()) {
+                candidateInputs << normalizedCandidate;
+            }
+            currentCandidate.clear();
+            continue;
+        }
+        currentCandidate.append(character);
+    }
+
+    const QString normalizedCandidate = stripWrappingQuotes(currentCandidate);
+    if (!normalizedCandidate.isEmpty()) {
+        candidateInputs << normalizedCandidate;
+    }
+}
+
+QStringList splitInputCandidates(const QString &rawInput)
+{
+    QStringList candidateInputs;
+    const QString normalizedInput = stripWrappingQuotes(rawInput);
+    if (normalizedInput.isEmpty()) {
+        return candidateInputs;
+    }
+
+    const QString fileSchemePrefix = QStringLiteral("file://");
+    if (!normalizedInput.contains(fileSchemePrefix, Qt::CaseInsensitive)) {
+        candidateInputs << normalizedInput;
+        return candidateInputs;
+    }
+
+    int scanPosition = 0;
+    while (scanPosition < normalizedInput.size()) {
+        const int fileSchemeStart =
+            normalizedInput.indexOf(fileSchemePrefix, scanPosition, Qt::CaseInsensitive);
+        if (fileSchemeStart < 0) {
+            appendWhitespaceSeparatedCandidates(candidateInputs, normalizedInput.mid(scanPosition));
+            break;
+        }
+
+        appendWhitespaceSeparatedCandidates(
+            candidateInputs, normalizedInput.mid(scanPosition, fileSchemeStart - scanPosition));
+
+        int fileSchemeEnd = normalizedInput.size();
+        for (int characterIndex = fileSchemeStart; characterIndex < normalizedInput.size();
+             characterIndex++) {
+            if (normalizedInput.at(characterIndex).isSpace()) {
+                fileSchemeEnd = characterIndex;
+                break;
+            }
+        }
+
+        const int nextEmbeddedScheme = normalizedInput.indexOf(
+            fileSchemePrefix, fileSchemeStart + fileSchemePrefix.size(), Qt::CaseInsensitive);
+        if (nextEmbeddedScheme >= 0 && nextEmbeddedScheme < fileSchemeEnd) {
+            fileSchemeEnd = nextEmbeddedScheme;
+        }
+
+        const QString fileUriToken =
+            stripWrappingQuotes(normalizedInput.mid(fileSchemeStart, fileSchemeEnd - fileSchemeStart));
+        if (!fileUriToken.isEmpty()) {
+            candidateInputs << fileUriToken;
+        }
+        scanPosition = fileSchemeEnd;
+    }
+
+    return candidateInputs;
+}
 QString normalizePathForCurrentPlatform(const QString &path)
 {
     QString normalizedInput = path.trimmed();
@@ -94,6 +195,25 @@ void applyHighContrastStylesheet(QWidget *widget)
             "  color: #F5F7FA;"
             "  selection-background-color: #8AB4F8;"
             "  selection-color: #202124;"
+            "}"
+            "QDialog#ConverterDialog QTableWidget {"
+            "  background-color: #2C2F33;"
+            "  color: #F5F7FA;"
+            "  border: 1px solid #5F6368;"
+            "  border-radius: 4px;"
+            "}"
+            "QDialog#ConverterDialog QHeaderView::section {"
+            "  background-color: #2C2F33;"
+            "  color: #F5F7FA;"
+            "  border: 1px solid #5F6368;"
+            "  padding: 2px;"
+            "}"
+            "QDialog#ConverterDialog QTableWidget::item:selected {"
+            "  background-color: #8AB4F8;"
+            "  color: #202124;"
+            "}"
+            "QDialog#ConverterDialog QCheckBox {"
+            "  color: #F5F7FA;"
             "}"
             "QDialog#ConverterDialog QPushButton {"
             "  background-color: #3C4043;"
@@ -151,6 +271,25 @@ void applyHighContrastStylesheet(QWidget *widget)
         "  selection-background-color: #0B57D0;"
         "  selection-color: #FFFFFF;"
         "}"
+        "QDialog#ConverterDialog QTableWidget {"
+        "  background-color: #FFFFFF;"
+        "  color: #16181C;"
+        "  border: 1px solid #8E949B;"
+        "  border-radius: 4px;"
+        "}"
+        "QDialog#ConverterDialog QHeaderView::section {"
+        "  background-color: #FFFFFF;"
+        "  color: #16181C;"
+        "  border: 1px solid #8E949B;"
+        "  padding: 2px;"
+        "}"
+        "QDialog#ConverterDialog QTableWidget::item:selected {"
+        "  background-color: #0B57D0;"
+        "  color: #FFFFFF;"
+        "}"
+        "QDialog#ConverterDialog QCheckBox {"
+        "  color: #16181C;"
+        "}"
         "QDialog#ConverterDialog QPushButton {"
         "  background-color: #E5E8EC;"
         "  color: #16181C;"
@@ -185,8 +324,12 @@ ConverterDialog::ConverterDialog(QWidget *parent)
       ui(new Ui::ConverterDialog),
       sourceDirectory(QDir::homePath()),
       userEditedOutput(false),
-      activeConverter(nullptr),
-      cancelRequestedByUser(false)
+      conversionInProgress(false),
+      cancelRequestedByUser(false),
+      activeParallelConverters(),
+      activeParallelConvertersMutex(),
+      queuedInputFiles(),
+      queuedInputRowIndex()
 {
     ui->setupUi(this);
     setAcceptDrops(true);
@@ -199,16 +342,40 @@ ConverterDialog::ConverterDialog(QWidget *parent)
         ui->outputFormatComboBox->addItem(tr("s16 uncompressed"), static_cast<int>(DataConverter::OutputFormat::S16Raw));
         ui->outputFormatComboBox->setCurrentIndex(0);
     }
+    if (ui->queuedInputsTableWidget) {
+        ui->queuedInputsTableWidget->setColumnCount(2);
+        ui->queuedInputsTableWidget->setHorizontalHeaderLabels(
+            QStringList() << tr("Input file") << tr("Progress"));
+        ui->queuedInputsTableWidget->verticalHeader()->setVisible(false);
+        ui->queuedInputsTableWidget->horizontalHeader()->setStretchLastSection(false);
+        ui->queuedInputsTableWidget->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+        ui->queuedInputsTableWidget->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    }
 
     if (ui->inputLineEdit) {
         connect(ui->inputLineEdit, &QLineEdit::textChanged, this, [this]() {
+            queuedInputFiles = normalizedUniqueInputs(QStringList() << ui->inputLineEdit->text());
+            if (queuedInputFiles.size() > 1) {
+                ui->inputLineEdit->setToolTip(queuedInputFiles.join(QLatin1Char('\n')));
+            } else {
+                ui->inputLineEdit->setToolTip(QString());
+            }
+            refreshQueuedInputDisplay();
             updateOutputPathFromInput(false);
             resetProgressDisplay();
             if (ui->statusLabel) {
-                ui->statusLabel->clear();
+                if (queuedInputFiles.size() > 1) {
+                    ui->statusLabel->setText(
+                        tr("Queued %1 input files from pasted/text input.")
+                            .arg(queuedInputFiles.size()));
+                } else {
+                    ui->statusLabel->clear();
+                }
             }
         });
     }
+
+    refreshQueuedInputDisplay();
 }
 
 ConverterDialog::~ConverterDialog()
@@ -218,22 +385,12 @@ ConverterDialog::~ConverterDialog()
 
 void ConverterDialog::setDefaultInput(const QString &inputFilename)
 {
-    const QString normalizedInput = normalizePathForCurrentPlatform(inputFilename);
-    if (normalizedInput.isEmpty()) {
-        return;
-    }
+    setInputQueue(QStringList() << inputFilename);
+}
 
-    {
-        const QSignalBlocker blocker(ui->inputLineEdit);
-        ui->inputLineEdit->setText(normalizedInput);
-    }
-    userEditedOutput = false;
-    updateOutputPathFromInput(true);
-
-    const QFileInfo inputInfo(normalizedInput);
-    if (inputInfo.exists()) {
-        sourceDirectory = inputInfo.absolutePath();
-    }
+void ConverterDialog::setDefaultInputs(const QStringList &inputFilenames)
+{
+    setInputQueue(inputFilenames);
 }
 
 void ConverterDialog::setDefaultOutput(const QString &outputFilename)
@@ -289,8 +446,8 @@ void ConverterDialog::dropEvent(QDropEvent *event)
         event->ignore();
         return;
     }
-
     const QList<QUrl> urls = mimeData->urls();
+    QStringList droppedInputFiles;
     for (const QUrl &url : urls) {
         if (!url.isLocalFile()) {
             continue;
@@ -298,13 +455,20 @@ void ConverterDialog::dropEvent(QDropEvent *event)
 
         const QString localFile = normalizePathForCurrentPlatform(url.toLocalFile());
         if (!localFile.isEmpty() && isLikelyLdsFile(localFile)) {
-            setDefaultInput(localFile);
-            if (ui->statusLabel) {
-                ui->statusLabel->setText(tr("Loaded input from drag/drop."));
-            }
-            event->acceptProposedAction();
-            return;
+            droppedInputFiles << localFile;
         }
+    }
+
+    if (!droppedInputFiles.isEmpty()) {
+        setInputQueue(droppedInputFiles);
+        if (ui->statusLabel) {
+            ui->statusLabel->setText(droppedInputFiles.size() > 1
+                                         ? tr("Queued %1 input files from drag/drop.")
+                                               .arg(droppedInputFiles.size())
+                                         : tr("Loaded input from drag/drop."));
+        }
+        event->acceptProposedAction();
+        return;
     }
 
     if (ui->statusLabel) {
@@ -313,21 +477,43 @@ void ConverterDialog::dropEvent(QDropEvent *event)
     event->ignore();
 }
 
-void ConverterDialog::on_inputBrowseButton_clicked()
+void ConverterDialog::closeEvent(QCloseEvent *event)
 {
-    const QString filter = tr("LaserDisc samples (*.lds);;All Files (*)");
-    const QString inputFileName = QFileDialog::getOpenFileName(this,
-                                                               tr("Select .lds input file"),
-                                                               sourceDirectory,
-                                                               filter);
-    if (inputFileName.isEmpty()) {
+    if (conversionInProgress.load()) {
+        cancelRequestedByUser.store(true);
+        requestCancellationForActiveParallelConverters();
+        if (ui->statusLabel) {
+            ui->statusLabel->setText(tr("Stopping conversion..."));
+        }
+        if (ui->stopButton) {
+            ui->stopButton->setEnabled(false);
+            ui->stopButton->setText(tr("Stopping..."));
+        }
+        event->ignore();
         return;
     }
 
-    setDefaultInput(inputFileName);
+    QDialog::closeEvent(event);
+}
+
+void ConverterDialog::on_inputBrowseButton_clicked()
+{
+    const QString filter = tr("LaserDisc samples (*.lds);;All Files (*)");
+    const QStringList inputFileNames = QFileDialog::getOpenFileNames(this,
+                                                                     tr("Select .lds input file(s)"),
+                                                                     sourceDirectory,
+                                                                     filter);
+    if (inputFileNames.isEmpty()) {
+        return;
+    }
+
+    setInputQueue(inputFileNames);
     resetProgressDisplay();
     if (ui->statusLabel) {
-        ui->statusLabel->clear();
+        ui->statusLabel->setText(inputFileNames.size() > 1
+                                     ? tr("Queued %1 input files.")
+                                           .arg(inputFileNames.size())
+                                     : QString());
     }
 }
 
@@ -368,76 +554,396 @@ void ConverterDialog::on_outputBrowseButton_clicked()
 
 void ConverterDialog::on_convertButton_clicked()
 {
-    const QString inputFileName = normalizePathForCurrentPlatform(ui->inputLineEdit->text());
-    QString outputFileName = normalizePathForCurrentPlatform(ui->outputLineEdit->text());
-    const DataConverter::OutputFormat format = selectedOutputFormat();
+    struct ConversionJob {
+        QString inputFileName;
+        QString outputFileName;
+    };
+    struct ConversionResult {
+        QString inputFileName;
+        bool conversionOk = false;
+        bool cancelled = false;
+        bool deleteFailed = false;
+    };
 
-    if (inputFileName.isEmpty()) {
+    QStringList inputFileNames = normalizedUniqueInputs(queuedInputFiles);
+    if (inputFileNames.isEmpty()) {
+        inputFileNames = normalizedUniqueInputs(QStringList() << ui->inputLineEdit->text());
+    }
+
+    const bool batchMode = inputFileNames.size() > 1;
+    const QString requestedOutputPath = normalizePathForCurrentPlatform(ui->outputLineEdit->text());
+    const DataConverter::OutputFormat format = selectedOutputFormat();
+    const bool deleteAfterCompletion = ui->deleteAfterCompletionCheckBox != nullptr
+                                       && ui->deleteAfterCompletionCheckBox->isChecked();
+    const bool verifyBeforeDelete = deleteAfterCompletion;
+    const bool parallelCompressRequested = ui->parallelCompressCheckBox != nullptr
+                                           && ui->parallelCompressCheckBox->isChecked();
+    const bool useParallelCompression = parallelCompressRequested && batchMode;
+
+    if (inputFileNames.isEmpty()) {
         ui->statusLabel->setText(tr("Please choose an input .lds file."));
         return;
     }
-    if (!QFileInfo::exists(inputFileName)) {
-        ui->statusLabel->setText(tr("Input .lds file does not exist."));
+
+    QStringList missingInputFiles;
+    for (const QString &inputFileName : inputFileNames) {
+        if (!QFileInfo::exists(inputFileName)) {
+            missingInputFiles << inputFileName;
+        }
+    }
+    if (!missingInputFiles.isEmpty()) {
+        ui->statusLabel->setText(tr("One or more input .lds files do not exist."));
+        QMessageBox::warning(this,
+                             tr("Error"),
+                             tr("These input files do not exist:\n%1")
+                                 .arg(missingInputFiles.join(QLatin1Char('\n'))));
         return;
     }
 
-    if (outputFileName.isEmpty()) {
-        outputFileName = DataConverter::defaultOutputPath(inputFileName, false, format);
-        ui->outputLineEdit->setText(outputFileName);
+    QString outputDirectoryOverride;
+    bool hasOutputDirectoryOverride = false;
+    if (batchMode && !requestedOutputPath.isEmpty()) {
+        const QFileInfo outputInfo(requestedOutputPath);
+        const bool explicitDirectoryHint = requestedOutputPath.endsWith(QDir::separator())
+                                           || requestedOutputPath.endsWith(QLatin1Char('/'))
+                                           || requestedOutputPath.endsWith(QLatin1Char('\\'));
+        if ((outputInfo.exists() && outputInfo.isDir()) || explicitDirectoryHint) {
+            outputDirectoryOverride = requestedOutputPath;
+            hasOutputDirectoryOverride = true;
+        } else if (ui->statusLabel) {
+            ui->statusLabel->setText(
+                tr("Batch mode ignores single-file output override; using per-input output files."));
+        }
     }
 
-    if (outputFileName.isEmpty()) {
-        ui->statusLabel->setText(tr("Please choose an output file."));
+    QList<ConversionJob> conversionJobs;
+    QList<ConversionResult> conversionResults;
+    QSet<QString> reservedBatchOutputPaths;
+
+    for (const QString &inputFileName : inputFileNames) {
+        QString outputFileName;
+        if (!batchMode) {
+            outputFileName = requestedOutputPath;
+            if (outputFileName.isEmpty()) {
+                outputFileName = DataConverter::defaultOutputPath(inputFileName, false, format);
+                if (!outputFileName.isEmpty()) {
+                    ui->outputLineEdit->setText(outputFileName);
+                }
+            }
+        } else if (hasOutputDirectoryOverride) {
+            const QFileInfo inputInfo(inputFileName);
+            outputFileName = QDir(outputDirectoryOverride).filePath(
+                inputInfo.completeBaseName() + DataConverter::outputExtensionForFormat(format));
+        } else {
+            outputFileName = DataConverter::defaultOutputPath(inputFileName, false, format);
+        }
+
+        if (outputFileName.isEmpty()) {
+            ConversionResult outputPathFailure;
+            outputPathFailure.inputFileName = inputFileName;
+            conversionResults << outputPathFailure;
+            continue;
+        }
+
+        if (batchMode) {
+            const QFileInfo outputInfo(outputFileName);
+            const QString outputStem = outputInfo.completeBaseName();
+            const QString outputSuffix = outputInfo.completeSuffix();
+            const QString outputDirectory = outputInfo.absolutePath();
+            QString uniqueOutputPath = outputFileName;
+            int duplicateCounter = 2;
+            while (reservedBatchOutputPaths.contains(uniqueOutputPath.toLower())) {
+                const QString suffixToken = outputSuffix.isEmpty()
+                                                ? QString()
+                                                : QStringLiteral(".") + outputSuffix;
+                uniqueOutputPath = QDir(outputDirectory).filePath(
+                    QStringLiteral("%1_%2%3")
+                        .arg(outputStem)
+                        .arg(duplicateCounter)
+                        .arg(suffixToken));
+                duplicateCounter++;
+            }
+            outputFileName = uniqueOutputPath;
+            reservedBatchOutputPaths.insert(outputFileName.toLower());
+        }
+
+        conversionJobs << ConversionJob{inputFileName, outputFileName};
+    }
+
+    if (conversionJobs.isEmpty()) {
+        ui->statusLabel->setText(tr("No valid output paths could be prepared for conversion."));
         return;
     }
+    conversionInProgress.store(true);
 
-    DataConverter converter(inputFileName, outputFileName, false, format);
-    connect(&converter, &DataConverter::progressUpdated,
-            this, &ConverterDialog::updateProgressDisplay);
-    activeConverter = &converter;
+    setConversionControlsEnabled(false);
     cancelRequestedByUser = false;
-
-    if (ui->statusLabel) {
-        ui->statusLabel->setText(tr("Converting..."));
+    {
+        QMutexLocker locker(&activeParallelConvertersMutex);
+        activeParallelConverters.clear();
     }
+    resetProgressDisplay();
+    resetQueuedProgressDisplay();
     if (ui->stopButton) {
         ui->stopButton->setText(tr("Stop"));
         ui->stopButton->setEnabled(true);
     }
-    resetProgressDisplay();
-    setConversionControlsEnabled(false);
     QCoreApplication::processEvents(QEventLoop::AllEvents);
 
-    const bool conversionOk = converter.process();
+    if (parallelCompressRequested && !batchMode && ui->statusLabel) {
+        ui->statusLabel->setText(
+            tr("Parallel compress is available in batch mode; running sequential conversion."));
+    }
 
+    // Every job (single, batch, parallel, or sequential) runs on a worker thread.
+    // The main thread only pumps events here so that Stop is always deliverable
+    // and the UI never freezes while a large file is being processed.
+    struct PendingTask {
+        int jobIndex = -1;
+        std::future<ConversionResult> future;
+    };
+
+    std::vector<PendingTask> pendingTasks;
+    std::vector<ConversionResult> orderedResults(static_cast<std::size_t>(conversionJobs.size()));
+    std::vector<bool> orderedResultsReady(static_cast<std::size_t>(conversionJobs.size()), false);
+
+    const int maxParallelJobs = useParallelCompression
+                                    ? std::max(1, QThread::idealThreadCount())
+                                    : 1;
+    int launchedJobs = 0;
+    int completedJobs = 0;
+
+    if (ui->progressBar) {
+        ui->progressBar->setRange(0, std::max<int>(1, conversionJobs.size()));
+        ui->progressBar->setValue(0);
+    }
+    if (ui->progressPercentLabel) {
+        ui->progressPercentLabel->setText(tr("0%"));
+    }
+
+    while (completedJobs < conversionJobs.size()
+           && !(cancelRequestedByUser.load() && pendingTasks.empty())) {
+        while (launchedJobs < conversionJobs.size()
+               && static_cast<int>(pendingTasks.size()) < maxParallelJobs
+               && !cancelRequestedByUser.load()) {
+            const ConversionJob job = conversionJobs.at(launchedJobs);
+            const int jobIndex = launchedJobs;
+            setQueuedFileStatus(job.inputFileName, tr("Starting..."), 0);
+            if (ui->statusLabel) {
+                if (batchMode) {
+                    ui->statusLabel->setText(
+                        tr("Converting %1 of %2: %3")
+                            .arg(jobIndex + 1)
+                            .arg(conversionJobs.size())
+                            .arg(QFileInfo(job.inputFileName).fileName()));
+                } else {
+                    ui->statusLabel->setText(tr("Converting..."));
+                }
+            }
+            pendingTasks.push_back(PendingTask{
+                jobIndex,
+                std::async(std::launch::async,
+                           [this, job, format, batchMode, deleteAfterCompletion, verifyBeforeDelete]() -> ConversionResult {
+                               ConversionResult result;
+                               result.inputFileName = job.inputFileName;
+
+                               DataConverter converter(job.inputFileName,
+                                                      job.outputFileName,
+                                                      false,
+                                                      format,
+                                                      40000,
+                                                      8,
+                                                      verifyBeforeDelete);
+                               QObject::connect(&converter,
+                                                &DataConverter::progressUpdated,
+                                                this,
+                                                [this, inputFileName = job.inputFileName, batchMode](qint64 processedBytes,
+                                                                                          qint64 totalBytes) {
+                                                    updateQueuedFileProgress(inputFileName,
+                                                                             processedBytes,
+                                                                             totalBytes);
+                                                    if (!batchMode) {
+                                                        updateProgressDisplay(processedBytes, totalBytes);
+                                                    }
+                                                },
+                                                Qt::QueuedConnection);
+                               {
+                                   QMutexLocker locker(&activeParallelConvertersMutex);
+                                   activeParallelConverters.insert(&converter);
+                               }
+                               if (cancelRequestedByUser.load()) {
+                                   converter.requestCancel();
+                               }
+                               const bool conversionOk = converter.process();
+                               {
+                                   QMutexLocker locker(&activeParallelConvertersMutex);
+                                   activeParallelConverters.remove(&converter);
+                               }
+
+                               result.conversionOk = conversionOk;
+                               result.cancelled = converter.wasCancelled();
+                               if (result.conversionOk && deleteAfterCompletion) {
+                                   QFile inputFile(job.inputFileName);
+                                   if (!inputFile.remove()) {
+                                       result.deleteFailed = true;
+                                   }
+                               }
+                               return result;
+                           })});
+            launchedJobs++;
+        }
+
+        bool completedAnyTask = false;
+        for (auto taskIt = pendingTasks.begin(); taskIt != pendingTasks.end();) {
+            const auto taskStatus = taskIt->future.wait_for(std::chrono::milliseconds(0));
+            if (taskStatus == std::future_status::ready) {
+                ConversionResult result;
+                const int jobIndex = taskIt->jobIndex;
+                result.inputFileName = conversionJobs.at(jobIndex).inputFileName;
+                try {
+                    result = taskIt->future.get();
+                } catch (const std::exception &) {
+                    result.conversionOk = false;
+                    result.cancelled = cancelRequestedByUser.load();
+                } catch (...) {
+                    result.conversionOk = false;
+                    result.cancelled = cancelRequestedByUser.load();
+                }
+                orderedResults[static_cast<std::size_t>(taskIt->jobIndex)] = result;
+                orderedResultsReady[static_cast<std::size_t>(taskIt->jobIndex)] = true;
+                taskIt = pendingTasks.erase(taskIt);
+                completedJobs++;
+                completedAnyTask = true;
+
+                if (ui->progressBar) {
+                    ui->progressBar->setRange(0, std::max<int>(1, conversionJobs.size()));
+                    ui->progressBar->setValue(completedJobs);
+                }
+                if (ui->progressPercentLabel) {
+                    const int percentage = conversionJobs.isEmpty()
+                                               ? 0
+                                               : static_cast<int>((completedJobs * 100)
+                                                                  / conversionJobs.size());
+                    ui->progressPercentLabel->setText(tr("%1%").arg(percentage));
+                }
+                if (ui->statusLabel && batchMode) {
+                    ui->statusLabel->setText(
+                        tr("Conversion progress: %1/%2 completed.")
+                            .arg(completedJobs)
+                            .arg(conversionJobs.size()));
+                }
+            } else {
+                ++taskIt;
+            }
+        }
+
+        if (completedJobs < conversionJobs.size() || !pendingTasks.empty()) {
+            if (completedAnyTask) {
+                QCoreApplication::processEvents(QEventLoop::AllEvents);
+            } else {
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+            }
+        }
+    }
+
+    // If Stop was pressed, any not-yet-launched jobs are simply skipped.
+    for (std::size_t index = 0; index < orderedResults.size(); index++) {
+        if (orderedResultsReady[index]) {
+            conversionResults << orderedResults[index];
+        }
+    }
+    {
+        QMutexLocker locker(&activeParallelConvertersMutex);
+        activeParallelConverters.clear();
+    }
+    conversionInProgress.store(false);
     setConversionControlsEnabled(true);
-    activeConverter = nullptr;
     if (ui->stopButton) {
         ui->stopButton->setEnabled(false);
         ui->stopButton->setText(tr("Stop"));
     }
-    if (!conversionOk) {
-        if (converter.wasCancelled() || cancelRequestedByUser) {
-            ui->statusLabel->setText(tr("Conversion cancelled."));
+
+    int successfulConversions = 0;
+    QStringList failedInputFiles;
+    QStringList deleteFailedInputFiles;
+    bool cancelled = cancelRequestedByUser.load();
+
+    for (const ConversionResult &result : std::as_const(conversionResults)) {
+        if (result.conversionOk) {
+            successfulConversions++;
+            if (result.deleteFailed) {
+                deleteFailedInputFiles << result.inputFileName;
+                setQueuedFileStatus(result.inputFileName, tr("Done (delete failed)"), 100);
+            } else {
+                setQueuedFileStatus(result.inputFileName, tr("Done"), 100);
+            }
+        } else if (result.cancelled) {
+            cancelled = true;
+            setQueuedFileStatus(result.inputFileName, tr("Cancelled"));
+        } else {
+            failedInputFiles << result.inputFileName;
+            setQueuedFileStatus(result.inputFileName, tr("Failed"));
+        }
+    }
+
+    const auto showDeleteFailureWarning = [this, &deleteFailedInputFiles]() {
+        if (deleteFailedInputFiles.isEmpty()) {
             return;
         }
-        ui->statusLabel->setText(tr("Conversion failed."));
-        QMessageBox::warning(this, tr("Error"), tr("Could not convert the selected file."));
+        QMessageBox::warning(this,
+                             tr("Delete after completion"),
+                             tr("Conversion completed, but these input files could not be deleted:\n%1")
+                                 .arg(deleteFailedInputFiles.join(QLatin1Char('\n'))));
+    };
+
+    if (cancelled) {
+        if (batchMode) {
+            ui->statusLabel->setText(
+                tr("Batch conversion cancelled (%1/%2 completed).")
+                    .arg(successfulConversions)
+                    .arg(inputFileNames.size()));
+        } else {
+            ui->statusLabel->setText(tr("Conversion cancelled."));
+        }
+        showDeleteFailureWarning();
         return;
     }
-    updateProgressDisplay(1, 1);
 
-    ui->statusLabel->setText(tr("Conversion complete."));
+    if (!failedInputFiles.isEmpty()) {
+        if (batchMode) {
+            ui->statusLabel->setText(
+                tr("Batch conversion completed with errors (%1 succeeded, %2 failed).")
+                    .arg(successfulConversions)
+                    .arg(failedInputFiles.size()));
+            QMessageBox::warning(this,
+                                 tr("Batch conversion completed with errors"),
+                                 tr("Failed to convert:\n%1")
+                                     .arg(failedInputFiles.join(QLatin1Char('\n'))));
+        } else {
+            ui->statusLabel->setText(tr("Conversion failed."));
+            QMessageBox::warning(this, tr("Error"), tr("Could not convert the selected file."));
+        }
+        showDeleteFailureWarning();
+        return;
+    }
+
+    updateProgressDisplay(1, 1);
+    if (batchMode) {
+        ui->statusLabel->setText(tr("Batch conversion complete (%1 files).").arg(successfulConversions));
+    } else {
+        ui->statusLabel->setText(tr("Conversion complete."));
+    }
+    showDeleteFailureWarning();
 }
 
 void ConverterDialog::on_stopButton_clicked()
 {
-    if (activeConverter == nullptr) {
+    if (!conversionInProgress.load()) {
         return;
     }
 
     cancelRequestedByUser = true;
-    activeConverter->requestCancel();
+    requestCancellationForActiveParallelConverters();
     if (ui->statusLabel) {
         ui->statusLabel->setText(tr("Stopping..."));
     }
@@ -454,12 +960,187 @@ void ConverterDialog::on_outputFormatComboBox_currentIndexChanged(int index)
     resetProgressDisplay();
 }
 
-void ConverterDialog::updateOutputPathFromInput(bool forceUpdate)
+void ConverterDialog::setInputQueue(const QStringList &inputFilenames)
 {
-    const QString normalizedInput = normalizePathForCurrentPlatform(ui->inputLineEdit->text());
-    if (normalizedInput.isEmpty()) {
+    const QStringList normalizedInputs = normalizedUniqueInputs(inputFilenames);
+    if (normalizedInputs.isEmpty()) {
+        queuedInputFiles.clear();
+        queuedInputRowIndex.clear();
+        refreshQueuedInputDisplay();
         return;
     }
+
+    queuedInputFiles = normalizedInputs;
+    refreshQueuedInputDisplay();
+
+    {
+        const QSignalBlocker blocker(ui->inputLineEdit);
+        ui->inputLineEdit->setText(normalizedInputs.constFirst());
+        if (normalizedInputs.size() > 1) {
+            ui->inputLineEdit->setToolTip(normalizedInputs.join(QLatin1Char('\n')));
+        } else {
+            ui->inputLineEdit->setToolTip(QString());
+        }
+    }
+
+    userEditedOutput = false;
+    updateOutputPathFromInput(true);
+
+    const QFileInfo inputInfo(normalizedInputs.constFirst());
+    if (inputInfo.exists()) {
+        sourceDirectory = inputInfo.absolutePath();
+    }
+}
+void ConverterDialog::refreshQueuedInputDisplay()
+{
+    if (ui->queuedInputsTableWidget == nullptr || ui->queuedSummaryLabel == nullptr) {
+        return;
+    }
+    queuedInputRowIndex.clear();
+    ui->queuedInputsTableWidget->clearContents();
+    ui->queuedInputsTableWidget->setRowCount(queuedInputFiles.size());
+
+    if (queuedInputFiles.isEmpty()) {
+        ui->queuedSummaryLabel->setText(tr("Queued files: none"));
+        return;
+    }
+
+    ui->queuedSummaryLabel->setText(tr("Queued files: %1").arg(queuedInputFiles.size()));
+    for (int row = 0; row < queuedInputFiles.size(); row++) {
+        const QString inputFileName = queuedInputFiles.at(row);
+        const QString nativePath = QDir::toNativeSeparators(inputFileName);
+        auto *pathItem = new QTableWidgetItem(nativePath);
+        pathItem->setToolTip(nativePath);
+        pathItem->setFlags(pathItem->flags() & ~Qt::ItemIsEditable);
+        ui->queuedInputsTableWidget->setItem(row, 0, pathItem);
+
+        auto *progressBar = new QProgressBar(ui->queuedInputsTableWidget);
+        progressBar->setRange(0, 100);
+        progressBar->setValue(0);
+        progressBar->setFormat(tr("Queued"));
+        progressBar->setTextVisible(true);
+        ui->queuedInputsTableWidget->setCellWidget(row, 1, progressBar);
+
+        queuedInputRowIndex.insert(queuedFileKey(inputFileName), row);
+    }
+}
+
+void ConverterDialog::resetQueuedProgressDisplay()
+{
+    for (const QString &inputFileName : std::as_const(queuedInputFiles)) {
+        setQueuedFileStatus(inputFileName, tr("Queued"), 0);
+    }
+}
+
+void ConverterDialog::updateQueuedFileProgress(const QString &inputFileName,
+                                               qint64 processedBytes,
+                                               qint64 totalBytes)
+{
+    if (ui->queuedInputsTableWidget == nullptr) {
+        return;
+    }
+
+    const int row = queuedInputRowIndex.value(queuedFileKey(inputFileName), -1);
+    if (row < 0) {
+        return;
+    }
+
+    auto *progressBar =
+        qobject_cast<QProgressBar *>(ui->queuedInputsTableWidget->cellWidget(row, 1));
+    if (progressBar == nullptr) {
+        return;
+    }
+
+    if (totalBytes <= 0) {
+        progressBar->setRange(0, 0);
+        progressBar->setFormat(tr("Working..."));
+        return;
+    }
+
+    const qint64 clampedProcessed = std::clamp(processedBytes, static_cast<qint64>(0), totalBytes);
+    const int percentage = static_cast<int>((clampedProcessed * 100) / totalBytes);
+    progressBar->setRange(0, 100);
+    progressBar->setValue(percentage);
+    progressBar->setFormat(tr("%1%").arg(percentage));
+}
+
+void ConverterDialog::setQueuedFileStatus(const QString &inputFileName,
+                                          const QString &statusText,
+                                          int percentage)
+{
+    if (ui->queuedInputsTableWidget == nullptr) {
+        return;
+    }
+
+    const int row = queuedInputRowIndex.value(queuedFileKey(inputFileName), -1);
+    if (row < 0) {
+        return;
+    }
+
+    auto *progressBar =
+        qobject_cast<QProgressBar *>(ui->queuedInputsTableWidget->cellWidget(row, 1));
+    if (progressBar == nullptr) {
+        return;
+    }
+
+    if (percentage >= 0) {
+        progressBar->setRange(0, 100);
+        progressBar->setValue(std::clamp(percentage, 0, 100));
+    } else if (progressBar->maximum() == 0) {
+        progressBar->setRange(0, 100);
+    }
+    progressBar->setFormat(statusText);
+}
+
+QString ConverterDialog::queuedFileKey(const QString &inputFileName) const
+{
+    return QDir::cleanPath(QDir::fromNativeSeparators(inputFileName)).toLower();
+}
+
+void ConverterDialog::requestCancellationForActiveParallelConverters()
+{
+    QMutexLocker locker(&activeParallelConvertersMutex);
+    for (DataConverter *converter : std::as_const(activeParallelConverters)) {
+        if (converter != nullptr) {
+            converter->requestCancel();
+        }
+    }
+}
+
+QStringList ConverterDialog::normalizedUniqueInputs(const QStringList &inputFilenames) const
+{
+    QStringList normalizedInputs;
+    for (const QString &inputFilename : inputFilenames) {
+        const QStringList expandedInputCandidates = splitInputCandidates(inputFilename);
+        for (const QString &candidateInput : expandedInputCandidates) {
+            const QString normalizedInput = normalizePathForCurrentPlatform(candidateInput);
+            if (normalizedInput.isEmpty()) {
+                continue;
+            }
+
+            bool alreadyIncluded = false;
+            for (const QString &existingInput : normalizedInputs) {
+                if (existingInput.compare(normalizedInput, Qt::CaseInsensitive) == 0) {
+                    alreadyIncluded = true;
+                    break;
+                }
+            }
+            if (!alreadyIncluded) {
+                normalizedInputs << normalizedInput;
+            }
+        }
+    }
+
+    return normalizedInputs;
+}
+
+void ConverterDialog::updateOutputPathFromInput(bool forceUpdate)
+{
+    const QStringList normalizedInputs = normalizedUniqueInputs(QStringList() << ui->inputLineEdit->text());
+    if (normalizedInputs.isEmpty()) {
+        return;
+    }
+    const QString normalizedInput = normalizedInputs.constFirst();
 
     if (!forceUpdate && userEditedOutput && !ui->outputLineEdit->text().trimmed().isEmpty()) {
         return;
@@ -512,6 +1193,15 @@ void ConverterDialog::setConversionControlsEnabled(bool enabled)
     }
     if (ui->outputFormatComboBox) {
         ui->outputFormatComboBox->setEnabled(enabled);
+    }
+    if (ui->parallelCompressCheckBox) {
+        ui->parallelCompressCheckBox->setEnabled(enabled);
+    }
+    if (ui->deleteAfterCompletionCheckBox) {
+        ui->deleteAfterCompletionCheckBox->setEnabled(enabled);
+    }
+    if (ui->queuedInputsTableWidget) {
+        ui->queuedInputsTableWidget->setEnabled(enabled);
     }
 }
 

@@ -34,6 +34,9 @@
 
 #include <algorithm>
 #include <cstdio>
+namespace {
+constexpr qint64 kOutputFlushChunkBytes = 256LL * 1024LL * 1024LL;
+}
 
 DataConverter::DataConverter(QString inputFileNameParam,
                              QString outputFileNameParam,
@@ -41,6 +44,7 @@ DataConverter::DataConverter(QString inputFileNameParam,
                              OutputFormat outputFormatParam,
                              int flacSampleRateParam,
                              int flacCompressionLevelParam,
+                             bool verifyOutputEnabledParam,
                              QObject *parent)
     : QObject(parent),
       inputFileName(inputFileNameParam),
@@ -54,19 +58,23 @@ DataConverter::DataConverter(QString inputFileNameParam,
       flacEncoder(nullptr),
       totalInputBytes(0),
       processedInputBytes(0),
+      nextOutputFlushInputBytes(kOutputFlushChunkBytes),
+      verifyOutputEnabled(verifyOutputEnabledParam),
       cancelRequested(false),
-      conversionCancelled(false)
+      conversionCancelled(false),
+      flacOutputFileHandle(nullptr),
+      closeFlacOutputFileHandle(false)
 {
 }
 
 void DataConverter::requestCancel()
 {
-    cancelRequested = true;
+    cancelRequested.store(true);
 }
 
 bool DataConverter::wasCancelled() const
 {
-    return conversionCancelled;
+    return conversionCancelled.load();
 }
 
 QString DataConverter::outputExtensionForFormat(OutputFormat outputFormatParam)
@@ -108,7 +116,9 @@ QString DataConverter::defaultOutputPath(const QString &inputFileNameParam,
 // Method to process the conversion of the file
 bool DataConverter::process(void)
 {
-    conversionCancelled = false;
+    cancelRequested.store(false);
+    conversionCancelled.store(false);
+    nextOutputFlushInputBytes = kOutputFlushChunkBytes;
     // Open the input file
     if (!openInputFile()) {
         qCritical("Could not open input file!");
@@ -136,6 +146,11 @@ bool DataConverter::process(void)
 
     // Close the output file
     closeOutputFile();
+
+    if (conversionSucceeded && verifyOutputEnabled && !verifyOutputFile()) {
+        qCritical("Output verification failed");
+        return false;
+    }
 
     // Exit with result
     return conversionSucceeded;
@@ -247,16 +262,31 @@ bool DataConverter::openFlacEncoder(void)
     FLAC__StreamEncoderInitStatus initStatus;
     if (outputFileName.isEmpty()) {
         tbcDebugStream() << "No output filename was provided, writing FLAC output to stdout";
-        initStatus = FLAC__stream_encoder_init_FILE(flacEncoder, stdout, nullptr, nullptr);
+        flacOutputFileHandle = stdout;
+        closeFlacOutputFileHandle = false;
+        initStatus = FLAC__stream_encoder_init_FILE(flacEncoder, flacOutputFileHandle, nullptr, nullptr);
     } else {
         const QByteArray encodedFileName = QFile::encodeName(outputFileName);
-        initStatus = FLAC__stream_encoder_init_file(flacEncoder, encodedFileName.constData(), nullptr, nullptr);
+        flacOutputFileHandle = std::fopen(encodedFileName.constData(), "wb");
+        if (flacOutputFileHandle == nullptr) {
+            qCritical("Could not open FLAC output file");
+            FLAC__stream_encoder_delete(flacEncoder);
+            flacEncoder = nullptr;
+            return false;
+        }
+        closeFlacOutputFileHandle = true;
+        initStatus = FLAC__stream_encoder_init_FILE(flacEncoder, flacOutputFileHandle, nullptr, nullptr);
     }
 
     if (initStatus != FLAC__STREAM_ENCODER_INIT_STATUS_OK) {
         qCritical("Could not initialise FLAC encoder: %s", FLAC__StreamEncoderInitStatusString[initStatus]);
         FLAC__stream_encoder_delete(flacEncoder);
         flacEncoder = nullptr;
+        if (flacOutputFileHandle != nullptr && closeFlacOutputFileHandle) {
+            std::fclose(flacOutputFileHandle);
+        }
+        flacOutputFileHandle = nullptr;
+        closeFlacOutputFileHandle = false;
         return false;
     }
 
@@ -270,8 +300,16 @@ void DataConverter::closeOutputFile(void)
         if (!FLAC__stream_encoder_finish(flacEncoder)) {
             qWarning("Finalizing FLAC encoder failed");
         }
+        // FLAC__stream_encoder_init_FILE() transfers ownership of the FILE* to the
+        // encoder. FLAC__stream_encoder_delete() closes (and frees) that FILE*
+        // itself, so we must NOT fflush/fclose it here -- doing so is a double-close
+        // that glibc detects as a double-free (SIGABRT). See backtrace:
+        //   free(): double free detected in tcache 2
+        //   #7 fclose  #8 DataConverter::closeOutputFile  #9 process
         FLAC__stream_encoder_delete(flacEncoder);
         flacEncoder = nullptr;
+        flacOutputFileHandle = nullptr;
+        closeFlacOutputFileHandle = false;
     }
 
     // Is an output file open?
@@ -282,6 +320,72 @@ void DataConverter::closeOutputFile(void)
     // Clear the file handle pointer
     delete outputFileHandle;
     outputFileHandle = nullptr;
+}
+
+bool DataConverter::flushOutputBuffersIfNeeded(bool forceFlush)
+{
+    if (!forceFlush && processedInputBytes < nextOutputFlushInputBytes) {
+        return true;
+    }
+
+    if (outputFileHandle != nullptr && !outputFileHandle->flush()) {
+        qWarning("Could not flush output file");
+        return false;
+    }
+    if (flacOutputFileHandle != nullptr && std::fflush(flacOutputFileHandle) != 0) {
+        qWarning("Could not flush FLAC output stream");
+        return false;
+    }
+
+    while (processedInputBytes >= nextOutputFlushInputBytes) {
+        nextOutputFlushInputBytes += kOutputFlushChunkBytes;
+    }
+
+    return true;
+}
+
+bool DataConverter::verifyOutputFile(void) const
+{
+    if (outputFileName.isEmpty()) {
+        // Cannot verify stdout output path; treat as verified.
+        return true;
+    }
+
+    const QFileInfo outputInfo(outputFileName);
+    if (!outputInfo.exists() || !outputInfo.isFile()) {
+        qWarning() << "Output verification failed: file does not exist" << outputFileName;
+        return false;
+    }
+    if (totalInputBytes > 0 && outputInfo.size() <= 0) {
+        qWarning() << "Output verification failed: file is empty" << outputFileName;
+        return false;
+    }
+
+    QFile outputFile(outputFileName);
+    if (!outputFile.open(QIODevice::ReadOnly)) {
+        qWarning() << "Output verification failed: could not open output file" << outputFileName;
+        return false;
+    }
+    const QByteArray header = outputFile.read(4);
+    outputFile.close();
+
+    if (totalInputBytes > 0 && header.isEmpty()) {
+        qWarning() << "Output verification failed: output file is not readable" << outputFileName;
+        return false;
+    }
+
+    if (!isPacking) {
+        if (outputFormat == OutputFormat::Flac && header.size() >= 4 && header != QByteArrayLiteral("fLaC")) {
+            qWarning() << "Output verification failed: FLAC header missing in" << outputFileName;
+            return false;
+        }
+        if (outputFormat == OutputFormat::RiffWave && header.size() >= 4 && header != QByteArrayLiteral("RIFF")) {
+            qWarning() << "Output verification failed: RIFF header missing in" << outputFileName;
+            return false;
+        }
+    }
+
+    return true;
 }
 
 bool DataConverter::writeRiffHeader(void)
@@ -353,8 +457,8 @@ bool DataConverter::packFile(void)
     bool isComplete = false;
 
     while(!isComplete) {
-        if (cancelRequested) {
-            conversionCancelled = true;
+        if (cancelRequested.load()) {
+            conversionCancelled.store(true);
             qWarning("Conversion cancelled by user");
             return false;
         }
@@ -397,8 +501,8 @@ bool DataConverter::packFile(void)
             qint16 *input = reinterpret_cast<qint16 *>(inputBuffer.data());
 
             for (qint32 wordPointer = 0; wordPointer < (usableBytes / 2); wordPointer += 4) {
-                if ((wordPointer & 0x3FFF) == 0 && cancelRequested) {
-                    conversionCancelled = true;
+                if ((wordPointer & 0x3FFF) == 0 && cancelRequested.load()) {
+                    conversionCancelled.store(true);
                     qWarning("Conversion cancelled by user");
                     return false;
                 }
@@ -431,11 +535,17 @@ bool DataConverter::packFile(void)
                 processedInputBytes = std::min(processedInputBytes, totalInputBytes);
             }
             emit progressUpdated(processedInputBytes, totalInputBytes);
+            if (!flushOutputBuffersIfNeeded()) {
+                return false;
+            }
         } else {
             // Input file is empty
             tbcDebugStream() << "DataConverter::packFile(): Got zero bytes from input file";
             isComplete = true;
         }
+    }
+    if (!flushOutputBuffersIfNeeded(true)) {
+        return false;
     }
 
     return true;
@@ -454,8 +564,8 @@ bool DataConverter::unpackFile(void)
     }
 
     while(!isComplete) {
-        if (cancelRequested) {
-            conversionCancelled = true;
+        if (cancelRequested.load()) {
+            conversionCancelled.store(true);
             qWarning("Conversion cancelled by user");
             return false;
         }
@@ -496,8 +606,8 @@ bool DataConverter::unpackFile(void)
             qint16 *output = reinterpret_cast<qint16 *>(outputBuffer.data());
 
             for (qint32 bytePointer = 0; bytePointer < completeInputBytes; bytePointer += 5) {
-                if ((bytePointer & 0x3FFF) == 0 && cancelRequested) {
-                    conversionCancelled = true;
+                if ((bytePointer & 0x3FFF) == 0 && cancelRequested.load()) {
+                    conversionCancelled.store(true);
                     qWarning("Conversion cancelled by user");
                     return false;
                 }
@@ -541,11 +651,17 @@ bool DataConverter::unpackFile(void)
                 processedInputBytes = std::min(processedInputBytes, totalInputBytes);
             }
             emit progressUpdated(processedInputBytes, totalInputBytes);
+            if (!flushOutputBuffersIfNeeded()) {
+                return false;
+            }
         } else {
             // Input file is empty
             tbcDebugStream() << "DataConverter::unpackFile(): Got zero bytes from input file";
             isComplete = true;
         }
+    }
+    if (!flushOutputBuffersIfNeeded(true)) {
+        return false;
     }
 
     return true;
