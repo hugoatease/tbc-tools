@@ -178,6 +178,47 @@ jobs:
       - name: Copy Qt plugins to release directory
         run: Copy-Item -Recurse -Exclude *.pdb -Path build\\vcpkg_installed\\${{ matrix.vcpkg_triplet }}\\Qt6\\plugins\\* -Destination release\\
 
+      - name: Write qt.conf for Qt plugin discovery
+        run: |
+          # The Windows release lays Qt plugins out flat (release\\<category>\\*.dll,
+          # e.g. release\\platforms\\qwindows.dll). Without a qt.conf Qt falls back to
+          # its compiled-in vcpkg prefix, which does not exist on end-user machines,
+          # and the platform plugin is not found -> "no Qt platform plugin could be
+          # initialized" (the classic Windows "missing DLL" startup failure).
+          # macOS writes an equivalent qt.conf (Plugins = PlugIns); mirror that here.
+          Set-Content -Path release\\qt.conf -Encoding ASCII -Value "[Paths]"
+          Add-Content -Path release\\qt.conf -Encoding ASCII -Value "Prefix = ."
+          Add-Content -Path release\\qt.conf -Encoding ASCII -Value "Plugins = ."
+
+      - name: Copy MSVC runtime DLLs to release directory
+        run: |
+          # The executables dynamically import VCRUNTIME140.dll / VCRUNTIME140_1.dll
+          # (and lddecode-linked code uses MSVCP140.dll) but vcpkg does not redistribute
+          # the CRT next to the binaries, so a clean Windows machine without the VC++
+          # redistributable gets "VCRUNTIME140.dll was not found". Copy the redist DLLs
+          # from the installed VS 2022 toolchain on the runner.
+          $archDir = if ("${{ matrix.arch }}" -eq "x86_64") { "x64" } elseif ("${{ matrix.arch }}" -eq "arm64") { "arm64" } else { "" }
+          if ([string]::IsNullOrWhiteSpace($archDir)) { throw "Unsupported arch '${{ matrix.arch }}' for MSVC CRT lookup" }
+          $redistRoots = @("C:\Program Files\Microsoft Visual Studio\2022", "C:\Program Files (x86)\Microsoft Visual Studio\2022")
+          $crtDir = $null
+          foreach ($root in $redistRoots) {
+            if (-not (Test-Path $root)) { continue }
+            $hit = Get-ChildItem -Path $root -Recurse -ErrorAction SilentlyContinue -Filter "vcruntime140.dll" |
+              Where-Object { $_.FullName -match "\\$archDir\\Microsoft\.VC[0-9]+\.CRT\\" } |
+              Select-Object -First 1
+            if ($hit) { $crtDir = Split-Path $hit.FullName; break }
+          }
+          if (-not $crtDir) { throw "MSVC CRT directory not found under VS 2022 redist for arch $archDir" }
+          Write-Host "Using MSVC CRT from: $crtDir"
+          foreach ($dll in @("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll")) {
+            $src = Join-Path $crtDir $dll
+            if (Test-Path $src) {
+              Copy-Item -Path $src -Destination release\\
+            } else {
+              Write-Warning "MSVC CRT $dll not found in $crtDir"
+            }
+          }
+
       - name: Copy license files to release directory
         run: |
           New-Item -ItemType Directory -Path release\\LICENSES
@@ -320,6 +361,31 @@ jobs:
             Write-Warning "Could not push cache update after retries."
             exit 0
           }
+
+      - name: Verify required Windows runtime files are present
+        run: |
+          # Mirror the macOS enforcement (it fails the build if the platform plugin
+          # is missing). Fail the Windows build if any runtime file the GUI tools need
+          # to start on a clean machine is absent from the release directory.
+          $required = @(
+            "release\\qt.conf",
+            "release\\platforms\\qwindows.dll",
+            "release\\Qt6Core.dll",
+            "release\\Qt6Gui.dll",
+            "release\\Qt6Widgets.dll",
+            "release\\FLAC.dll",
+            "release\\ld-lds-converter.exe",
+            "release\\ld-analyse.exe",
+            "release\\vcruntime140.dll",
+            "release\\vcruntime140_1.dll"
+          )
+          $missing = @()
+          foreach ($f in $required) { if (-not (Test-Path $f)) { $missing += $f } }
+          if ($missing.Count -gt 0) {
+            $msg = "Missing required Windows runtime files (packaging incomplete):`n" + ($missing -join "`n")
+            throw $msg
+          }
+          Write-Host "All required Windows runtime files present."
 
       - name: Upload release artifact
         uses: actions/upload-artifact@v7
