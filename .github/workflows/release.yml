@@ -69,30 +69,36 @@ jobs:
           fetch-tags: true
           submodules: true
 
-      - name: Ensure tag and release do not already exist
+      - name: Detect existing tag and release
+        id: existing
         if: ${{ steps.mode.outputs.mode == 'manual_release' }}
         env:
           RELEASE_TAG: ${{ steps.mode.outputs.release_tag }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
+          TAG_EXISTS=false
           if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
-            echo "Tag '${RELEASE_TAG}' already exists on origin."
-            exit 1
+            TAG_EXISTS=true
           fi
+          echo "tag_exists=${TAG_EXISTS}" >> "$GITHUB_OUTPUT"
 
-          if gh release view "${RELEASE_TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "Release '${RELEASE_TAG}' already exists."
-            exit 1
+          if [ "${TAG_EXISTS}" = "true" ]; then
+            echo "Tag '${RELEASE_TAG}' already exists on origin; refreshing the release from the existing tag."
+          else
+            if gh release view "${RELEASE_TAG}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+              echo "Release '${RELEASE_TAG}' exists without a tag, which is unexpected." >&2
+              exit 1
+            fi
           fi
 
       - name: Configure git identity
-        if: ${{ steps.mode.outputs.mode == 'manual_release' }}
+        if: ${{ steps.mode.outputs.mode == 'manual_release' && steps.existing.outputs.tag_exists != 'true' }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Update codebase version tags
-        if: ${{ steps.mode.outputs.mode == 'manual_release' }}
+        if: ${{ steps.mode.outputs.mode == 'manual_release' && steps.existing.outputs.tag_exists != 'true' }}
         env:
           VERSION: ${{ steps.mode.outputs.release_tag }}
         run: |
@@ -127,7 +133,7 @@ jobs:
           PY
 
       - name: Commit version updates
-        if: ${{ steps.mode.outputs.mode == 'manual_release' }}
+        if: ${{ steps.mode.outputs.mode == 'manual_release' && steps.existing.outputs.tag_exists != 'true' }}
         env:
           RELEASE_TAG: ${{ steps.mode.outputs.release_tag }}
         run: |
@@ -141,7 +147,7 @@ jobs:
           fi
 
       - name: Create and push release tag
-        if: ${{ steps.mode.outputs.mode == 'manual_release' }}
+        if: ${{ steps.mode.outputs.mode == 'manual_release' && steps.existing.outputs.tag_exists != 'true' }}
         env:
           RELEASE_TAG: ${{ steps.mode.outputs.release_tag }}
         run: |
