@@ -348,6 +348,12 @@ DataConverter::OutputFormat parseOutputFormat(const QString &formatString, bool 
         if (ok) *ok = true;
         return DataConverter::OutputFormat::Flac;
     }
+    // "ldf" writes a real FLAC container with a .ldf extension, used as a
+    // "LaserDisc FLAC" context label. It is not a separate codec.
+    if (normalizedFormat == QStringLiteral("ldf")) {
+        if (ok) *ok = true;
+        return DataConverter::OutputFormat::FlacLdf;
+    }
     if (normalizedFormat == QStringLiteral("s16") ||
         normalizedFormat == QStringLiteral("raw") ||
         normalizedFormat == QStringLiteral("raw16")) {
@@ -416,6 +422,7 @@ bool wantsGui(int argc, char *argv[])
             argument == QLatin1String("--format") ||
             argument == QLatin1String("--s16") ||
             argument == QLatin1String("--flac") ||
+            argument == QLatin1String("--ldf") ||
             argument == QLatin1String("--sample-rate") ||
             argument == QLatin1String("--compression-level")) {
             hasExplicitCliOption = true;
@@ -481,7 +488,7 @@ int main(int argc, char *argv[])
         parser.addOption(targetVideoFileOption);
 
         QCommandLineOption outputFormatOption(QStringList() << "format",
-                    QCoreApplication::translate("main", "Output format for unpack mode: flac (default), s16 or riff"),
+                    QCoreApplication::translate("main", "Output format for unpack mode: flac (default), ldf, s16 or riff"),
                     QCoreApplication::translate("main", "format"), "flac");
         parser.addOption(outputFormatOption);
 
@@ -491,7 +498,7 @@ int main(int argc, char *argv[])
         bool outputFormatIsValid = false;
         const DataConverter::OutputFormat outputFormat = parseOutputFormat(parser.value(outputFormatOption), &outputFormatIsValid);
         if (!outputFormatIsValid) {
-            qCritical("Invalid --format value. Use one of: flac, s16, riff");
+            qCritical("Invalid --format value. Use one of: flac, ldf, s16, riff");
             return -1;
         }
 
@@ -573,7 +580,7 @@ int main(int argc, char *argv[])
 
     // Option to choose output format
     QCommandLineOption outputFormatOption(QStringList() << "format",
-                QCoreApplication::translate("main", "Output format for unpack mode: flac (default), s16 or riff"),
+                QCoreApplication::translate("main", "Output format for unpack mode: flac (default), ldf, s16 or riff"),
                 QCoreApplication::translate("main", "format"), "flac");
     parser.addOption(outputFormatOption);
 
@@ -585,6 +592,10 @@ int main(int argc, char *argv[])
     QCommandLineOption showFlacOption(QStringList() << "flac",
                                       QCoreApplication::translate("main", "Shortcut for --format flac"));
     parser.addOption(showFlacOption);
+
+    QCommandLineOption showLdfOption(QStringList() << "ldf",
+                                     QCoreApplication::translate("main", "Shortcut for --format ldf (FLAC container with .ldf extension)"));
+    parser.addOption(showLdfOption);
 
     QCommandLineOption flacSampleRateOption(QStringList() << "sample-rate",
                                             QCoreApplication::translate("main", "FLAC sample rate in Hz (default: 40000)"),
@@ -608,6 +619,7 @@ int main(int argc, char *argv[])
     const bool isRIFF = parser.isSet(showRIFFOption);
     const bool isS16 = parser.isSet(showS16Option);
     const bool isFlac = parser.isSet(showFlacOption);
+    const bool isLdf = parser.isSet(showLdfOption);
 
     // Check that both pack and unpack are not set
     if (isUnpacking && isPacking) {
@@ -615,18 +627,18 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    if (isPacking && (isRIFF || isS16 || isFlac || parser.isSet(outputFormatOption))) {
-        qCritical("Output-format options (--riff, --s16, --flac, --format) are only valid with unpack mode.");
+    if (isPacking && (isRIFF || isS16 || isFlac || isLdf || parser.isSet(outputFormatOption))) {
+        qCritical("Output-format options (--riff, --s16, --flac, --ldf, --format) are only valid with unpack mode.");
         return -1;
     }
 
-    if (isRIFF && (isS16 || isFlac || parser.isSet(outputFormatOption))) {
-        qCritical("Specify only one unpack output format option: --riff OR --s16/--flac/--format.");
+    if (isRIFF && (isS16 || isFlac || isLdf || parser.isSet(outputFormatOption))) {
+        qCritical("Specify only one unpack output format option: --riff OR --s16/--flac/--ldf/--format.");
         return -1;
     }
 
-    if (isS16 && isFlac) {
-        qCritical("Specify only one of --s16 or --flac.");
+    if ((isS16 && isFlac) || (isS16 && isLdf) || (isFlac && isLdf)) {
+        qCritical("Specify only one of --s16, --flac or --ldf.");
         return -1;
     }
 
@@ -642,11 +654,13 @@ int main(int argc, char *argv[])
         outputFormat = DataConverter::OutputFormat::S16Raw;
     } else if (isFlac) {
         outputFormat = DataConverter::OutputFormat::Flac;
+    } else if (isLdf) {
+        outputFormat = DataConverter::OutputFormat::FlacLdf;
     } else if (!modePacking) {
         bool outputFormatIsValid = false;
         outputFormat = parseOutputFormat(parser.value(outputFormatOption), &outputFormatIsValid);
         if (!outputFormatIsValid) {
-            qCritical("Invalid --format value. Use one of: flac, s16, riff");
+            qCritical("Invalid --format value. Use one of: flac, ldf, s16, riff");
             return -1;
         }
     }

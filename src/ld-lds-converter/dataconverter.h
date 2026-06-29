@@ -38,9 +38,17 @@ class DataConverter : public QObject
 public:
     enum class OutputFormat {
         Flac,
+        FlacLdf,
         S16Raw,
         RiffWave
     };
+
+    // Flac and FlacLdf both write real FLAC containers; FlacLdf only differs
+    // in the on-disk extension (.ldf) used as a "LaserDisc FLAC" context label.
+    static bool isFlacFamily(OutputFormat outputFormatParam)
+    {
+        return outputFormatParam == OutputFormat::Flac || outputFormatParam == OutputFormat::FlacLdf;
+    }
 
     explicit DataConverter(QString inputFileNameParam,
                            QString outputFileNameParam,

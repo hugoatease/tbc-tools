@@ -25,6 +25,7 @@
 #include "dataconverter.h"
 #include "tbc/logging.h"
 #include <FLAC/stream_encoder.h>
+#include <FLAC/metadata.h>
 
 #include <QByteArray>
 #include <QDir>
@@ -82,6 +83,10 @@ QString DataConverter::outputExtensionForFormat(OutputFormat outputFormatParam)
     switch (outputFormatParam) {
     case OutputFormat::Flac:
         return QStringLiteral(".flac");
+    case OutputFormat::FlacLdf:
+        // FlacLdf writes a real FLAC container; .ldf is a context label used
+        // to distinguish LaserDisc RF FLAC from generic audio FLAC.
+        return QStringLiteral(".ldf");
     case OutputFormat::S16Raw:
         return QStringLiteral(".s16");
     case OutputFormat::RiffWave:
@@ -204,7 +209,7 @@ void DataConverter::closeInputFile(void)
 // Method to open the output file for writing
 bool DataConverter::openOutputFile(void)
 {
-    if (!isPacking && outputFormat == OutputFormat::Flac) {
+    if (!isPacking && isFlacFamily(outputFormat)) {
         return openFlacEncoder();
     }
 
@@ -259,6 +264,46 @@ bool DataConverter::openFlacEncoder(void)
     FLAC__stream_encoder_set_streamable_subset(flacEncoder, true);
     FLAC__stream_encoder_set_verify(flacEncoder, true);
 
+    // Embed a VORBIS_COMMENT metadata block recording the capture device so the
+    // provenance of the RF sample stream is preserved in the output file. Both
+    // the .flac and .ldf (LaserDisc FLAC) outputs carry the same container and
+    // therefore the same comment.
+    FLAC__StreamMetadata *vorbisComment = FLAC__metadata_object_new(FLAC__METADATA_TYPE_VORBIS_COMMENT);
+    if (vorbisComment == nullptr) {
+        qCritical("Could not allocate FLAC VORBIS_COMMENT metadata block");
+        FLAC__stream_encoder_delete(flacEncoder);
+        flacEncoder = nullptr;
+        return false;
+    }
+    const char *captureDeviceField = "Domesday Duplicator 10-bit 40msps";
+    const char *captureDeviceName = "CAPTUREDEVICE";
+    FLAC__StreamMetadata_VorbisComment_Entry captureDeviceEntry{};
+    if (!FLAC__metadata_object_vorbiscomment_entry_from_name_value_pair(
+            &captureDeviceEntry, captureDeviceName, captureDeviceField)) {
+        qCritical("Could not build FLAC VORBIS_COMMENT entry for capture device");
+        FLAC__metadata_object_delete(vorbisComment);
+        FLAC__stream_encoder_delete(flacEncoder);
+        flacEncoder = nullptr;
+        return false;
+    }
+    if (!FLAC__metadata_object_vorbiscomment_append_comment(vorbisComment, captureDeviceEntry, /*copy=*/true)) {
+        qCritical("Could not append FLAC VORBIS_COMMENT capture-device entry");
+        FLAC__metadata_object_delete(vorbisComment);
+        FLAC__stream_encoder_delete(flacEncoder);
+        flacEncoder = nullptr;
+        return false;
+    }
+    const FLAC__StreamMetadata *metadataChain[1] = { vorbisComment };
+    const bool metadataSetOk = FLAC__stream_encoder_set_metadata(flacEncoder,
+            const_cast<FLAC__StreamMetadata **>(metadataChain), 1);
+    if (!metadataSetOk) {
+        qCritical("Could not attach FLAC metadata to the encoder");
+        FLAC__metadata_object_delete(vorbisComment);
+        FLAC__stream_encoder_delete(flacEncoder);
+        flacEncoder = nullptr;
+        return false;
+    }
+
     FLAC__StreamEncoderInitStatus initStatus;
     if (outputFileName.isEmpty()) {
         tbcDebugStream() << "No output filename was provided, writing FLAC output to stdout";
@@ -270,6 +315,7 @@ bool DataConverter::openFlacEncoder(void)
         flacOutputFileHandle = std::fopen(encodedFileName.constData(), "wb");
         if (flacOutputFileHandle == nullptr) {
             qCritical("Could not open FLAC output file");
+            FLAC__metadata_object_delete(vorbisComment);
             FLAC__stream_encoder_delete(flacEncoder);
             flacEncoder = nullptr;
             return false;
@@ -277,6 +323,12 @@ bool DataConverter::openFlacEncoder(void)
         closeFlacOutputFileHandle = true;
         initStatus = FLAC__stream_encoder_init_FILE(flacEncoder, flacOutputFileHandle, nullptr, nullptr);
     }
+
+    // The encoder copies the metadata blocks during init (they are written at
+    // the start of the FLAC stream), so the caller-owned object can be freed
+    // now regardless of whether init succeeded or failed.
+    FLAC__metadata_object_delete(vorbisComment);
+    vorbisComment = nullptr;
 
     if (initStatus != FLAC__STREAM_ENCODER_INIT_STATUS_OK) {
         qCritical("Could not initialise FLAC encoder: %s", FLAC__StreamEncoderInitStatusString[initStatus]);
@@ -375,7 +427,7 @@ bool DataConverter::verifyOutputFile(void) const
     }
 
     if (!isPacking) {
-        if (outputFormat == OutputFormat::Flac && header.size() >= 4 && header != QByteArrayLiteral("fLaC")) {
+        if (isFlacFamily(outputFormat) && header.size() >= 4 && header != QByteArrayLiteral("fLaC")) {
             qWarning() << "Output verification failed: FLAC header missing in" << outputFileName;
             return false;
         }
@@ -412,7 +464,7 @@ bool DataConverter::writeUnpackedSamples(const qint16 *samples, qint32 sampleCou
         return true;
     }
 
-    if (!isPacking && outputFormat == OutputFormat::Flac) {
+    if (!isPacking && isFlacFamily(outputFormat)) {
         if (flacEncoder == nullptr) {
             qCritical("FLAC encoder is not initialised");
             return false;

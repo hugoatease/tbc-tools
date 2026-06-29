@@ -39,7 +39,6 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QMutexLocker>
-#include <QPalette>
 #include <QProgressBar>
 #include <QSignalBlocker>
 #include <QSet>
@@ -161,162 +160,6 @@ QString normalizePathForCurrentPlatform(const QString &path)
     return QDir::toNativeSeparators(normalized);
 }
 
-void applyHighContrastStylesheet(QWidget *widget)
-{
-    if (widget == nullptr) {
-        return;
-    }
-
-    const bool isDarkBackground = widget->palette().color(QPalette::Window).lightnessF() < 0.5;
-    if (isDarkBackground) {
-        widget->setStyleSheet(QStringLiteral(
-            "QDialog#ConverterDialog {"
-            "  background-color: #202124;"
-            "  color: #F5F7FA;"
-            "}"
-            "QDialog#ConverterDialog QLabel {"
-            "  color: #F5F7FA;"
-            "}"
-            "QDialog#ConverterDialog QLineEdit,"
-            "QDialog#ConverterDialog QComboBox {"
-            "  background-color: #2C2F33;"
-            "  color: #F5F7FA;"
-            "  border: 1px solid #5F6368;"
-            "  border-radius: 4px;"
-            "  padding: 4px;"
-            "  selection-background-color: #8AB4F8;"
-            "  selection-color: #202124;"
-            "}"
-            "QDialog#ConverterDialog QLineEdit {"
-            "  placeholder-text-color: #D0D4D9;"
-            "}"
-            "QDialog#ConverterDialog QComboBox QAbstractItemView {"
-            "  background-color: #2C2F33;"
-            "  color: #F5F7FA;"
-            "  selection-background-color: #8AB4F8;"
-            "  selection-color: #202124;"
-            "}"
-            "QDialog#ConverterDialog QTableWidget {"
-            "  background-color: #2C2F33;"
-            "  color: #F5F7FA;"
-            "  border: 1px solid #5F6368;"
-            "  border-radius: 4px;"
-            "}"
-            "QDialog#ConverterDialog QHeaderView::section {"
-            "  background-color: #2C2F33;"
-            "  color: #F5F7FA;"
-            "  border: 1px solid #5F6368;"
-            "  padding: 2px;"
-            "}"
-            "QDialog#ConverterDialog QTableWidget::item:selected {"
-            "  background-color: #8AB4F8;"
-            "  color: #202124;"
-            "}"
-            "QDialog#ConverterDialog QCheckBox {"
-            "  color: #F5F7FA;"
-            "}"
-            "QDialog#ConverterDialog QPushButton {"
-            "  background-color: #3C4043;"
-            "  color: #F5F7FA;"
-            "  border: 1px solid #5F6368;"
-            "  border-radius: 4px;"
-            "  padding: 4px 10px;"
-            "}"
-            "QDialog#ConverterDialog QPushButton:hover {"
-            "  background-color: #4A4F53;"
-            "}"
-            "QDialog#ConverterDialog QPushButton:pressed {"
-            "  background-color: #303336;"
-            "}"
-            "QDialog#ConverterDialog QProgressBar {"
-            "  background-color: #2C2F33;"
-            "  color: #F5F7FA;"
-            "  border: 1px solid #5F6368;"
-            "  border-radius: 4px;"
-            "  text-align: center;"
-            "}"
-            "QDialog#ConverterDialog QProgressBar::chunk {"
-            "  background-color: #8AB4F8;"
-            "}"
-            "QDialog#ConverterDialog QLabel#progressPercentLabel {"
-            "  color: #F5F7FA;"
-            "}"));
-        return;
-    }
-
-    widget->setStyleSheet(QStringLiteral(
-        "QDialog#ConverterDialog {"
-        "  background-color: #F5F6F8;"
-        "  color: #16181C;"
-        "}"
-        "QDialog#ConverterDialog QLabel {"
-        "  color: #16181C;"
-        "}"
-        "QDialog#ConverterDialog QLineEdit,"
-        "QDialog#ConverterDialog QComboBox {"
-        "  background-color: #FFFFFF;"
-        "  color: #16181C;"
-        "  border: 1px solid #8E949B;"
-        "  border-radius: 4px;"
-        "  padding: 4px;"
-        "  selection-background-color: #0B57D0;"
-        "  selection-color: #FFFFFF;"
-        "}"
-        "QDialog#ConverterDialog QLineEdit {"
-        "  placeholder-text-color: #5F6368;"
-        "}"
-        "QDialog#ConverterDialog QComboBox QAbstractItemView {"
-        "  background-color: #FFFFFF;"
-        "  color: #16181C;"
-        "  selection-background-color: #0B57D0;"
-        "  selection-color: #FFFFFF;"
-        "}"
-        "QDialog#ConverterDialog QTableWidget {"
-        "  background-color: #FFFFFF;"
-        "  color: #16181C;"
-        "  border: 1px solid #8E949B;"
-        "  border-radius: 4px;"
-        "}"
-        "QDialog#ConverterDialog QHeaderView::section {"
-        "  background-color: #FFFFFF;"
-        "  color: #16181C;"
-        "  border: 1px solid #8E949B;"
-        "  padding: 2px;"
-        "}"
-        "QDialog#ConverterDialog QTableWidget::item:selected {"
-        "  background-color: #0B57D0;"
-        "  color: #FFFFFF;"
-        "}"
-        "QDialog#ConverterDialog QCheckBox {"
-        "  color: #16181C;"
-        "}"
-        "QDialog#ConverterDialog QPushButton {"
-        "  background-color: #E5E8EC;"
-        "  color: #16181C;"
-        "  border: 1px solid #8E949B;"
-        "  border-radius: 4px;"
-        "  padding: 4px 10px;"
-        "}"
-        "QDialog#ConverterDialog QPushButton:hover {"
-        "  background-color: #D8DDE3;"
-        "}"
-        "QDialog#ConverterDialog QPushButton:pressed {"
-        "  background-color: #C9D0D8;"
-        "}"
-        "QDialog#ConverterDialog QProgressBar {"
-        "  background-color: #FFFFFF;"
-        "  color: #16181C;"
-        "  border: 1px solid #8E949B;"
-        "  border-radius: 4px;"
-        "  text-align: center;"
-        "}"
-        "QDialog#ConverterDialog QProgressBar::chunk {"
-        "  background-color: #0B57D0;"
-        "}"
-        "QDialog#ConverterDialog QLabel#progressPercentLabel {"
-        "  color: #16181C;"
-        "}"));
-}
 } // namespace
 
 ConverterDialog::ConverterDialog(QWidget *parent)
@@ -333,12 +176,12 @@ ConverterDialog::ConverterDialog(QWidget *parent)
 {
     ui->setupUi(this);
     setAcceptDrops(true);
-    applyHighContrastStylesheet(this);
     resetProgressDisplay();
 
     if (ui->outputFormatComboBox) {
         ui->outputFormatComboBox->clear();
         ui->outputFormatComboBox->addItem(tr("FLAC (default)"), static_cast<int>(DataConverter::OutputFormat::Flac));
+        ui->outputFormatComboBox->addItem(tr("FLAC as .ldf (LaserDisc FLAC)"), static_cast<int>(DataConverter::OutputFormat::FlacLdf));
         ui->outputFormatComboBox->addItem(tr("s16 uncompressed"), static_cast<int>(DataConverter::OutputFormat::S16Raw));
         ui->outputFormatComboBox->setCurrentIndex(0);
     }
@@ -520,9 +363,14 @@ void ConverterDialog::on_inputBrowseButton_clicked()
 void ConverterDialog::on_outputBrowseButton_clicked()
 {
     const DataConverter::OutputFormat format = selectedOutputFormat();
-    const QString filter = format == DataConverter::OutputFormat::Flac
-                               ? tr("FLAC output (*.flac);;All Files (*)")
-                               : tr("Signed 16-bit raw (*.s16 *.raw *.pcm);;All Files (*)");
+    QString filter;
+    if (format == DataConverter::OutputFormat::FlacLdf) {
+        filter = tr("LaserDisc FLAC output (*.ldf);;All Files (*)");
+    } else if (DataConverter::isFlacFamily(format)) {
+        filter = tr("FLAC output (*.flac);;All Files (*)");
+    } else {
+        filter = tr("Signed 16-bit raw (*.s16 *.raw *.pcm);;All Files (*)");
+    }
 
     QString suggestedOutput = normalizePathForCurrentPlatform(ui->outputLineEdit->text());
     if (suggestedOutput.isEmpty()) {
