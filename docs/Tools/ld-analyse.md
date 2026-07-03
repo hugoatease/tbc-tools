@@ -378,6 +378,27 @@ If you select YC and Y or C, the YC line will dim to allow easier viewing of the
 
 ![](assets/ld-analyse_osc-all.png)
 
+## Waveform monitor
+
+The waveform monitor (Scopes menu, or `Ctrl+M`) shows a multi-line luminance histogram of the current frame: every active line is accumulated into a single intensity display, just like the parade/Y-all mode of a broadcast waveform monitor. Brighter areas show where more samples sit at a given amplitude, so a stable picture renders as bright horizontal bands at the signal's black, white and mid-grey levels.
+
+The monitor reads the raw TBC samples and converts them into the 10-bit CVBS domain before display (see 'Scope measurement domain' below), so the vertical axis is labelled in real video units. The Y-axis can be shown in IRE, millivolts, or raw 10-bit samples, and three dashed level markers are drawn from the source metadata:
+
+* **Blanking** - the 0 IRE / 0 mV reference
+* **Black** - picture black (for NTSC/PAL_M this sits at the 7.5 IRE setup level, derived from the black/white levels when the source metadata does not record a separate blanking value)
+* **White** - 100 IRE / full active amplitude
+
+ld-decode metadata does not carry sync-tip or peak 16-bit levels, so those are not marked.
+
+The controls along the bottom of the window are:
+
+* **Channel** - `Y+C (Composite)` shows the full composite signal (or the sum of the separate luma and chroma channels for a Y/C source); `Y (Luma only)` shows just the luma. When the source is composite-only, luma is recovered with a 4-tap averaging notch filter centred on the colour subcarrier (fs/4 at 4FSC sampling), which cleanly removes the chroma carrier.
+* **Range** - `Active video` accumulates only the active portion of each line (blanking and sync excluded); `Whole frame` accumulates every sample including sync and blanking, useful for checking the full composite excursion.
+* **Phosphor** - switches to a green-on-black trace emulating a classic analogue scope phosphor.
+* **Intensity** - gain for the brightness knee. Higher values brighten sparse signals and reach saturation sooner; lower values reduce saturation in uniform scenes.
+
+The window position and phosphor setting are restored between sessions.
+
 ## Vectorscope
 
 The vectorscope shows the colour information within the current frame.
@@ -395,6 +416,18 @@ The screenshot below shows 75% PAL colour bars on the vectorscope. These are cor
 ![](assets/ld-analyse_Vectorscope.png)
 
 The 'Defocus' checkbox blurs the dots on the display a little; this can be useful if you have a very good-quality source video and the colour blobs are hard to see.
+
+The 'Multi-colour' checkbox colours each plotted point by its position on the U/V chart, using the ITU-R BT.601 inverse matrix to recover the hue that would produce a signal at that chroma position. With a colour-bar source each blob then renders in the actual colour of its graticule target box (blue, green, cyan, red, magenta, yellow), making it easy to see at a glance which colour a given blob represents; achromatic samples near the centre render as white. This is independent of the field-colour 'Blend' option (where present), and the two can be enabled together.
+
+## Scope measurement domain
+
+The waveform monitor and vectorscope read the raw TBC samples and convert them into the 10-bit CVBS_U10_4FSC domain before display, using the same normative per-system signal levels as decode-orc:
+
+* PAL (EBU Tech. 3280-E): blanking/black 256, white 844, peak 1019; active amplitude 700 mV
+* NTSC (SMPTE 244M/170M): blanking 240, black 282 (7.5 IRE setup), white 800, peak 1019; active amplitude 714.3 mV
+* PAL_M (ITU-R BT.1700-1): shares the NTSC levels and amplitude
+
+This replaces the older fixed 'PAL 7 mV/IRE, NTSC 7.143 mV/IRE' assumption with per-source measured levels combined with the per-system active amplitude, so the scope readings track the actual source metadata. For NTSC and PAL_M sources whose metadata does not record a separate blanking level, the 0 IRE blanking reference is derived from the 7.5 IRE setup black level so the black and blanking markers are placed correctly.
 
 ## Closed Captions
 

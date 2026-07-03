@@ -46,6 +46,8 @@ public:
     QByteArray getOscilloscopeDialogGeometry(void);
     void setVectorscopeDialogGeometry(QByteArray vectorscopeDialogGeometry);
     QByteArray getVectorscopeDialogGeometry(void);
+    void setWaveformMonitorDialogGeometry(QByteArray waveformMonitorDialogGeometry);
+    QByteArray getWaveformMonitorDialogGeometry(void);
     void setDropoutAnalysisDialogGeometry(QByteArray dropoutAnalysisDialogGeometry);
     QByteArray getDropoutAnalysisDialogGeometry(void);
     void setVisibleDropoutAnalysisDialogGeometry(QByteArray visibleDropoutDialogGeometry);
@@ -97,6 +99,7 @@ private:
         QByteArray vbiDialogGeometry;
         QByteArray oscilloscopeDialogGeometry;
         QByteArray vectorscopeDialogGeometry;
+        QByteArray waveformMonitorDialogGeometry;
         QByteArray dropoutAnalysisDialogGeometry;
         QByteArray visibleDropoutAnalysisDialogGeometry;
         QByteArray blackSnrAnalysisDialogGeometry;

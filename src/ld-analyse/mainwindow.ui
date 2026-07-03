@@ -765,6 +765,7 @@
      <string>Scopes</string>
     </property>
     <addaction name="actionVectorscope"/>
+    <addaction name="actionWaveform_monitor"/>
     <addaction name="actionLine_scope"/>
     <addaction name="actionRGB_scope"/>
     <addaction name="actionYUV_range_scope"/>
@@ -927,6 +928,17 @@
     <string>Ctrl+U</string>
    </property>
   </action>
+  <action name="actionWaveform_monitor">
+   <property name="text">
+    <string>Waveform monitor...</string>
+   </property>
+   <property name="toolTip">
+    <string>Multi-line waveform monitor (sample-luminance histogram across all active lines)</string>
+   </property>
+   <property name="shortcut">
+    <string>Ctrl+M</string>
+   </property>
+  </action>
   <action name="actionField_timing_scope">
    <property name="text">
     <string>Field timing scope...</string>
@@ -956,9 +968,6 @@
   <action name="actionVideo_metadata">
    <property name="text">
     <string>Video metadata...</string>
-   </property>
-   <property name="shortcut">
-    <string>Ctrl+M</string>
    </property>
   </action>
   <action name="actionZoom_1x">

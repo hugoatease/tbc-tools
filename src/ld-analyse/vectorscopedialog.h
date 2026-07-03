@@ -56,6 +56,7 @@ signals:
 private slots:
     void on_defocusCheckBox_clicked();
     void on_blendColorCheckBox_clicked();
+    void on_multiColourCheckBox_clicked();
     void on_graticuleButtonGroup_buttonClicked(QAbstractButton *button);
     void on_fieldSelectButtonGroup_buttonClicked(QAbstractButton *button);
     void on_renderModeButtonGroup_buttonClicked(QAbstractButton *button);

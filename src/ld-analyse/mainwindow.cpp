@@ -1350,6 +1350,7 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     yuvRangeDialog = new YuvRangeDialog(this);
     yuvRangeSettings = yuvRangeDialog->settings();
     vectorscopeDialog = new VectorscopeDialog(this);
+    waveformMonitorDialog = new WaveformMonitorDialog(this);
     fieldTimingDialog = new FieldTimingDialog(this);
     aboutDialog = new AboutDialog(this);
     vbiDialog = new VbiDialog(this);
@@ -1543,6 +1544,9 @@ MainWindow::MainWindow(QString inputFilenameParam, bool metadataOnlyParam, QWidg
     if (!vectorscopeDialog->restoreGeometry(configuration.getVectorscopeDialogGeometry())) {
         vectorscopeDialog->resize(900, 730);
     }
+    if (!waveformMonitorDialog->restoreGeometry(configuration.getWaveformMonitorDialogGeometry())) {
+        waveformMonitorDialog->resize(900, 500);
+    }
     dropoutAnalysisDialog->restoreGeometry(configuration.getDropoutAnalysisDialogGeometry());
     visibleDropoutAnalysisDialog->restoreGeometry(configuration.getVisibleDropoutAnalysisDialogGeometry());
     blackSnrAnalysisDialog->restoreGeometry(configuration.getBlackSnrAnalysisDialogGeometry());
@@ -1656,6 +1660,7 @@ MainWindow::~MainWindow()
     configuration.setVbiDialogGeometry(vbiDialog->saveGeometry());
     configuration.setOscilloscopeDialogGeometry(oscilloscopeDialog->saveGeometry());
     configuration.setVectorscopeDialogGeometry(vectorscopeDialog->saveGeometry());
+    configuration.setWaveformMonitorDialogGeometry(waveformMonitorDialog->saveGeometry());
     configuration.setDropoutAnalysisDialogGeometry(dropoutAnalysisDialog->saveGeometry());
     configuration.setVisibleDropoutAnalysisDialogGeometry(visibleDropoutAnalysisDialog->saveGeometry());
     configuration.setBlackSnrAnalysisDialogGeometry(blackSnrAnalysisDialog->saveGeometry());
@@ -2615,6 +2620,9 @@ void MainWindow::updateImage()
     if (vectorscopeDialog->isVisible()) {
         updateVectorscopeDialogue();
     }
+    if (waveformMonitorDialog->isVisible()) {
+        updateWaveformMonitorDialogue();
+    }
     if (fieldTimingDialog->isVisible()) {
         updateFieldTimingDialogue();
     }
@@ -3426,6 +3434,45 @@ void MainWindow::updateVectorscopeDialogue()
     // Update the vectorscope dialogue
     vectorscopeDialog->showTraceImage(tbcSource.getComponentFrame(), tbcSource.getVideoParameters(),
                                       tbcSource.getViewMode(), currentFieldNumber % 2);
+}
+
+// Method to update the waveform monitor — feeds the per-field 16-bit TBC
+// samples through the dialog, which converts them to the 10-bit CVBS domain.
+void MainWindow::updateWaveformMonitorDialogue()
+{
+    if (asyncFrameRenderInProgress && shouldRenderFrameAsync()) {
+        return;
+    }
+    if (!tbcSource.getIsSourceLoaded() || tbcSource.getIsMetadataOnly()) {
+        return;
+    }
+    const TbcSource::FieldTimingData timingData = tbcSource.getFieldTimingData();
+    if (!timingData.valid) {
+        return;
+    }
+    // Interleave the two fields into a single flat composite/luma/chroma
+    // buffer per channel (field 1 then field 2), matching the waveform
+    // monitor's expected line-contiguous layout.
+    auto interleave = [](const std::vector<uint16_t>& first,
+                         const std::vector<uint16_t>& second) -> std::vector<uint16_t> {
+        std::vector<uint16_t> out;
+        out.reserve(first.size() + second.size());
+        out.insert(out.end(), first.begin(), first.end());
+        out.insert(out.end(), second.begin(), second.end());
+        return out;
+    };
+
+    const std::vector<uint16_t> composite =
+        interleave(timingData.firstFieldComposite, timingData.secondFieldComposite);
+    const std::vector<uint16_t> luma =
+        interleave(timingData.firstFieldLuma, timingData.secondFieldLuma);
+    const std::vector<uint16_t> chroma =
+        interleave(timingData.firstFieldChroma, timingData.secondFieldChroma);
+
+    waveformMonitorDialog->setData(composite, luma, chroma,
+                                   timingData.firstFieldHeight,
+                                   timingData.secondFieldHeight,
+                                   tbcSource.getVideoParameters());
 }
 
 // Method to update the field timing scope
@@ -5131,6 +5178,19 @@ void MainWindow::on_actionVectorscope_triggered()
         updateVectorscopeDialogue();
         vectorscopeDialog->raise();
         vectorscopeDialog->activateWindow();
+    }
+}
+
+// Display the waveform monitor view
+void MainWindow::on_actionWaveform_monitor_triggered()
+{
+    if (tbcSource.getIsSourceLoaded() && !tbcSource.getIsMetadataOnly()) {
+        if (!waveformMonitorDialog->isVisible()) {
+            waveformMonitorDialog->show();
+        }
+        updateWaveformMonitorDialogue();
+        waveformMonitorDialog->raise();
+        waveformMonitorDialog->activateWindow();
     }
 }
 

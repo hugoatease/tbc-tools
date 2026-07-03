@@ -300,12 +300,15 @@ void VectorscopeDialog::showTraceImage(const ComponentFrame &componentFrame, con
             ui->fieldSelectFirstRadioButton->setEnabled(true);
             ui->fieldSelectSecondRadioButton->setEnabled(true);
             ui->blendColorCheckBox->setEnabled(true);
+            ui->multiColourCheckBox->setEnabled(true);
             break;
 
         case TbcSource::ViewMode::FIELD_VIEW:
             ui->fieldSelectAllRadioButton->setEnabled(false);
             ui->blendColorCheckBox->setEnabled(false);
             ui->blendColorCheckBox->setChecked(false);
+            // Multi-colour is position-based hue, so it stays useful for a
+            // single field — leave it enabled in field view.
 
             if (isFirstField) {
                 ui->fieldSelectFirstRadioButton->setEnabled(true);
@@ -467,6 +470,7 @@ QImage VectorscopeDialog::getTraceImage(const ComponentFrame &componentFrame, co
     constexpr qint32 HALF_SIZE = SIZE / 2;
     const bool densityMode = renderModeDensityRadioButton && renderModeDensityRadioButton->isChecked();
     const bool blendColors = ui->blendColorCheckBox->isChecked();
+    const bool multiColour = ui->multiColourCheckBox->isChecked();
 
     if (componentFrame.getWidth() <= 0 || componentFrame.getHeight() <= 0) {
         QImage emptyImage(SIZE, SIZE, QImage::Format_RGB888);
@@ -521,6 +525,47 @@ QImage VectorscopeDialog::getTraceImage(const ComponentFrame &componentFrame, co
     const qint32 xEnd = xEndInclusive + 1;
     const qint32 yEnd = yEndInclusive + 1;
 
+    // Multi-colour colourise: colour each plotted point by its U/V position on
+    // the scope canvas via the BT.601 inverse matrix (ITU-R BT.470-6 / EBU
+    // Tech. 3280-E), ported from decode-orc's vectorscope_dialog Pass-2.
+    // Independent of the Blend (field-colour) checkbox.
+    //
+    // The plotted U/V samples are scaled by ireRange in 16-bit units
+    // (U_sample = U_bt601 * ireRange), so dividing the recovered canvas U/V by
+    // ireRange yields the raw BT.601 U/V coefficient — exactly what decode-orc
+    // computes as u_uv / kVectorscopeSignedFullScale (its amplitude_scale).
+    // The BT.601 inverse is then applied with ku = 0.492111, kv = 0.877283.
+    // Do NOT additionally divide by the 100%-bar magnitudes (0.436010 /
+    // 0.614975): that double-normalises and warps the recovered hue.
+    const qint32 ireRange = videoParameters.white16bIre - videoParameters.black16bIre;
+    auto colorizePoint = [&](qint32 px, qint32 py) -> QColor {
+        if (ireRange <= 0) return Qt::green;
+        const double u_units = static_cast<double>((px - HALF_SIZE) * SCALE);
+        const double v_units = -static_cast<double>((py - HALF_SIZE) * SCALE);
+        // Recover the BT.601 U/V coefficient (U_bt601, V_bt601).
+        const double u_n = u_units / ireRange;
+        const double v_n = v_units / ireRange;
+        // BT.601 inverse at Y=0.5:  B-Y = U/ku, R-Y = V/kv, G from luminance.
+        const double r_raw = 0.5 + v_n / 0.877283;
+        const double b_raw = 0.5 + u_n / 0.492111;
+        const double g_raw = (0.5 - 0.299 * r_raw - 0.114 * b_raw) / 0.587;
+        double r_c = std::clamp(r_raw, 0.0, 1.0);
+        double g_c = std::clamp(g_raw, 0.0, 1.0);
+        double b_c = std::clamp(b_raw, 0.0, 1.0);
+        // Max-component normalise so the hue direction is always vivid;
+        // the centre (U=V=0) gives equal components → white.
+        const double max_c = std::max({r_c, g_c, b_c});
+        if (max_c > 0.001) {
+            r_c /= max_c;
+            g_c /= max_c;
+            b_c /= max_c;
+        } else {
+            r_c = g_c = b_c = 1.0;
+        }
+        return QColor(static_cast<int>(r_c * 255), static_cast<int>(g_c * 255),
+                      static_cast<int>(b_c * 255));
+    };
+
     for (auto fieldN = startingFrame; fieldN < fieldCount; fieldN++) {
         QColor color = Qt::green;
         if (ui->fieldSelectSecondRadioButton->isChecked()) {
@@ -535,7 +580,9 @@ QImage VectorscopeDialog::getTraceImage(const ComponentFrame &componentFrame, co
             color.setAlpha(14);
         }
 
-        scopePainter.setPen(color);
+        if (!multiColour) {
+            scopePainter.setPen(color);
+        }
 
         // For each sample in the selected area, plot its U/V values on the chart
         for (qint32 lineNumber = yStart; lineNumber < yEnd; lineNumber++) {
@@ -553,6 +600,12 @@ QImage VectorscopeDialog::getTraceImage(const ComponentFrame &componentFrame, co
                 // On a real vectorscope, U is positive to the right, and V is positive *upwards*
                 qint32 x = HALF_SIZE + (static_cast<qint32>(uLine[xPosition] + uOffset) / SCALE);
                 qint32 y = HALF_SIZE - (static_cast<qint32>(vLine[xPosition] + vOffset) / SCALE);
+
+                if (multiColour) {
+                    QColor pc = colorizePoint(x, y);
+                    if (densityMode) pc.setAlpha(14);
+                    scopePainter.setPen(pc);
+                }
 
                 scopePainter.drawPoint(x, y);
             }
@@ -605,6 +658,11 @@ void VectorscopeDialog::on_defocusCheckBox_clicked()
 }
 
 void VectorscopeDialog::on_blendColorCheckBox_clicked()
+{
+    emit scopeChanged();
+}
+
+void VectorscopeDialog::on_multiColourCheckBox_clicked()
 {
     emit scopeChanged();
 }

@@ -125,6 +125,16 @@
        </widget>
       </item>
       <item>
+       <widget class="QCheckBox" name="multiColourCheckBox">
+        <property name="toolTip">
+         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Colourise each point by its U/V position on the scope (BT.601 inverse matrix), so the trace hue matches the graticule target boxes. Independent of Blend colors.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+        </property>
+        <property name="text">
+         <string>Multi-colour</string>
+        </property>
+       </widget>
+      </item>
+      <item>
        <spacer name="verticalSpacer_2">
         <property name="orientation">
          <enum>Qt::Vertical</enum>

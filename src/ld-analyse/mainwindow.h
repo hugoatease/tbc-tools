@@ -38,6 +38,7 @@
 #include "rgbscopedialog.h"
 #include "yuvrangedialog.h"
 #include "vectorscopedialog.h"
+#include "waveformmonitordialog.h"
 #include "fieldtimingdialog.h"
 #include "aboutdialog.h"
 #include "vbidialog.h"
@@ -86,6 +87,7 @@ private slots:
     void on_actionRGB_scope_triggered();
     void on_actionYUV_range_scope_triggered();
     void on_actionVectorscope_triggered();
+    void on_actionWaveform_monitor_triggered();
     void on_actionField_timing_scope_triggered();
     void on_actionTBC_Tools_Wiki_triggered();
     void on_actionAbout_ld_analyse_triggered();
@@ -215,6 +217,7 @@ private:
     RgbScopeDialog *rgbScopeDialog;
     YuvRangeDialog *yuvRangeDialog;
     VectorscopeDialog* vectorscopeDialog;
+    WaveformMonitorDialog* waveformMonitorDialog;
     FieldTimingDialog* fieldTimingDialog;
     AboutDialog* aboutDialog;
     VbiDialog* vbiDialog;
@@ -349,6 +352,7 @@ private:
     void updateRgbScopeDialogue(bool force = false);
     void updateYuvRangeScopeDialogue(bool force = false);
     void updateVectorscopeDialogue();
+    void updateWaveformMonitorDialogue();
     void updateFieldTimingDialogue();
     void populateThemesMenu();
     void applyThemeStyle(const QString &styleName);

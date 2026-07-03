@@ -23,6 +23,11 @@ set(ld-analyse_SOURCES
     rgbscopedialog.cpp rgbscopedialog.h
     yuvrangedialog.cpp yuvrangedialog.h
     vectorscopedialog.cpp vectorscopedialog.ui
+    waveformmonitordialog.cpp waveformmonitordialog.h
+    waveformmonitorwidget.cpp waveformmonitorwidget.h
+    tbc_cvbs_conversion.cpp tbc_cvbs_conversion.h
+    amplitude_conversion.h
+    cvbs_signal_constants.h
     fieldtimingdialog.cpp fieldtimingdialog.h
     fieldtimingwidget.cpp fieldtimingwidget.h
     aboutdialog.cpp aboutdialog.ui
