@@ -175,6 +175,13 @@ ConverterDialog::ConverterDialog(QWidget *parent)
       queuedInputRowIndex()
 {
     ui->setupUi(this);
+    // QDialog defaults to the Qt::Dialog window type, which most Linux window
+    // managers decorate without a minimize button even when the hint is set.
+    // Promote it to a plain top-level Qt::Window so the title bar gets the
+    // standard minimize/maximize controls; exec() still keeps it modal.
+    setWindowFlags(Qt::Window | Qt::WindowSystemMenuHint
+                   | Qt::WindowMinimizeButtonHint | Qt::WindowMaximizeButtonHint
+                   | Qt::WindowCloseButtonHint);
     setAcceptDrops(true);
     resetProgressDisplay();
 
@@ -196,24 +203,39 @@ ConverterDialog::ConverterDialog(QWidget *parent)
     }
 
     if (ui->inputLineEdit) {
+        // Typing into the manual entry field must never wipe the queue.
+        // Only refresh the output preview when nothing is queued yet.
         connect(ui->inputLineEdit, &QLineEdit::textChanged, this, [this]() {
-            queuedInputFiles = normalizedUniqueInputs(QStringList() << ui->inputLineEdit->text());
-            if (queuedInputFiles.size() > 1) {
-                ui->inputLineEdit->setToolTip(queuedInputFiles.join(QLatin1Char('\n')));
-            } else {
-                ui->inputLineEdit->setToolTip(QString());
+            if (queuedInputFiles.isEmpty()) {
+                updateOutputPathFromInput(false);
+                resetProgressDisplay();
             }
-            refreshQueuedInputDisplay();
-            updateOutputPathFromInput(false);
+        });
+        // Pressing Enter appends the typed/pasted path(s) to the queue.
+        connect(ui->inputLineEdit, &QLineEdit::returnPressed, this, [this]() {
+            if (conversionInProgress.load()) {
+                return;
+            }
+            const QString rawText = ui->inputLineEdit->text().trimmed();
+            if (rawText.isEmpty()) {
+                return;
+            }
+            const QStringList added = appendToInputQueue(QStringList() << rawText);
+            if (added.isEmpty()) {
+                if (ui->statusLabel) {
+                    ui->statusLabel->setText(tr("Input already queued or invalid."));
+                }
+                return;
+            }
+            {
+                const QSignalBlocker blocker(ui->inputLineEdit);
+                ui->inputLineEdit->clear();
+            }
             resetProgressDisplay();
             if (ui->statusLabel) {
-                if (queuedInputFiles.size() > 1) {
-                    ui->statusLabel->setText(
-                        tr("Queued %1 input files from pasted/text input.")
-                            .arg(queuedInputFiles.size()));
-                } else {
-                    ui->statusLabel->clear();
-                }
+                ui->statusLabel->setText(added.size() > 1
+                    ? tr("Added %1 files to the queue (total queued: %2).").arg(added.size()).arg(queuedInputFiles.size())
+                    : tr("Added 1 file to the queue (total queued: %1).").arg(queuedInputFiles.size()));
             }
         });
     }
@@ -284,6 +306,10 @@ void ConverterDialog::dragEnterEvent(QDragEnterEvent *event)
 
 void ConverterDialog::dropEvent(QDropEvent *event)
 {
+    if (conversionInProgress.load()) {
+        event->ignore();
+        return;
+    }
     const QMimeData *mimeData = event->mimeData();
     if (mimeData == nullptr || !mimeData->hasUrls()) {
         event->ignore();
@@ -303,12 +329,16 @@ void ConverterDialog::dropEvent(QDropEvent *event)
     }
 
     if (!droppedInputFiles.isEmpty()) {
-        setInputQueue(droppedInputFiles);
+        const QStringList added = appendToInputQueue(droppedInputFiles);
+        resetProgressDisplay();
         if (ui->statusLabel) {
-            ui->statusLabel->setText(droppedInputFiles.size() > 1
-                                         ? tr("Queued %1 input files from drag/drop.")
-                                               .arg(droppedInputFiles.size())
-                                         : tr("Loaded input from drag/drop."));
+            if (added.isEmpty()) {
+                ui->statusLabel->setText(tr("No new files added (already in queue)."));
+            } else if (added.size() > 1) {
+                ui->statusLabel->setText(tr("Added %1 files to the queue (total queued: %2).").arg(added.size()).arg(queuedInputFiles.size()));
+            } else {
+                ui->statusLabel->setText(tr("Added 1 file to the queue (total queued: %1).").arg(queuedInputFiles.size()));
+            }
         }
         event->acceptProposedAction();
         return;
@@ -341,22 +371,28 @@ void ConverterDialog::closeEvent(QCloseEvent *event)
 
 void ConverterDialog::on_inputBrowseButton_clicked()
 {
+    if (conversionInProgress.load()) {
+        return;
+    }
     const QString filter = tr("LaserDisc samples (*.lds);;All Files (*)");
     const QStringList inputFileNames = QFileDialog::getOpenFileNames(this,
-                                                                     tr("Select .lds input file(s)"),
+                                                                     tr("Add .lds input file(s) to queue"),
                                                                      sourceDirectory,
                                                                      filter);
     if (inputFileNames.isEmpty()) {
         return;
     }
 
-    setInputQueue(inputFileNames);
+    const QStringList added = appendToInputQueue(inputFileNames);
     resetProgressDisplay();
     if (ui->statusLabel) {
-        ui->statusLabel->setText(inputFileNames.size() > 1
-                                     ? tr("Queued %1 input files.")
-                                           .arg(inputFileNames.size())
-                                     : QString());
+        if (added.isEmpty()) {
+            ui->statusLabel->setText(tr("No new files added (already in queue)."));
+        } else if (added.size() > 1) {
+            ui->statusLabel->setText(tr("Added %1 files to the queue (total queued: %2).").arg(added.size()).arg(queuedInputFiles.size()));
+        } else {
+            ui->statusLabel->setText(tr("Added 1 file to the queue (total queued: %1).").arg(queuedInputFiles.size()));
+        }
     }
 }
 
@@ -374,9 +410,13 @@ void ConverterDialog::on_outputBrowseButton_clicked()
 
     QString suggestedOutput = normalizePathForCurrentPlatform(ui->outputLineEdit->text());
     if (suggestedOutput.isEmpty()) {
-        suggestedOutput = DataConverter::defaultOutputPath(normalizePathForCurrentPlatform(ui->inputLineEdit->text()),
-                                                           false,
-                                                           format);
+        QString suggestionBase;
+        if (!queuedInputFiles.isEmpty()) {
+            suggestionBase = queuedInputFiles.constFirst();
+        } else {
+            suggestionBase = normalizePathForCurrentPlatform(ui->inputLineEdit->text());
+        }
+        suggestedOutput = DataConverter::defaultOutputPath(suggestionBase, false, format);
     }
 
     const QString outputFileName = QFileDialog::getSaveFileName(this,
@@ -804,7 +844,7 @@ void ConverterDialog::on_stopButton_clicked()
 void ConverterDialog::on_outputFormatComboBox_currentIndexChanged(int index)
 {
     Q_UNUSED(index)
-    updateOutputPathFromInput(false);
+    refreshOutputPreview(false);
     resetProgressDisplay();
 }
 
@@ -832,13 +872,148 @@ void ConverterDialog::setInputQueue(const QStringList &inputFilenames)
     }
 
     userEditedOutput = false;
-    updateOutputPathFromInput(true);
+    refreshOutputPreview(true);
 
     const QFileInfo inputInfo(normalizedInputs.constFirst());
     if (inputInfo.exists()) {
         sourceDirectory = inputInfo.absolutePath();
     }
 }
+
+QStringList ConverterDialog::appendToInputQueue(const QStringList &inputFilenames)
+{
+    if (conversionInProgress.load()) {
+        return QStringList();
+    }
+
+    const QStringList normalizedInputs = normalizedUniqueInputs(inputFilenames);
+    if (normalizedInputs.isEmpty()) {
+        return QStringList();
+    }
+
+    QStringList newlyAdded;
+    for (const QString &normalizedInput : normalizedInputs) {
+        bool alreadyPresent = false;
+        for (const QString &existingInput : std::as_const(queuedInputFiles)) {
+            if (existingInput.compare(normalizedInput, Qt::CaseInsensitive) == 0) {
+                alreadyPresent = true;
+                break;
+            }
+        }
+        if (!alreadyPresent) {
+            queuedInputFiles << normalizedInput;
+            newlyAdded << normalizedInput;
+        }
+    }
+
+    if (newlyAdded.isEmpty()) {
+        return newlyAdded;
+    }
+
+    refreshQueuedInputDisplay();
+    refreshOutputPreview(false);
+
+    // Start the next Add.../browse near the most recently added file so that
+    // adding files from different directories one-by-one stays convenient.
+    const QFileInfo lastInfo(newlyAdded.last());
+    if (lastInfo.exists()) {
+        sourceDirectory = lastInfo.absolutePath();
+    }
+
+    return newlyAdded;
+}
+
+void ConverterDialog::refreshOutputPreview(bool forceUpdate)
+{
+    if (!queuedInputFiles.isEmpty()) {
+        // In batch mode (>1) the per-input output paths are derived at convert
+        // time; do not advertise a single-file output path here.
+        if (queuedInputFiles.size() != 1) {
+            return;
+        }
+        if (!forceUpdate && userEditedOutput && !ui->outputLineEdit->text().trimmed().isEmpty()) {
+            return;
+        }
+        const QString normalizedInput = queuedInputFiles.constFirst();
+        const QString suggestedOutput = DataConverter::defaultOutputPath(normalizedInput,
+                                                                         false,
+                                                                         selectedOutputFormat());
+        if (suggestedOutput.isEmpty()) {
+            return;
+        }
+        const QSignalBlocker blocker(ui->outputLineEdit);
+        ui->outputLineEdit->setText(suggestedOutput);
+        userEditedOutput = false;
+        return;
+    }
+
+    // Queue empty: fall back to the manual entry field.
+    updateOutputPathFromInput(forceUpdate);
+}
+
+void ConverterDialog::on_removeQueuedButton_clicked()
+{
+    if (conversionInProgress.load()) {
+        return;
+    }
+    if (ui->queuedInputsTableWidget == nullptr || queuedInputFiles.isEmpty()) {
+        return;
+    }
+
+    const QList<QTableWidgetItem *> selectedItems = ui->queuedInputsTableWidget->selectedItems();
+    if (selectedItems.isEmpty()) {
+        if (ui->statusLabel) {
+            ui->statusLabel->setText(tr("Select one or more queued files to remove."));
+        }
+        return;
+    }
+
+    QSet<int> rowsToRemove;
+    for (const QTableWidgetItem *item : selectedItems) {
+        if (item != nullptr) {
+            rowsToRemove.insert(item->row());
+        }
+    }
+
+    QStringList survivingInputs;
+    for (int row = 0; row < queuedInputFiles.size(); ++row) {
+        if (!rowsToRemove.contains(row)) {
+            survivingInputs << queuedInputFiles.at(row);
+        }
+    }
+
+    queuedInputFiles = survivingInputs;
+    refreshQueuedInputDisplay();
+    refreshOutputPreview(false);
+    resetProgressDisplay();
+    if (ui->statusLabel) {
+        ui->statusLabel->setText(tr("Removed %1 file(s) from the queue (remaining: %2).").arg(rowsToRemove.size()).arg(queuedInputFiles.size()));
+    }
+}
+
+void ConverterDialog::on_clearQueuedButton_clicked()
+{
+    if (conversionInProgress.load()) {
+        return;
+    }
+    if (queuedInputFiles.isEmpty()) {
+        return;
+    }
+
+    queuedInputFiles.clear();
+    queuedInputRowIndex.clear();
+    refreshQueuedInputDisplay();
+    refreshOutputPreview(true);
+    resetProgressDisplay();
+    if (ui->inputLineEdit) {
+        const QSignalBlocker blocker(ui->inputLineEdit);
+        ui->inputLineEdit->clear();
+    }
+    if (ui->statusLabel) {
+        ui->statusLabel->setText(tr("Cleared the input queue."));
+    }
+}
+
 void ConverterDialog::refreshQueuedInputDisplay()
 {
     if (ui->queuedInputsTableWidget == nullptr || ui->queuedSummaryLabel == nullptr) {
@@ -1050,6 +1225,12 @@ void ConverterDialog::setConversionControlsEnabled(bool enabled)
     }
     if (ui->queuedInputsTableWidget) {
         ui->queuedInputsTableWidget->setEnabled(enabled);
+    }
+    if (ui->removeQueuedButton) {
+        ui->removeQueuedButton->setEnabled(enabled);
+    }
+    if (ui->clearQueuedButton) {
+        ui->clearQueuedButton->setEnabled(enabled);
     }
 }
 

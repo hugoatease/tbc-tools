@@ -17,7 +17,7 @@
    <item>
     <widget class="QLabel" name="hintLabel">
      <property name="text">
-      <string>Drag/drop one or more .lds files here or browse below. Multiple inputs are queued and converted one-by-one. Output defaults to FLAC.</string>
+      <string>Add .lds files one by one: click Add..., drag/drop, or type a path and press Enter. Each addition is appended to the queue (files already present are skipped). Use Remove selected or Clear all to manage the queue. Output defaults to FLAC.</string>
      </property>
      <property name="wordWrap">
       <bool>true</bool>
@@ -47,14 +47,17 @@
           </size>
          </property>
          <property name="placeholderText">
-          <string>Drop or choose an .lds file</string>
+          <string>Type/paste an .lds path and press Enter to add</string>
          </property>
         </widget>
        </item>
        <item>
         <widget class="QPushButton" name="inputBrowseButton">
+         <property name="toolTip">
+          <string>Add one or more .lds files to the queue (keeps existing queued files).</string>
+         </property>
          <property name="text">
-          <string>Browse...</string>
+          <string>Add...</string>
          </property>
         </widget>
        </item>
@@ -91,7 +94,7 @@
           <bool>true</bool>
          </property>
          <property name="selectionMode">
-          <enum>QAbstractItemView::NoSelection</enum>
+          <enum>QAbstractItemView::ExtendedSelection</enum>
          </property>
          <property name="selectionBehavior">
           <enum>QAbstractItemView::SelectRows</enum>
@@ -113,6 +116,43 @@
           </property>
          </column>
         </widget>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="queuedButtonsLayout">
+         <item>
+          <widget class="QPushButton" name="removeQueuedButton">
+           <property name="toolTip">
+            <string>Remove the selected file(s) from the queue.</string>
+           </property>
+           <property name="text">
+            <string>Remove selected</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="clearQueuedButton">
+           <property name="toolTip">
+            <string>Clear all queued input files.</string>
+           </property>
+           <property name="text">
+            <string>Clear all</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="queuedButtonsSpacer">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>40</width>
+             <height>20</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
        </item>
       </layout>
      </item>

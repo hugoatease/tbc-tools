@@ -10,12 +10,18 @@ It also keeps legacy modes:
 - `--pack` (pack 16-bit back to 10-bit)
 
 ## GUI mode
-The tool now has a basic Qt6 dialog designed for quick conversion:
+The tool has a Qt6 dialog designed for quick conversion:
 
 - launch with no explicit CLI mode (or with `--gui`)
-- drag/drop `.lds` files into the dialog
-- choose output format (`FLAC` default, or `s16 uncompressed`)
-- click **Convert**
+- add `.lds` files to the queue **one by one** — click **Add...**, drag/drop,
+  or type/paste a path into the input field and press **Enter**; each addition
+  is appended to the queue (duplicates are skipped), so you can accumulate files
+  from several different directories instead of selecting them all at once
+- use **Remove selected** or **Clear all** to manage the queued files
+- choose output format (`FLAC` default, `FLAC as .ldf`, or `s16 uncompressed`)
+- click **Convert** to convert the queue sequentially (or in parallel with the
+  *Parallel compress* option in batch mode)
+- the window has a minimize button so it can be tucked away during long runs
 
 ## CLI usage
 ```bash

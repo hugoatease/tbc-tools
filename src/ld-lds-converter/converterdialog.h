@@ -68,9 +68,13 @@ private slots:
     void on_convertButton_clicked();
     void on_stopButton_clicked();
     void on_outputFormatComboBox_currentIndexChanged(int index);
+    void on_removeQueuedButton_clicked();
+    void on_clearQueuedButton_clicked();
 
 private:
     void setInputQueue(const QStringList &inputFilenames);
+    QStringList appendToInputQueue(const QStringList &inputFilenames);
+    void refreshOutputPreview(bool forceUpdate);
     QStringList normalizedUniqueInputs(const QStringList &inputFilenames) const;
     void refreshQueuedInputDisplay();
     void resetQueuedProgressDisplay();
