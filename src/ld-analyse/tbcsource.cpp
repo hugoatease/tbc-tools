@@ -1828,6 +1828,7 @@ void TbcSource::configureChromaDecoder()
         ntscColour.updateConfiguration(decodeVideoParameters, ntscConfiguration);
     }
 	monoDecoder.updateConfiguration(decodeVideoParameters, monoConfiguration);
+	secamDecoder.configure(decodeVideoParameters);
 
     // Configure the OutputWriter.
     // Because we have padding disabled, this won't change the VideoParameters.
@@ -1884,6 +1885,8 @@ void TbcSource::applyChromaSettingsFromMetadata(const LdDecodeMetaData::VideoPar
                 palConfiguration.chromaFilter = PalColour::transform3DFilter;
             } else if (decoder == "mono") {
                 palConfiguration.chromaFilter = PalColour::mono;
+            } else if (decoder == "secam") {
+                palConfiguration.chromaFilter = PalColour::secam;
             }
         } else if (videoParameters.system == NTSC) {
             if (decoder == "ntsc1d") {
@@ -1977,7 +1980,10 @@ void TbcSource::decodeFrame()
 	if(!combine && sourceMode == BOTH_SOURCES)
 	{
 		monoDecoder.decodeFrames(inputFields, inputStartIndex, inputEndIndex, yFrames);
-		if ((getSystem() == PAL || getSystem() == PAL_M) && palConfiguration.chromaFilter != PalColour::mono) {
+		if ((getSystem() == PAL || getSystem() == PAL_M) && palConfiguration.chromaFilter == PalColour::secam) {
+			// SECAM source
+			secamDecoder.decodeFrames(chromaInputFields, inputStartIndex, inputEndIndex, cFrames);
+		} else if ((getSystem() == PAL || getSystem() == PAL_M) && palConfiguration.chromaFilter != PalColour::mono) {
 			// PAL source
 			palColour.decodeFrames(chromaInputFields, inputStartIndex, inputEndIndex, cFrames);
 		} else if(getSystem() == NTSC && ntscConfiguration.dimensions != 0){
@@ -2005,6 +2011,9 @@ void TbcSource::decodeFrame()
 		if (getSystem() == PAL || getSystem() == PAL_M) {
 			if(palConfiguration.chromaFilter == palColour.ChromaFilterMode::mono){
 				monoDecoder.decodeFrames(inputFields, inputStartIndex, inputEndIndex, componentFrames);
+			} else if(palConfiguration.chromaFilter == palColour.ChromaFilterMode::secam){
+				// SECAM source
+				secamDecoder.decodeFrames(inputFields, inputStartIndex, inputEndIndex, componentFrames);
 			} else {
 				// PAL source
 				palColour.decodeFrames(inputFields, inputStartIndex, inputEndIndex, componentFrames);

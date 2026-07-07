@@ -53,7 +53,9 @@ public:
         // 3D Transform PAL frequency-domain filter
         transform3DFilter,
 		//mono decoder
-		mono
+		mono,
+		//SECAM decoder (native vhs-decode Dr/Db reconstruction, not a PalColour filter)
+		secam
     };
 
     struct Configuration {

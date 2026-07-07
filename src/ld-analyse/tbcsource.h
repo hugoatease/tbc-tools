@@ -32,6 +32,7 @@
 #include "palcolour.h"
 #include "comb.h"
 #include "monodecoder.h"
+#include "secamdecoder.h"
 
 struct YuvRangeSettings;
 
@@ -220,6 +221,7 @@ private:
     PalColour palColour;
     Comb ntscColour;
 	MonoDecoder monoDecoder;
+	SecamDecoder secamDecoder;
     OutputWriter outputWriter;
 
     // VBI decoders

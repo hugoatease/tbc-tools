@@ -603,7 +603,8 @@ bool isValidChromaDecoderForSystem(const QString &decoderName, int system)
         QStringLiteral("pal2d"),
         QStringLiteral("transform2d"),
         QStringLiteral("transform3d"),
-        QStringLiteral("mono")
+        QStringLiteral("mono"),
+        QStringLiteral("secam")
     };
     static const QStringList ntscDecoders = {
         QStringLiteral("ntsc1d"),

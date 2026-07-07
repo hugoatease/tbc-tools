@@ -139,6 +139,7 @@ set(lddecode_chroma_sources
     transformpal2d.cpp
     transformpal3d.cpp
     monodecoder.cpp
+    secamdecoder.cpp
 )
 if(LDCHROMA_HAS_CUDA)
     list(APPEND lddecode_chroma_sources nnTransform3D_kernel.cu)
