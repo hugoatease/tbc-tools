@@ -42,6 +42,7 @@
 #include "comb.h"
 #include "monodecoder.h"
 #include "ntscdecoder.h"
+#include "secamdecoder.h"
 #include "outputwriter.h"
 #include "palcolour.h"
 #include "paldecoder.h"
@@ -240,7 +241,7 @@ int main(int argc, char *argv[])
 
     // Option to select which decoder to use (-f)
     QCommandLineOption decoderOption(QStringList() << "f" << "decoder",
-                                     QCoreApplication::translate("main", "Decoder to use (pal2d, transform2d, transform3d, ntsc1d, ntsc2d, ntsc3d, nntransform3d, nntsc3d, nnTransform3D, ntsc3dnoadapt, mono; default automatic)"),
+                                     QCoreApplication::translate("main", "Decoder to use (pal2d, transform2d, transform3d, ntsc1d, ntsc2d, ntsc3d, nntransform3d, nntsc3d, nnTransform3D, ntsc3dnoadapt, mono, secam; default automatic)"),
                                      QCoreApplication::translate("main", "decoder"));
     parser.addOption(decoderOption);
 
@@ -381,6 +382,7 @@ int main(int argc, char *argv[])
     PalColour::Configuration palConfig;
     Comb::Configuration combConfig;
     MonoDecoder::MonoConfiguration monoConfig;
+    SecamDecoder::SecamConfiguration secamConfig;
     OutputWriter::Configuration outputConfig;
 
     if (parser.isSet(startFrameOption)) {
@@ -580,7 +582,7 @@ int main(int argc, char *argv[])
         decoderName = parser.value(decoderOption);
     } else if (!videoParameters.chromaDecoder.isEmpty()) {
         const QString metadataDecoder = videoParameters.chromaDecoder.toLower();
-        const QStringList validDecoders = { "pal2d", "transform2d", "transform3d", "ntsc1d", "ntsc2d", "ntsc3d", "nntransform3d", "nntsc3d", "ntsc3dnoadapt", "mono" };
+        const QStringList validDecoders = { "pal2d", "transform2d", "transform3d", "ntsc1d", "ntsc2d", "ntsc3d", "nntransform3d", "nntsc3d", "ntsc3dnoadapt", "mono", "secam" };
         if (validDecoders.contains(metadataDecoder)) {
             decoderName = metadataDecoder;
         } else {
@@ -666,6 +668,8 @@ int main(int argc, char *argv[])
 
     } else if (decoderName == "mono") {
         decoder = std::make_unique<MonoDecoder>(monoConfig);
+    } else if (decoderName == "secam") {
+        decoder = std::make_unique<SecamDecoder>(secamConfig);
     } else {
         qCritical() << "Unknown decoder" << decoderName;
         return -1;

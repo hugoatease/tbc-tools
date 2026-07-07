@@ -95,6 +95,7 @@ class ChromaDecoder(Enum):
     NNTRANSFORM3D = "nntransform3d"
     NNTSC3D = "nntsc3d"
     NTSC3DNOADAPT = "ntsc3dnoadapt"
+    SECAM = "secam"
 
     def __str__(self) -> str:
         """Return enum name as string."""

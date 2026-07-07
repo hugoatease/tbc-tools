@@ -756,6 +756,7 @@ void LdDecodeMetaData::Field::read(JsonReader &reader)
         else if (member == "medianBurstIRE") reader.read(medianBurstIRE);
         else if (member == "ntsc") ntsc.read(reader, closedCaption);
         else if (member == "pad") reader.read(pad);
+        else if (member == "secamFirstLineIsRed") reader.read(secamFirstLineIsRed);
         else if (member == "seqNo") reader.read(seqNo);
         else if (member == "syncConf") reader.read(syncConf);
         else if (member == "vbi") vbi.read(reader);
@@ -806,6 +807,7 @@ void LdDecodeMetaData::Field::write(JsonWriter &writer) const
         ntsc.write(writer);
     }
     writer.writeMember("pad", pad);
+    writer.writeMember("secamFirstLineIsRed", secamFirstLineIsRed);
     writer.writeMember("seqNo", seqNo);
     writer.writeMember("syncConf", syncConf);
     if (vbi.inUse) {

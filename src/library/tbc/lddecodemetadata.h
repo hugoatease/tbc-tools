@@ -218,6 +218,7 @@ public:
         ClosedCaption closedCaption;
         DropOuts dropOuts;
         bool pad = false;
+        bool secamFirstLineIsRed = false;
 
         double diskLoc = -1;
         qint64 fileLoc = -1;

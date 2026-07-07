@@ -189,7 +189,9 @@ def add_ldtool_opts(parent: argparse.ArgumentParser) -> None:
             f"  {ChromaDecoder.NTSC3D} (default for NTSC CVBS LD)\n"
             f"  {ChromaDecoder.NNTRANSFORM3D}\n"
             f"  {ChromaDecoder.NNTSC3D}\n"
-            f"  {ChromaDecoder.NTSC3DNOADAPT}"
+            f"  {ChromaDecoder.NTSC3DNOADAPT}\n\n"
+            f"  {ChromaDecoder.SECAM} (SECAM/MESECAM sources with a "
+            "pre-demodulated Dr/Db chroma TBC)"
             "\n\n"
         ),
     )

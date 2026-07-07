@@ -179,6 +179,7 @@ add_executable(ld-chroma-decoder
     monodecoder.cpp
     ntscdecoder.cpp
     paldecoder.cpp
+    secamdecoder.cpp
 )
 
 set_target_properties(lddecode-chroma PROPERTIES AUTOMOC ON)
